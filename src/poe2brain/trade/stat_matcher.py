@@ -770,11 +770,51 @@ def build_item_trade_query(
         else:
             extra_stat_groups.append(built["group"])
 
+    cap_unauth_stat_groups(and_filters, extra_stat_groups)
     query["stats"].extend(extra_stat_groups)
     if filters_block:
         query["filters"] = filters_block
 
     return {"query": query, "sort": {"price": "asc"}}
+
+
+def cap_unauth_stat_groups(
+    and_filters: list[dict[str, Any]],
+    extra_groups: list[dict[str, Any]],
+    *,
+    max_non_empty_groups: int = 3,
+    reserved_groups: int = 0,
+) -> None:
+    """Collapse overflow `count` stat groups into `and_filters` so total non-empty
+    `query.stats` groups never exceed GGG's unauthenticated <=3 stat-group ceiling.
+
+    Preserves index 0 (fracture-capable opener) and index -1 (Desecrated finisher) first.
+    """
+    seen_and_ids = {
+        str(f.get("id")) for f in and_filters if isinstance(f, Mapping) and f.get("id")
+    }
+    while (1 if and_filters else 0) + len(extra_groups) + reserved_groups > max_non_empty_groups:
+        if not extra_groups:
+            break
+        pop_idx = 1 if len(extra_groups) >= 3 else 0
+        grp = extra_groups.pop(pop_idx)
+        grp_filters = grp.get("filters") or []
+        if not grp_filters:
+            continue
+        chosen = next(
+            (
+                f
+                for f in grp_filters
+                if isinstance(f, Mapping) and str(f.get("id", "")).startswith("explicit.")
+            ),
+            grp_filters[0],
+        )
+        cid = str(chosen.get("id") or "") if isinstance(chosen, Mapping) else ""
+        if cid and cid not in seen_and_ids:
+            and_filters.append(dict(chosen))
+            seen_and_ids.add(cid)
+        elif not cid and isinstance(chosen, Mapping):
+            and_filters.append(dict(chosen))
 
 
 def _normalize_stat_constraints(
@@ -946,6 +986,11 @@ def build_natural_trade_query(
         if min_weight is not None:
             w_group["value"] = {"min": min_weight}
         stats_list.append(w_group)
+    cap_unauth_stat_groups(
+        and_filters,
+        extra_groups,
+        reserved_groups=(1 if weight_filters else 0),
+    )
     stats_list.append({"type": "and", "filters": and_filters})
     stats_list.extend(extra_groups)
 

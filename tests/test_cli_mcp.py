@@ -123,6 +123,10 @@ def test_cli_wiki_and_trade_parse(isolated_cli_env: dict[str, str]) -> None:
     assert asc_list["class_count"] == 8
     assert asc_list["count"] == 23
 
+    asc_human_res = runner.invoke(app, ["wiki", "ascendancy"])
+    assert asc_human_res.exit_code == 0
+    assert "Adaptive Capability" in asc_human_res.stdout
+
     gemling_res = runner.invoke(app, ["wiki", "ascendancy", "Gemling Legionnaire", "--json"])
     assert gemling_res.exit_code == 0
     gemling_data = json.loads(gemling_res.stdout)

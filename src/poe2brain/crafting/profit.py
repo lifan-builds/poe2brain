@@ -33,7 +33,11 @@ from poe2brain.models.items import ItemRarity
 from poe2brain.trade.economy import EconomyService
 from poe2brain.trade.ee2_bundle import EE2Bundle, get_default_bundle
 from poe2brain.trade.item_parser import resolve_slot_or_category
-from poe2brain.trade.stat_matcher import MatchedStat, resolve_natural_stat
+from poe2brain.trade.stat_matcher import (
+    MatchedStat,
+    cap_unauth_stat_groups,
+    resolve_natural_stat,
+)
 from poe2brain.trade.trade2_client import DetailedPriceCheckResult, Trade2Client
 
 BudgetTier = Literal["low", "mid", "high"]
@@ -410,6 +414,7 @@ def build_trade_query_from_market_spec(
         else:
             extra_groups.append(built["group"])
 
+    cap_unauth_stat_groups(and_filters, extra_groups)
     stats_list: list[dict[str, Any]] = [{"type": "and", "filters": and_filters}, *extra_groups]
     query: dict[str, Any] = {"status": {"option": status_opt}, "stats": stats_list}
     if spec.unique_name:
@@ -2470,8 +2475,13 @@ class CraftProfitScanner:
         )
 
         candidate_recipes = list(recipes) if recipes is not None else self.default_recipes()
-        # Sort by live_trade_priority first so the highest-priority crafts get live trade2 quotes
-        candidate_recipes.sort(key=lambda r: r.live_trade_priority)
+        # Prioritize recipes matching requested budget_tier first, then live_trade_priority
+        candidate_recipes.sort(
+            key=lambda r: (
+                0 if (budget_tier is None or r.budget_tier == budget_tier) else 1,
+                r.live_trade_priority,
+            )
+        )
 
         evals: list[CraftProfitEvaluation] = []
         for idx_r, rec in enumerate(candidate_recipes):

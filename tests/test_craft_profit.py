@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import pytest
@@ -188,13 +189,29 @@ def test_trade_query_compilation_strips_hashes_and_expands_domains() -> None:
     assert "desecrated.stat_1545858329" in lt_ids
 
     # Every curated recipe's base & exit market spec must compile cleanly to valid trade2 JSON
+    # AND obey GGG's unauthenticated <= 3 non-empty stat-group ceiling!
     sc = CraftProfitScanner()
     try:
+        by_id = {r.recipe_id: r for r in sc.default_recipes()}
         for rec in sc.default_recipes():
             b_q = build_trade_query_from_market_spec(rec.base_market, securable_only=True)
             e_q = build_trade_query_from_market_spec(rec.exit_market, securable_only=True)
             assert b_q["query"]["status"]["option"] == "securable"
             assert e_q["query"]["status"]["option"] == "securable"
+            b_non_empty = sum(1 for g in b_q["query"]["stats"] if g.get("filters"))
+            e_non_empty = sum(1 for g in e_q["query"]["stats"] if g.get("filters"))
+            assert b_non_empty <= 3, f"{rec.recipe_id} base query has {b_non_empty} stat groups"
+            assert e_non_empty <= 3, f"{rec.recipe_id} exit query has {e_non_empty} stat groups"
+
+        for multi_id in ("staff_plus6_spell_archmage", "wand_plus6_lightning_archmage"):
+            mq = build_trade_query_from_market_spec(
+                by_id[multi_id].exit_market, securable_only=True
+            )["query"]
+            non_empty = [g for g in mq["stats"] if g.get("filters")]
+            assert len(non_empty) == 3
+            assert non_empty[0]["type"] == "and"
+            assert non_empty[1]["type"] == "count"
+            assert non_empty[2]["type"] == "count"
     finally:
         sc.close()
 
@@ -329,3 +346,28 @@ def test_shorthand_planner_recipe_and_removed_lever_rejection(
     )
     with pytest.raises(RemovedLeverError):
         scanner.evaluate_recipe(bad_omen_recipe, live_trade=False, n_sims=100)
+
+
+@pytest.mark.skipif(
+    os.environ.get("POE2_LIVE_TESTS") != "1",
+    reason="Set POE2_LIVE_TESTS=1 to verify live trade2 complexity cap on craft profit",
+)
+def test_live_craft_profit_unauth_trade2_roundtrip() -> None:
+    with CraftProfitScanner() as sc:
+        by_id = {r.recipe_id: r for r in sc.default_recipes()}
+        target_recipes = [
+            by_id["staff_plus6_spell_archmage"],
+            by_id["wand_plus6_lightning_archmage"],
+        ]
+        rep = sc.scan(
+            recipes=target_recipes,
+            league="Forbidden Rites",
+            live_economy=True,
+            live_trade=True,
+            max_trade_queries=2,
+            n_sims=300,
+        )
+        assert rep.live_trade_queries_used == 2
+        for ev in rep.evaluations:
+            assert ev.exit_market_quote.source == "live_trade2_securable"
+            assert ev.exit_market_quote.total_active_listings >= 0

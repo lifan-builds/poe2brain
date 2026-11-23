@@ -425,10 +425,11 @@ def wiki_ascendancy_cmd(
             table.add_column("Ascendancy", style="bold")
             table.add_column("Summary")
             for asc in data.get("ascendancies", []):
+                summary_txt = str(asc.get("archetype_summary") or asc.get("summary") or "")
                 table.add_row(
                     str(asc.get("class_name")),
                     str(asc.get("name")),
-                    str(asc.get("summary") or "")[:96],
+                    summary_txt[:96],
                 )
             console.print(table)
             return
@@ -438,8 +439,9 @@ def wiki_ascendancy_cmd(
                 f"[bold cyan]{asc['name']}[/bold cyan] ({asc['class_name']}) — "
                 f"{len(asc.get('notables', []))} notables"
             )
-            if asc.get("summary"):
-                console.print(f"  [dim]{asc['summary']}[/dim]")
+            summary_txt = asc.get("archetype_summary") or asc.get("summary")
+            if summary_txt:
+                console.print(f"  [dim]{summary_txt}[/dim]")
             for nt in asc.get("notables", []):
                 stats_str = "; ".join(nt.get("stats") or [])
                 console.print(f"  • [bold]{nt['name']}[/bold]: {stats_str}")
