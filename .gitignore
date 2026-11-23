@@ -1,5 +1,6 @@
 .venv/
 .cache/
+.poe2brain/
 __pycache__/
 .pytest_cache/
 .ruff_cache/

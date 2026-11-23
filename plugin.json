@@ -1,0 +1,15 @@
+{
+  "name": "poe2brain",
+  "displayName": "PoE2Brain",
+  "version": "0.1.0",
+  "description": "Agent-native Path of Exile 2 intelligence engine: Patch 0.5.5 knowledge base, headless Path of Building 2 math, live Forbidden Rites trade & currency economy, and exact crafting solver.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lfan/poe2brain"
+  },
+  "suggestedPrompts": [
+    "Audit and dewater my PoB2 build code, then find the highest-DPS gear upgrade under 50 Exalted",
+    "Price-check this PoE2 item from my clipboard and split Instant Buyout Gold listings from whispers",
+    "Calculate exact crafting odds and expected Exalted cost vs buying for a +5 Lightning Wand"
+  ]
+}

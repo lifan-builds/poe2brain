@@ -1,7 +1,15 @@
 from __future__ import annotations
 
-from typing import Any
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any, Literal
 
+import httpx
 from mcp.server.fastmcp import FastMCP
 
 from poe2brain import __version__
@@ -9,13 +17,264 @@ from poe2brain.config import (
     BUNDLED_DATA_DIR,
     DEFAULT_LEAGUE,
     POE2_PATCH,
+    REPO_ROOT,
     get_cache_dir,
     get_gamedata_db_path,
     get_pob2_paths,
 )
-from poe2brain.models.common import EngineStatus
+from poe2brain.crafting import (
+    CraftingMod,
+    CraftingPlanner,
+    CraftingState,
+    ModPoolEngine,
+    RemovedLeverError,
+)
+from poe2brain.knowledge import KnowledgeService
+from poe2brain.models.common import AffixSide, EngineStatus
+from poe2brain.models.items import ItemRarity
+from poe2brain.pob import (
+    BuildService,
+    LiveSlotUpgradeReport,
+    LiveUpgradeCandidate,
+    Pob2BridgeError,
+)
+from poe2brain.trade import (
+    EconomyService,
+    Trade2Client,
+    TradeAdvisor,
+    parse_clipboard_item,
+    parsed_item_to_pob2_text,
+    resolve_natural_stat,
+    resolve_slot_or_category,
+)
 
 mcp = FastMCP("poe2brain")
+
+_SAFE_SLOT_RE = re.compile(r"[^a-zA-Z0-9._-]+")
+
+_KNOWLEDGE_SVC: KnowledgeService | None = None
+_ECONOMY_SVC: EconomyService | None = None
+_TRADE2_CLIENT: Trade2Client | None = None
+_TRADE_ADVISOR: TradeAdvisor | None = None
+_CRAFTING_PLANNER: CraftingPlanner | None = None
+_BUILD_SVC: BuildService | None = None
+_HYDRATED_SLOTS: dict[tuple[int, str], set[str]] = {}
+
+
+def get_knowledge_service() -> KnowledgeService:
+    global _KNOWLEDGE_SVC
+    db_path = get_gamedata_db_path()
+    if _KNOWLEDGE_SVC is None or _KNOWLEDGE_SVC.db.db_path != db_path:
+        _KNOWLEDGE_SVC = KnowledgeService(db=db_path)
+    return _KNOWLEDGE_SVC
+
+
+def get_economy_service() -> EconomyService:
+    global _ECONOMY_SVC
+    if _ECONOMY_SVC is None:
+        _ECONOMY_SVC = EconomyService()
+    return _ECONOMY_SVC
+
+
+def get_trade2_client() -> Trade2Client:
+    global _TRADE2_CLIENT
+    if _TRADE2_CLIENT is None:
+        _TRADE2_CLIENT = Trade2Client(economy=get_economy_service())
+    return _TRADE2_CLIENT
+
+
+def get_trade_advisor() -> TradeAdvisor:
+    global _TRADE_ADVISOR
+    if _TRADE_ADVISOR is None:
+        _TRADE_ADVISOR = TradeAdvisor(
+            economy=get_economy_service(),
+            trade2=get_trade2_client(),
+        )
+    return _TRADE_ADVISOR
+
+
+def get_crafting_planner() -> CraftingPlanner:
+    global _CRAFTING_PLANNER
+    db_path = get_gamedata_db_path()
+    if _CRAFTING_PLANNER is None or _CRAFTING_PLANNER.engine.db_path != db_path:
+        _CRAFTING_PLANNER = CraftingPlanner(ModPoolEngine(db_path=db_path))
+    return _CRAFTING_PLANNER
+
+
+def get_build_service() -> BuildService:
+    global _BUILD_SVC
+    if _BUILD_SVC is None:
+        _BUILD_SVC = BuildService(
+            trade_client=get_trade2_client(),
+            economy_service=get_economy_service(),
+        )
+    return _BUILD_SVC
+
+
+def get_pob_slot_snapshot_path(slot: str = "main") -> Path:
+    safe = _SAFE_SLOT_RE.sub("_", slot.strip()) or "main"
+    return get_cache_dir() / "pob_slots" / f"{safe}.xml"
+
+
+def _slot_hydration_bucket(svc: BuildService) -> set[str]:
+    key = (id(svc), str(get_cache_dir()))
+    return _HYDRATED_SLOTS.setdefault(key, set())
+
+
+def save_pob_slot_snapshot(svc: BuildService, slot: str = "main") -> Path:
+    snap_path = get_pob_slot_snapshot_path(slot)
+    snap_path.parent.mkdir(parents=True, exist_ok=True)
+    xml_text = svc.export_build(slot=slot, fmt="xml")
+    fd, tmp_name = tempfile.mkstemp(dir=snap_path.parent, prefix=".tmp_slot_", suffix=".xml")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(xml_text)
+        os.replace(tmp_name, snap_path)
+    except Exception:
+        if os.path.exists(tmp_name):
+            os.unlink(tmp_name)
+        raise
+    _slot_hydration_bucket(svc).add(slot)
+    return snap_path
+
+
+def delete_pob_slot_snapshot(svc: BuildService, slot: str) -> None:
+    snap_path = get_pob_slot_snapshot_path(slot)
+    if snap_path.is_file():
+        snap_path.unlink()
+    _slot_hydration_bucket(svc).discard(slot)
+
+
+def ensure_pob_slot_loaded(
+    svc: BuildService,
+    slot: str = "main",
+    *,
+    require_existing: bool = True,
+) -> bool:
+    hydrated = _slot_hydration_bucket(svc)
+    if slot in hydrated:
+        return True
+
+    snap_path = get_pob_slot_snapshot_path(slot)
+    if snap_path.is_file():
+        svc.load_build(snap_path, slot=slot)
+        hydrated.add(slot)
+        return True
+
+    if require_existing:
+        raise ValueError(
+            f"No PoB2 build loaded in slot {slot!r}. "
+            f"Load one first via poe2_pob_load / 'poe2 pob load <code_url_or_file> --slot {slot}'."
+        )
+    return False
+
+
+def normalize_pob_objective(objective: str) -> Literal["FullDPS", "TotalEHP", "balanced"]:
+    norm = objective.strip().lower()
+    if norm in ("dps", "fulldps", "full_dps", "totaldps", "offence", "offense"):
+        return "FullDPS"
+    if norm in ("ehp", "totalehp", "total_ehp", "defence", "defense", "tank"):
+        return "TotalEHP"
+    if norm in ("balanced", "both", "hybrid"):
+        return "balanced"
+    raise ValueError(
+        f"Unsupported objective {objective!r} "
+        "(expected 'balanced', 'dps'/'FullDPS', or 'ehp'/'TotalEHP')."
+    )
+
+
+def normalize_item_text_for_pob2(raw_text: str) -> str:
+    stripped = raw_text.strip()
+    if not stripped:
+        raise ValueError("Item text cannot be empty.")
+    if "\n--------\n" in stripped or stripped.startswith("Item Class:"):
+        parsed = parse_clipboard_item(stripped)
+        return parsed_item_to_pob2_text(parsed)
+    return stripped
+
+
+def _coerce_str_list(val: list[str] | str | None) -> list[str]:
+    if val is None:
+        return []
+    if isinstance(val, str):
+        s = val.strip()
+        return [s] if s else []
+    return [str(x).strip() for x in val if str(x).strip()]
+
+
+def resolve_live_crafting_prices(
+    league: str = DEFAULT_LEAGUE,
+    *,
+    offline_only: bool = False,
+) -> tuple[dict[str, float] | None, str]:
+    if offline_only:
+        return None, "fallback_reference_0.5.5"
+    try:
+        econ = get_economy_service()
+        bulk = econ.get_bulk_crafting_prices(league)
+        prices: dict[str, float] = {}
+        for slug, quote in bulk.items():
+            if quote is not None and quote.exalted > 0:
+                prices[slug] = float(quote.exalted)
+                prices[quote.name] = float(quote.exalted)
+        rates = econ.get_reference_rates(league)
+        prices["Exalted Orb"] = 1.0
+        if rates.divine_exalted > 0:
+            prices["Divine Orb"] = float(rates.divine_exalted)
+        if rates.chaos_exalted > 0:
+            prices["Chaos Orb"] = float(rates.chaos_exalted)
+        if prices:
+            return prices, f"live_economy:{league}"
+    except Exception:
+        pass
+    return None, "fallback_reference_0.5.5"
+
+
+def format_domain_error(exc: Exception) -> dict[str, Any]:
+    if isinstance(exc, RemovedLeverError):
+        return {
+            "ok": False,
+            "error": str(exc),
+            "error_type": "RemovedLeverError",
+            "lever_name": getattr(exc, "lever_name", None),
+            "patch_note": getattr(exc, "patch_note", None),
+            "hint": (
+                "Use active Patch 0.5.5 crafting levers: Greater/Perfect Basic Orbs, "
+                "Lesser/Normal/Greater Essences (Magic->Rare), Sinistral/Dextral Crystallisation + "
+                "Perfect Essence or Verisium Alloy (Rare->Rare), Omen of Whittling, "
+                "Fracturing Orb, or Ancient Bone Desecration + Omen of Light."
+            ),
+        }
+    if isinstance(exc, Pob2BridgeError):
+        return {
+            "ok": False,
+            "error": str(exc),
+            "error_type": "Pob2BridgeError",
+            "hint": (
+                "Check build share code or item base name (avoid PoE1 or 0.1 'Expert ' bases) "
+                "or run './scripts/bootstrap_pob2.sh' if the PoB2 runtime is missing."
+            ),
+        }
+    if isinstance(exc, httpx.HTTPError):
+        return {
+            "ok": False,
+            "error": str(exc),
+            "error_type": type(exc).__name__,
+            "hint": "Upstream PoE2 trade/economy HTTP call failed or timed out; retry shortly.",
+        }
+    return {
+        "ok": False,
+        "error": str(exc),
+        "error_type": type(exc).__name__,
+        "hint": "Verify input parameters against 'poe2 wiki' or SKILL.md.",
+    }
+
+
+def _safe_tool_call(fn: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    try:
+        return fn()
+    except Exception as exc:
+        return format_domain_error(exc)
 
 
 def collect_engine_status() -> EngineStatus:
@@ -34,10 +293,821 @@ def collect_engine_status() -> EngineStatus:
     )
 
 
+def execute_craft_odds(
+    *,
+    base: str,
+    ilvl: int = 82,
+    lever: str | None = None,
+    target: list[str] | str | None = None,
+    omen: list[str] | str | None = None,
+    item_text: str | None = None,
+    league: str = DEFAULT_LEAGUE,
+    offline_prices: bool = False,
+) -> dict[str, Any]:
+    planner = get_crafting_planner()
+    engine = planner.engine
+    omens = _coerce_str_list(omen)
+    targets = _coerce_str_list(target)
+
+    # Validate lever & omens upfront so RemovedLeverError surfaces immediately
+    lv_entry = engine.resolve_lever(lever) if lever else None
+    omen_entries = [engine.resolve_lever(om) for om in omens]
+    base_entry = engine.resolve_base(base)
+
+    prices, price_source = resolve_live_crafting_prices(league, offline_only=offline_prices)
+
+    if item_text:
+        parsed_item = parse_clipboard_item(item_text)
+        state = engine.parse_state_from_item(parsed_item)
+    else:
+        assumed_rarity = ItemRarity.NORMAL
+        if lv_entry is not None:
+            if "Transmutation" in lv_entry.name or "Alchemy" in lv_entry.name:
+                assumed_rarity = ItemRarity.NORMAL
+            elif (
+                "Augmentation" in lv_entry.name
+                or "Regal" in lv_entry.name
+                or lv_entry.category == "essence"
+            ):
+                assumed_rarity = ItemRarity.MAGIC
+            else:
+                assumed_rarity = ItemRarity.RARE
+        state = CraftingState(base=base_entry, ilvl=ilvl, rarity=assumed_rarity)
+
+        # If evaluating a swap/removal/fracture lever on a synthetic blank Rare state,
+        # seed neutral removable filler mod(s) so single-step odds are immediately meaningful.
+        if lv_entry is not None and not state.mods:
+            needs_removable = (
+                "Chaos" in lv_entry.name
+                or "Annulment" in lv_entry.name
+                or lv_entry.category in ("perfect_or_corrupted_essence", "alloy")
+            )
+            if needs_removable:
+                has_light = any(o.lever_id == "omen_of_light" for o in omen_entries)
+                req_side = next(
+                    (
+                        o.omen_side_constraint
+                        for o in omen_entries
+                        if o.omen_side_constraint is not None
+                    ),
+                    AffixSide.PREFIX,
+                )
+                filler = CraftingMod(
+                    mod_id="__synthetic_removable__",
+                    mod_type="__synthetic_removable__",
+                    family_id="__synthetic_removable__",
+                    families=("__synthetic_removable__",),
+                    affix_side=req_side,
+                    display_tier=9,
+                    required_level=1,
+                    stat_text="Synthetic removable modifier",
+                    is_desecrated=has_light,
+                )
+                state.mods.append(filler)
+            elif "Fracturing" in lv_entry.name:
+                # 4-mod Rare with 1 target + 3 fillers = optimal 25% fracture baseline
+                target_id = "__target__"
+                if targets:
+                    sp0 = engine.resolve_target(base_entry.poe2db_slug, targets[0], ilvl)
+                    if sp0.matching_entries:
+                        state.mods.append(CraftingMod.from_entry(sp0.matching_entries[0]))
+                        target_id = sp0.matching_entries[0].mod_id
+                while len(state.mods) < 4:
+                    idx = len(state.mods)
+                    state.mods.append(
+                        CraftingMod(
+                            mod_id=f"__filler_{idx}__" if idx > 0 else target_id,
+                            mod_type=f"__filler_{idx}__",
+                            family_id=f"__filler_{idx}__",
+                            families=(f"__filler_{idx}__",),
+                            affix_side=AffixSide.PREFIX if idx < 2 else AffixSide.SUFFIX,
+                            display_tier=8,
+                            required_level=1,
+                            stat_text=f"Filler modifier #{idx}",
+                        )
+                    )
+
+    if not targets:
+        if lv_entry is not None and lv_entry.forced_mods:
+            forced = engine._lookup_forced_mod_entry(base_entry, lv_entry)
+            if forced is not None:
+                targets = [forced.mod_id]
+        if not targets:
+            pool_name = (
+                "desecrated"
+                if (
+                    lv_entry is not None
+                    and any(b in lv_entry.name for b in ("Jawbone", "Rib", "Collarbone"))
+                )
+                else "normal"
+            )
+            t1_mods = [
+                m
+                for m in engine.get_mod_tiers(base_entry.poe2db_slug, pool_name)
+                if m.display_tier == 1 and m.required_level <= ilvl and m.weight > 0
+            ][:6]
+            if t1_mods:
+                evals = []
+                for m in t1_mods:
+                    step_evals = planner.evaluate_step(
+                        base_entry.name,
+                        ilvl,
+                        [m.mod_id],
+                        starting_state=state,
+                        lever=lever,
+                        omens=omens or None,
+                        currency_prices_ex=prices,
+                        use_fallback_prices=True,
+                    )
+                    if step_evals:
+                        raw_note = step_evals[0].notes or ""
+                        note_str = (
+                            f"{m.stat_text} (T1, ilvl {m.required_level}); {raw_note}"
+                        ).strip("; ")
+                        ev = step_evals[0].model_copy(update={"notes": note_str})
+                        evals.append(ev)
+                primary = evals[0].model_dump(mode="json") if evals else {}
+                return {
+                    **primary,
+                    "base_type": base_entry.name,
+                    "ilvl": ilvl,
+                    "league": league,
+                    "price_source": price_source,
+                    "assumed_rarity": state.rarity.value,
+                    "evaluations": [e.model_dump(mode="json") for e in evals],
+                }
+
+    if (
+        lv_entry is not None
+        and "Fracturing" in lv_entry.name
+        and targets
+        and not item_text
+        and len(state.mods) >= 4
+    ):
+        # Evaluate Fracturing Orb directly against the target mod on the 4-mod Rare
+        sp0 = engine.resolve_target(base_entry.poe2db_slug, targets[0], ilvl)
+        res_f = engine.evaluate_action(
+            state, set(sp0.matching_mod_ids), lv_entry.name, omens or None
+        )
+        from poe2brain.crafting.planner import PriceBook
+        from poe2brain.models.crafting import CraftActionEval
+
+        pb = PriceBook.build(prices, use_fallback_prices=True)
+        cost_f = pb.action_cost(res_f.lever, res_f.omens, use_category_fallback=True) or 180.0
+        exp_att = (1.0 / res_f.hit_probability) if res_f.hit_probability > 0 else None
+        ev_obj = CraftActionEval(
+            lever_id=res_f.lever.lever_id,
+            action_label=res_f.lever.name,
+            step_cost_exalted=round(cost_f, 4),
+            hit_probability=round(res_f.hit_probability, 6),
+            expected_attempts_to_hit=round(exp_att, 3) if exp_att else None,
+            expected_cost_to_hit_exalted=round(cost_f * exp_att, 3) if exp_att else None,
+            eligible_pool_weight=res_f.eligible_pool_weight,
+            target_weight=res_f.target_weight,
+            notes=res_f.notes,
+        )
+        dumped = ev_obj.model_dump(mode="json")
+        return {
+            **dumped,
+            "base_type": base_entry.name,
+            "ilvl": ilvl,
+            "league": league,
+            "price_source": price_source,
+            "assumed_rarity": state.rarity.value,
+            "evaluations": [dumped],
+        }
+
+    evals = planner.evaluate_step(
+        base_entry.name,
+        ilvl,
+        targets,
+        starting_state=state,
+        lever=lever,
+        omens=omens or None,
+        currency_prices_ex=prices,
+        use_fallback_prices=True,
+    )
+    eval_dicts = [e.model_dump(mode="json") for e in evals]
+    primary = eval_dicts[0] if eval_dicts else {}
+    return {
+        **primary,
+        "base_type": base_entry.name,
+        "ilvl": ilvl,
+        "league": league,
+        "price_source": price_source,
+        "assumed_rarity": state.rarity.value,
+        "targets": targets,
+        "evaluations": eval_dicts,
+    }
+
+
+def execute_craft_plan(
+    *,
+    base: str,
+    ilvl: int = 82,
+    target: list[str] | str,
+    buy_exalted: float | None = None,
+    sims: int = 3000,
+    base_cost_exalted: float = 0.0,
+    item_text: str | None = None,
+    trade_url: str | None = None,
+    league: str = DEFAULT_LEAGUE,
+    offline_prices: bool = False,
+) -> dict[str, Any]:
+    planner = get_crafting_planner()
+    targets = _coerce_str_list(target)
+    if not targets:
+        raise ValueError("Provide at least one target modifier via --target / target.")
+
+    # Guard against passing a removed lever name as a target accidentally
+    for t in targets:
+        t_low = t.lower()
+        if "homogenis" in t_low or "homogeniz" in t_low or "recombinat" in t_low:
+            planner.engine.resolve_lever(t)
+
+    starting_state = parse_clipboard_item(item_text) if item_text else None
+    prices, price_source = resolve_live_crafting_prices(league, offline_only=offline_prices)
+    plan = planner.plan_craft(
+        base=base,
+        ilvl=ilvl,
+        target_mods=targets,
+        currency_prices_ex=prices,
+        starting_state=starting_state,
+        base_cost_ex=base_cost_exalted,
+        buy_price_ex=buy_exalted,
+        trade_url=trade_url,
+        league=league,
+        n_sims=sims,
+        use_fallback_prices=True,
+    )
+    out = plan.model_dump(mode="json")
+    out["price_source"] = price_source
+    return out
+
+
+def execute_find_upgrades(
+    *,
+    equip_slot: str,
+    max_exalted: float | None = 50.0,
+    min_spirit: int = 0,
+    securable_only: bool = False,
+    slot: str = "main",
+    build_source: str | None = None,
+    objective: str = "FullDPS",
+    stat_filters: list[str] | None = None,
+    no_pob: bool = False,
+    limit: int = 10,
+    league: str = DEFAULT_LEAGUE,
+) -> dict[str, Any]:
+    svc = get_build_service()
+    if build_source:
+        svc.load_build(build_source, slot=slot)
+        save_pob_slot_snapshot(svc, slot)
+
+    has_build = (not no_pob) and ensure_pob_slot_loaded(svc, slot=slot, require_existing=False)
+
+    if has_build and not stat_filters:
+        metric = normalize_pob_objective(objective)
+        if min_spirit <= 0:
+            report: LiveSlotUpgradeReport = svc.find_live_slot_upgrades(
+                equip_slot,
+                build_slot=slot,
+                metric=metric,
+                league=league,
+                max_price_exalted=max_exalted,
+                securable_only=securable_only,
+                candidate_limit=limit,
+            )
+            return report.model_dump(mode="json")
+
+        # Inject min_spirit filter onto PoB2 weighted search payload before fetching & scoring
+        slot_weights = svc.compute_slot_trade_weights(
+            equip_slot,
+            build_slot=slot,
+            metric=metric,
+            league=league,
+            max_price_exalted=max_exalted,
+            securable_only=securable_only,
+        )
+        payload = dict(slot_weights.trade2_weighted_filter)
+        query_block = dict(payload.get("query") or {})
+        cat = resolve_slot_or_category(equip_slot) or ""
+        if cat == "accessory.amulet" or equip_slot.strip().lower() == "amulet":
+            spirit_cands = resolve_natural_stat("spirit", category="accessory.amulet", limit=1)
+            if spirit_cands:
+                stats_list = list(query_block.get("stats") or [])
+                stats_list.append(
+                    {
+                        "type": "and",
+                        "filters": [{"id": spirit_cands[0].stat_id, "value": {"min": min_spirit}}],
+                    }
+                )
+                query_block["stats"] = stats_list
+        else:
+            filters_block = dict(query_block.get("filters") or {})
+            eq_block = dict(filters_block.get("equipment_filters") or {})
+            eq_filters = dict(eq_block.get("filters") or {})
+            eq_filters["spirit"] = {"min": min_spirit}
+            eq_block["filters"] = eq_filters
+            filters_block["equipment_filters"] = eq_block
+            query_block["filters"] = filters_block
+        payload["query"] = query_block
+
+        query_id, trade_url, total_matches, listings = svc._execute_trade2_weighted_search(
+            league=league,
+            payload=payload,
+            limit=limit,
+        )
+        batch_inputs = [
+            {
+                "id": lst.listing_id or f"cand_{idx}",
+                "label": f"{lst.item_name + ' ' if lst.item_name else ''}{lst.base_type}".strip(),
+                "targetSlot": equip_slot,
+                "itemText": lst.pob_item_text or "",
+                "price_exalted": lst.price_exalted,
+            }
+            for idx, lst in enumerate(listings, start=1)
+        ]
+        diffs = svc.diff_items_batch(batch_inputs, target_slot=equip_slot, slot=slot)
+        listings_by_txt = {lst.pob_item_text: lst for lst in listings if lst.pob_item_text}
+        cands: list[LiveUpgradeCandidate] = []
+        for idx, diff in enumerate(diffs, start=1):
+            matched_lst = listings_by_txt.get(diff.candidate_item_text) or listings[idx - 1]
+            cands.append(
+                LiveUpgradeCandidate(
+                    rank=idx,
+                    listing=matched_lst,
+                    upgrade_diff=diff,
+                    dps_gain_per_exalted=diff.dps_per_exalted,
+                )
+            )
+        cands.sort(key=lambda c: c.upgrade_diff.full_dps_delta, reverse=True)
+        for rank_idx, c in enumerate(cands, start=1):
+            c.rank = rank_idx
+        return LiveSlotUpgradeReport(
+            league=league,
+            build_slot=slot,
+            equipment_slot=equip_slot,
+            metric=metric,
+            max_price_exalted=max_exalted,
+            securable_only=securable_only,
+            query_id=query_id,
+            trade_url=trade_url,
+            total_market_matches=total_matches,
+            slot_weights=slot_weights,
+            candidates=cands,
+        ).model_dump(mode="json")
+
+    advisor = get_trade_advisor()
+    pc_res = advisor.find_trade_candidates(
+        league=league,
+        slot_or_category=equip_slot,
+        stat_filters_or_weights=stat_filters or None,
+        max_price_exalted=max_exalted,
+        min_spirit=min_spirit if min_spirit > 0 else None,
+        securable_only=securable_only,
+        limit=limit,
+    )
+    out = pc_res.model_dump(mode="json")
+    out["mode"] = "trade_only"
+    out["equipment_slot"] = equip_slot
+    return out
+
+
+# ---------------------------------------------------------------------------
+# MCP Tools (1:1 parity with SKILL.md)
+# ---------------------------------------------------------------------------
+
+
 @mcp.tool()
 def poe2_status() -> dict[str, Any]:
-    """Return poe2brain version, target PoE2 patch/league, and local gamedata/PoB2 readiness."""
-    return collect_engine_status().model_dump()
+    """Verify PoE2 0.5.5 patch, default league, SQLite DB, and headless PoB2 readiness."""
+    return _safe_tool_call(lambda: collect_engine_status().model_dump(mode="json"))
+
+
+@mcp.tool()
+def poe2_search_knowledge(
+    query: str,
+    category: str | None = None,
+    limit: int = 12,
+) -> dict[str, Any]:
+    """FTS5 + exact search across PoE2 0.5.5 mechanics, keywords, gems, uniques, and bases."""
+
+    def _run() -> dict[str, Any]:
+        records = get_knowledge_service().search(query, category=category, limit=limit)
+        return {
+            "query": query,
+            "category": category,
+            "count": len(records),
+            "results": [r.model_dump(mode="json") for r in records],
+        }
+
+    return _safe_tool_call(_run)
+
+
+@mcp.tool()
+def poe2_explain_mechanic(topic: str, limit: int = 6) -> dict[str, Any]:
+    """Return Patch 0.5.5 MechanicFact (poe1_trap, poe2_live_rule, formula) and GGG keywords."""
+    return _safe_tool_call(
+        lambda: get_knowledge_service().explain_mechanic(topic, limit=limit).model_dump(mode="json")
+    )
+
+
+@mcp.tool()
+def poe2_inspect_gem(name: str) -> dict[str, Any]:
+    """Inspect PoE2 active, Spirit, Meta, Tiered Support (I/II/III), and Lineage Support gems."""
+    return _safe_tool_call(
+        lambda: get_knowledge_service().inspect_gem(name).model_dump(mode="json")
+    )
+
+
+@mcp.tool()
+def poe2_inspect_base(name: str, ilvl: int = 82) -> dict[str, Any]:
+    """Inspect PoE2 base stats, implicits, T1 (display_tier=1) affixes, and PoE1/'Expert' traps."""
+    return _safe_tool_call(
+        lambda: get_knowledge_service().inspect_base_item(name, ilvl=ilvl).model_dump(mode="json")
+    )
+
+
+@mcp.tool()
+def poe2_inspect_unique(name: str) -> dict[str, Any]:
+    """Inspect PoE2 unique item base type, implicits, explicits, and is_chanceable status."""
+    return _safe_tool_call(
+        lambda: get_knowledge_service().inspect_unique(name).model_dump(mode="json")
+    )
+
+
+@mcp.tool()
+def poe2_inspect_augment(query: str, limit: int = 8) -> dict[str, Any]:
+    """Inspect PoE2 Runes, Soul Cores, Idols, Shaman Bonded bonuses, and Runeforge recipes."""
+
+    def _run() -> dict[str, Any]:
+        svc = get_knowledge_service()
+        augments = svc.inspect_augment(query, limit=limit)
+        recipes = svc.search_runeforge(query, limit=limit)
+        return {
+            "query": query,
+            "augments": [a.model_dump(mode="json") for a in augments],
+            "runeforge_recipes": [r.model_dump(mode="json") for r in recipes],
+        }
+
+    return _safe_tool_call(_run)
+
+
+@mcp.tool()
+def poe2_pob_load(
+    source: str,
+    slot: str = "main",
+    level: int | None = None,
+) -> dict[str, Any]:
+    """Load PoB2 eN... code, pobb.in URL, XML, or GGG .build JSON and return BuildStats."""
+
+    def _run() -> dict[str, Any]:
+        svc = get_build_service()
+        stats = svc.load_build(source, slot=slot, level=level)
+        save_pob_slot_snapshot(svc, slot)
+        out = stats.model_dump(mode="json")
+        out["slot"] = slot
+        return out
+
+    return _safe_tool_call(_run)
+
+
+@mcp.tool()
+def poe2_pob_stats(slot: str = "main") -> dict[str, Any]:
+    """Extract FullDPS, TotalEHP, Life/ES/Mana, Spirit, resists, Block, Deflection, and Armour."""
+
+    def _run() -> dict[str, Any]:
+        svc = get_build_service()
+        ensure_pob_slot_loaded(svc, slot=slot, require_existing=True)
+        out = svc.get_stats(slot=slot).model_dump(mode="json")
+        out["slot"] = slot
+        return out
+
+    return _safe_tool_call(_run)
+
+
+@mcp.tool()
+def poe2_pob_audit(
+    source: str | None = None,
+    slot: str = "main",
+    apply_dewater: bool = False,
+) -> dict[str, Any]:
+    """Dewatering audit: strip PoB-warrior config inflation vs sustainable Pinnacle stats."""
+
+    def _run() -> dict[str, Any]:
+        svc = get_build_service()
+        if source:
+            svc.load_build(source, slot=slot)
+            save_pob_slot_snapshot(svc, slot)
+        else:
+            ensure_pob_slot_loaded(svc, slot=slot, require_existing=True)
+        audit = svc.audit_build(slot=slot, apply_dewater=apply_dewater)
+        if apply_dewater:
+            save_pob_slot_snapshot(svc, slot)
+        return audit.model_dump(mode="json")
+
+    return _safe_tool_call(_run)
+
+
+@mcp.tool()
+def poe2_pob_eval_item(
+    equip_slot: str,
+    item_text: str,
+    slot: str = "main",
+    price_exalted: float | None = None,
+) -> dict[str, Any]:
+    """Evaluate a candidate item non-destructively via PoB2 GetMiscCalculator()."""
+
+    def _run() -> dict[str, Any]:
+        svc = get_build_service()
+        ensure_pob_slot_loaded(svc, slot=slot, require_existing=True)
+        pob_text = normalize_item_text_for_pob2(item_text)
+        diff = svc.diff_item(
+            pob_text,
+            target_slot=equip_slot,
+            slot=slot,
+            price_exalted=price_exalted,
+        )
+        return diff.model_dump(mode="json")
+
+    return _safe_tool_call(_run)
+
+
+@mcp.tool()
+def poe2_pob_stat_weights(
+    equip_slot: str,
+    objective: str = "balanced",
+    slot: str = "main",
+    league: str = DEFAULT_LEAGUE,
+    max_exalted: float | None = None,
+    securable_only: bool = False,
+) -> dict[str, Any]:
+    """Compute marginal PoB2 stat weights for an equipment slot and build a trade2 filter."""
+
+    def _run() -> dict[str, Any]:
+        svc = get_build_service()
+        ensure_pob_slot_loaded(svc, slot=slot, require_existing=True)
+        metric = normalize_pob_objective(objective)
+        weights = svc.compute_slot_trade_weights(
+            equip_slot,
+            build_slot=slot,
+            metric=metric,
+            league=league,
+            max_price_exalted=max_exalted,
+            securable_only=securable_only,
+        )
+        return weights.model_dump(mode="json")
+
+    return _safe_tool_call(_run)
+
+
+@mcp.tool()
+def poe2_pob_suggest_nodes(
+    mode: Literal["perPoint", "total", "anoint"] = "perPoint",
+    slot: str = "main",
+    top: int = 10,
+    stat: str = "FullDPS",
+    max_path_dist: int = 8,
+    include_keystones: bool = False,
+) -> dict[str, Any]:
+    """Rank reachable passive notables (perPoint/total) or full-tree Amulet anoints (anoint)."""
+
+    def _run() -> dict[str, Any]:
+        svc = get_build_service()
+        ensure_pob_slot_loaded(svc, slot=slot, require_existing=True)
+        nodes = svc.rank_passive_upgrades(
+            slot=slot,
+            mode=mode,
+            stat=stat,
+            max_path_dist=max_path_dist,
+            top_n=top,
+            include_keystones=include_keystones,
+        )
+        return {
+            "slot": slot,
+            "mode": mode,
+            "stat": stat,
+            "count": len(nodes),
+            "upgrades": [n.model_dump(mode="json") for n in nodes],
+        }
+
+    return _safe_tool_call(_run)
+
+
+def export_pob_slot(
+    slot: str = "main",
+    fmt: Literal["code", "xml", "ggg_json"] = "code",
+) -> dict[str, Any]:
+    """Export a PoB2 build slot as an eN... share code, raw XML, or GGG .build JSON."""
+
+    def _run() -> dict[str, Any]:
+        svc = get_build_service()
+        ensure_pob_slot_loaded(svc, slot=slot, require_existing=True)
+        exported = svc.export_build(slot=slot, fmt=fmt)
+        return {"slot": slot, "format": fmt, "exported": exported}
+
+    return _safe_tool_call(_run)
+
+
+@mcp.tool()
+def poe2_currency_price(
+    query: str,
+    league: str = DEFAULT_LEAGUE,
+    category: str | None = None,
+) -> dict[str, Any]:
+    """Get live PoE2 CurrencyQuote in {exalted, chaos, divine} (Exalted=1.0) with trend & volume."""
+
+    def _run() -> dict[str, Any]:
+        econ = get_economy_service()
+        rates = econ.get_reference_rates(league)
+        if query.strip().lower() in ("rates", "reference", "all"):
+            return rates.model_dump(mode="json")
+        quote = econ.get_price(query, league=league, category=category)
+        if quote is None:
+            matches = econ.search_prices(query, league=league, category=category, limit=5)
+            if not matches:
+                raise KeyError(f"No market quote found for {query!r} in {league!r}.")
+            quote = matches[0]
+        out = quote.model_dump(mode="json")
+        out["reference_rates"] = {
+            "exalted": 1.0,
+            "chaos_exalted": rates.chaos_exalted,
+            "divine_exalted": rates.divine_exalted,
+        }
+        return out
+
+    return _safe_tool_call(_run)
+
+
+@mcp.tool()
+def poe2_market_scan(
+    category: str | None = None,
+    min_volume_divine: float = 5.0,
+    league: str = DEFAULT_LEAGUE,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """Scan high-liquidity PoE2 exchange movers, cross-source spreads, and chanceable Uniques."""
+
+    def _run() -> dict[str, Any]:
+        econ = get_economy_service()
+        rates = econ.get_reference_rates(league)
+        opps = econ.scan_market_opportunities(
+            league=league,
+            category=category,
+            min_volume_divine=min_volume_divine,
+            limit=limit,
+        )
+        return {
+            "league": league,
+            "category": category,
+            "min_volume_divine": min_volume_divine,
+            "divine_exalted": rates.divine_exalted,
+            "chaos_exalted": rates.chaos_exalted,
+            "count": len(opps),
+            "opportunities": [o.model_dump(mode="json") for o in opps],
+        }
+
+    return _safe_tool_call(_run)
+
+
+@mcp.tool()
+def poe2_parse_item(item_text: str) -> dict[str, Any]:
+    """Parse PoE2 Ctrl+C / Ctrl+Alt+C clipboard text into ParsedItem plus PoB2-ready item text."""
+
+    def _run() -> dict[str, Any]:
+        parsed = parse_clipboard_item(item_text)
+        out = parsed.model_dump(mode="json")
+        out["pob_item_text"] = parsed_item_to_pob2_text(parsed)
+        return out
+
+    return _safe_tool_call(_run)
+
+
+@mcp.tool()
+def poe2_price_check(
+    item_text: str,
+    securable_only: bool = False,
+    league: str = DEFAULT_LEAGUE,
+    roll_tolerance: float = 0.9,
+) -> dict[str, Any]:
+    """Price-check PoE2 item: splits Instant Buyout (securable Gold fee) vs whisper listings."""
+
+    def _run() -> dict[str, Any]:
+        res = get_trade_advisor().price_check_item(
+            item_text,
+            league=league,
+            roll_tolerance=roll_tolerance,
+            securable_only=securable_only,
+        )
+        return res.model_dump(mode="json")
+
+    return _safe_tool_call(_run)
+
+
+@mcp.tool()
+def poe2_find_upgrades(
+    equip_slot: str,
+    max_exalted: float | None = 50.0,
+    min_spirit: int = 0,
+    securable_only: bool = False,
+    slot: str = "main",
+    objective: str = "FullDPS",
+    league: str = DEFAULT_LEAGUE,
+    limit: int = 10,
+    no_pob: bool = False,
+    stat_filters: list[str] | None = None,
+) -> dict[str, Any]:
+    """Find live trade2 slot upgrades and rank via headless PoB2 GetMiscCalculator()."""
+    return _safe_tool_call(
+        lambda: execute_find_upgrades(
+            equip_slot=equip_slot,
+            max_exalted=max_exalted,
+            min_spirit=min_spirit,
+            securable_only=securable_only,
+            slot=slot,
+            objective=objective,
+            stat_filters=stat_filters,
+            no_pob=no_pob,
+            limit=limit,
+            league=league,
+        )
+    )
+
+
+@mcp.tool()
+def poe2_craft_odds(
+    base: str,
+    ilvl: int = 82,
+    lever: str | None = None,
+    target: list[str] | str | None = None,
+    omen: list[str] | str | None = None,
+    item_text: str | None = None,
+    league: str = DEFAULT_LEAGUE,
+) -> dict[str, Any]:
+    """Compute exact PoE2 0.5.5 conditional mod-pool hit odds and step cost (CraftActionEval)."""
+    return _safe_tool_call(
+        lambda: execute_craft_odds(
+            base=base,
+            ilvl=ilvl,
+            lever=lever,
+            target=target,
+            omen=omen,
+            item_text=item_text,
+            league=league,
+        )
+    )
+
+
+@mcp.tool()
+def poe2_craft_plan(
+    base: str,
+    target: list[str] | str,
+    ilvl: int = 82,
+    buy_exalted: float | None = None,
+    sims: int = 3000,
+    base_cost_exalted: float = 0.0,
+    item_text: str | None = None,
+    league: str = DEFAULT_LEAGUE,
+) -> dict[str, Any]:
+    """Solve optimal PoE2 0.5.5 crafting policy, Monte Carlo p50/p80/p95 cost, and buy-vs-craft."""
+    return _safe_tool_call(
+        lambda: execute_craft_plan(
+            base=base,
+            ilvl=ilvl,
+            target=target,
+            buy_exalted=buy_exalted,
+            sims=sims,
+            base_cost_exalted=base_cost_exalted,
+            item_text=item_text,
+            league=league,
+        )
+    )
+
+
+def run_bootstrap_script(*, force: bool = False) -> dict[str, Any]:
+    script = REPO_ROOT / "scripts" / "bootstrap_pob2.sh"
+    cmd = [str(script)] + (["--force"] if force else [])
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    status = collect_engine_status()
+    return {
+        "ok": True,
+        "output": proc.stdout.strip(),
+        "status": status.model_dump(mode="json"),
+    }
+
+
+def run_sync_gamedata(*, out_path: Path | None = None) -> dict[str, Any]:
+    script = REPO_ROOT / "scripts" / "sync_gamedata.py"
+    target = out_path or get_gamedata_db_path()
+    cmd = [sys.executable, str(script), "--out", str(target)]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    return {
+        "ok": True,
+        "db_path": str(target),
+        "size_bytes": target.stat().st_size if target.is_file() else 0,
+        "output": proc.stdout.strip(),
+    }
 
 
 def main() -> None:

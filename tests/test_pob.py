@@ -1,0 +1,522 @@
+from __future__ import annotations
+
+import json
+import math
+import os
+from collections.abc import Iterator
+from pathlib import Path
+
+import httpx
+import pytest
+
+from poe2brain.http import GGGRateLimiter, Poe2HttpClient
+from poe2brain.models.common import SaleType
+from poe2brain.pob import BuildService, Pob2Bridge
+
+BASELINE_WAND = """Rarity: RARE
+Storm Spire
+Attuned Wand
+Implicits: 0
+55% increased Spell Damage
+45% increased Lightning Damage
++2 to Level of all Lightning Spell Skills
++80 to maximum Mana
+20% increased Cast Speed"""
+
+BASELINE_CHEST = """Rarity: RARE
+Glyph Wrap
+Hexer's Robe
+Implicits: 0
++180 to maximum Energy Shield
+60% increased Energy Shield
++50 to Spirit
++42% to Fire Resistance
++40% to Cold Resistance
++38% to Lightning Resistance"""
+
+BASELINE_FOCUS = """Rarity: RARE
+Mind Ward
+Hallowed Focus
+Implicits: 0
++95 to maximum Energy Shield
+45% increased Spell Damage
++1 to Level of all Spell Skills
++25% to Chaos Resistance"""
+
+BASELINE_BOOTS = """Rarity: RARE
+Wind Stride
+Straw Sandals
+Implicits: 0
++80 to Evasion Rating
+25% increased Movement Speed
++35% to Fire Resistance
++35% to Cold Resistance
++40% to Lightning Resistance"""
+
+
+@pytest.fixture(scope="module")
+def build_service() -> Iterator[BuildService]:
+    svc = BuildService()
+    try:
+        svc.create_character(
+            "Sorceress",
+            "Stormweaver",
+            level=85,
+            slot="main",
+            name="Stormweaver Spark",
+        )
+        svc.set_gem_links(
+            ["Spark 20/20", "Rapid Casting", "Controlled Destruction"],
+            slot="main",
+            label="Main Spark",
+            include_in_full_dps=True,
+            set_main=True,
+        )
+        svc.set_gem_links(
+            ["Archmage 20/20"],
+            slot="main",
+            label="Archmage",
+            include_in_full_dps=False,
+            set_main=False,
+        )
+        svc.equip_item(BASELINE_WAND, target_slot="Weapon 1", slot="main")
+        svc.equip_item(BASELINE_FOCUS, target_slot="Weapon 2", slot="main")
+        svc.equip_item(BASELINE_CHEST, target_slot="Body Armour", slot="main")
+        svc.equip_item(BASELINE_BOOTS, target_slot="Boots", slot="main")
+
+        near = svc.search_passive_nodes("", limit=12, slot="main")
+        starter_ids = [
+            int(n["id"])
+            for n in near
+            if not n.get("allocated") and isinstance(n.get("pathDist"), int) and n["pathDist"] <= 3
+        ]
+        assert len(starter_ids) >= 2
+        svc.alloc_passive_nodes(starter_ids[:3], slot="main")
+        yield svc
+    finally:
+        svc.close()
+
+
+def test_bridge_lifecycle_and_crash_recovery() -> None:
+    with Pob2Bridge() as bridge:
+        ping = bridge.ping()
+        assert ping["ok"] is True
+        assert ping["treeVersion"] == "0_5"
+        assert bridge.is_running is True
+
+        batch = bridge.call_batch(
+            [
+                {"method": "ping", "params": {}},
+                {"method": "list_slots", "params": {}},
+                {"method": "nonexistent_method", "params": {}},
+            ]
+        )
+        assert len(batch) == 3
+        assert batch[0]["ok"] is True
+        assert batch[1]["ok"] is True
+        assert batch[2]["ok"] is False
+
+        # Simulate unexpected LuaJIT child death and verify transparent recovery
+        assert bridge._proc is not None
+        bridge._proc.kill()
+        bridge._proc.wait(timeout=3.0)
+        recovered = bridge.ping()
+        assert recovered["ok"] is True
+        assert bridge.is_running is True
+
+
+def test_slots_clone_undo_redo_and_isolation(build_service: BuildService) -> None:
+    base_main = build_service.get_stats("main")
+    assert base_main.class_name == "Sorceress"
+    assert base_main.ascendancy_name == "Stormweaver"
+    assert base_main.level == 85
+    assert base_main.full_dps > 400.0
+    assert base_main.spirit_total >= 150
+    assert 85 <= base_main.spirit_reserved <= 100
+    assert base_main.spirit_unreserved == base_main.spirit_total - base_main.spirit_reserved
+
+    classes = build_service.list_classes()
+    assert {c["name"] for c in classes} >= {
+        "Witch",
+        "Ranger",
+        "Warrior",
+        "Sorceress",
+        "Huntress",
+        "Mercenary",
+        "Monk",
+        "Druid",
+    }
+
+    build_service.clone_slot("main", "candidate", activate=True)
+    after_unequip = build_service.unequip_item("Weapon 1", slot="candidate")
+    assert after_unequip.full_dps < base_main.full_dps * 0.6
+
+    # 'main' must remain completely isolated
+    still_main = build_service.get_stats("main")
+    assert math.isclose(still_main.full_dps, base_main.full_dps, rel_tol=1e-6)
+
+    # Undo & redo on 'candidate'
+    undone = build_service.undo("candidate")
+    assert math.isclose(undone.full_dps, base_main.full_dps, rel_tol=1e-6)
+    redone = build_service.redo("candidate")
+    assert math.isclose(redone.full_dps, after_unequip.full_dps, rel_tol=1e-6)
+
+    # Create & delete temporary Monk slot
+    monk_stats = build_service.create_character("Monk", "Invoker", level=70, slot="temp_monk")
+    assert monk_stats.class_name == "Monk"
+    assert monk_stats.ascendancy_name == "Invoker"
+    slot_names = {s["slot"] for s in build_service.list_slots()["slots"]}
+    assert {"main", "candidate", "temp_monk"} <= slot_names
+    build_service.delete_slot("temp_monk")
+
+
+def test_universal_load_and_export_formats(build_service: BuildService, tmp_path: Path) -> None:
+    base_main = build_service.get_stats("main")
+
+    # 1. PoB2 eN... share code (padded & unpadded)
+    code = build_service.export_build("main", fmt="code")
+    assert code.startswith("eN")
+    from_code = build_service.load_build(code.rstrip("="), slot="ref_code")
+    assert math.isclose(from_code.full_dps, base_main.full_dps, rel_tol=1e-6)
+
+    # 2. Raw XML file round-trip
+    xml_text = build_service.export_build("main", fmt="xml")
+    xml_path = tmp_path / "stormweaver.xml"
+    xml_path.write_text(xml_text, encoding="utf-8")
+    from_xml = build_service.load_build(xml_path, slot="ref_xml")
+    assert math.isclose(from_xml.full_dps, base_main.full_dps, rel_tol=1e-6)
+
+    # 3. Official GGG .build JSON file round-trip
+    ggg_json = build_service.export_build("main", fmt="ggg_json", name="Stormweaver Planner")
+    parsed_ggg = json.loads(ggg_json)
+    assert parsed_ggg["name"] == "Stormweaver Planner"
+    assert len(parsed_ggg["skills"]) == 2
+    assert len(parsed_ggg["inventory_slots"]) == 4
+    ggg_path = tmp_path / "stormweaver.build"
+    ggg_path.write_text(ggg_json, encoding="utf-8")
+    from_ggg = build_service.load_build(ggg_path, slot="ref_ggg", level=85)
+    assert from_ggg.class_name == "Sorceress"
+    assert from_ggg.ascendancy_name == "Stormweaver"
+    assert from_ggg.full_dps > 400.0
+
+    # 4. pobb.in URL fetch via mocked HTTP transport
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://pobb.in/TestPaste99/raw"
+        return httpx.Response(200, text=code)
+
+    mock_http = Poe2HttpClient(sync_transport=httpx.MockTransport(handler))
+    url_svc = BuildService(bridge=build_service.bridge, http_client=mock_http)
+    try:
+        from_url = url_svc.load_build("https://pobb.in/TestPaste99", slot="ref_url")
+        assert math.isclose(from_url.full_dps, base_main.full_dps, rel_tol=1e-6)
+    finally:
+        mock_http.close()
+
+
+def test_poe2_inspection_and_dewater_audit(build_service: BuildService) -> None:
+    inspected = build_service.inspect_build("main", include_item_raw=True)
+    assert inspected["raw_pob_stats"]["BlockChanceMax"] == 50
+    assert inspected["raw_pob_stats"]["DeflectEffect"] == 40
+    supports = build_service.list_valid_supports("main", group_index=1)
+    assert len(supports) > 50
+
+    build_service.clone_slot("main", "warrior_slot", activate=True)
+    inflated = build_service.set_config(
+        {
+            "enemyIsBoss": "None",
+            "resistancePenalty": 0,
+            "usePowerCharges": True,
+            "useFrenzyCharges": True,
+            "buffOnslaught": True,
+            "conditionEnemyShocked": True,
+            "conditionShockEffect": 60,
+            "enemyLightningResist": -40,
+        },
+        custom_mods="80% more Spell Damage\n+250 to maximum Energy Shield",
+        slot="warrior_slot",
+    )
+
+    # Non-destructive audit (apply_dewater=False)
+    audit = build_service.audit_build("warrior_slot", apply_dewater=False)
+    assert audit.dps_inflation_pct > 100.0
+    assert audit.raw_stats.full_dps > audit.sustainable_pinnacle_stats.full_dps * 2.0
+    stripped_names = {f.flag for f in audit.stripped_flags}
+    assert "customMods" in stripped_names
+    assert "resistancePenalty" in stripped_names
+    assert any("inflated" in w for w in audit.warnings)
+
+    # Verify warrior_slot remained unchanged when apply_dewater=False
+    after_readonly = build_service.get_stats("warrior_slot")
+    assert math.isclose(after_readonly.full_dps, inflated.full_dps, rel_tol=1e-5)
+
+    # Apply dewatering persistently (apply_dewater=True) + verify 1-step undo
+    applied_audit = build_service.audit_build("warrior_slot", apply_dewater=True)
+    now_sust = build_service.get_stats("warrior_slot")
+    assert math.isclose(
+        now_sust.full_dps,
+        applied_audit.sustainable_pinnacle_stats.full_dps,
+        rel_tol=1e-5,
+    )
+    reverted = build_service.undo("warrior_slot")
+    assert math.isclose(reverted.full_dps, inflated.full_dps, rel_tol=1e-5)
+
+
+def test_item_diffs_and_passive_ranking(build_service: BuildService) -> None:
+    gg_wand = """Rarity: RARE
+Cataclysm Branch
+Siphoning Wand
+Implicits: 0
+115% increased Spell Damage
+90% increased Lightning Damage
++5 to Level of all Lightning Spell Skills
++180 to maximum Mana
+35% increased Cast Speed"""
+
+    weak_wand = """Rarity: RARE
+Broken Stick
+Attuned Wand
+Implicits: 0
+10% increased Spell Damage"""
+
+    single = build_service.diff_item(
+        gg_wand, target_slot="Weapon 1", slot="main", price_exalted=25.0
+    )
+    assert single.full_dps_delta > 300.0
+    assert single.dps_per_exalted is not None and single.dps_per_exalted > 10.0
+
+    batch = build_service.diff_items_batch(
+        [
+            {"label": "GG Wand", "item_text": gg_wand, "price_exalted": 25.0},
+            {"label": "Weak Wand", "item_text": weak_wand, "price_exalted": 2.0},
+            {
+                "label": "Invalid PoE1 Base",
+                "item_text": "Rarity: RARE\nBad\nProphecy Wand\nImplicits: 0",
+            },
+        ],
+        target_slot="Weapon 1",
+        slot="main",
+    )
+    assert len(batch) == 2  # Invalid base cleanly skipped
+    assert batch[0].full_dps_delta > 300.0
+    assert batch[1].full_dps_delta < 0.0
+
+    # Reachable notable ranking + diff_passive_nodes consistency
+    notables = build_service.rank_passive_upgrades(
+        "main", mode="perPoint", stat="FullDPS", max_path_dist=8, top_n=8
+    )
+    assert len(notables) >= 3
+    top = notables[0]
+    assert top.per_point_delta > 0
+    node_diff = build_service.diff_passive_nodes(
+        add_node_ids=[top.node_id], slot="main", include_path=True
+    )
+    assert math.isclose(node_diff["delta"]["FullDPS"], top.full_path_delta, rel_tol=1e-4)
+
+    # Full-tree anoint ranking (fast pre-pass + exact FullDPS refinement)
+    anoints = build_service.rank_passive_upgrades("main", mode="anoint", top_n=5)
+    assert len(anoints) == 5
+    assert anoints[0].single_node_delta >= top.single_node_delta
+
+
+def test_slot_stat_weights_occupied_and_empty(build_service: BuildService) -> None:
+    wand_w = build_service.compute_slot_trade_weights(
+        "Weapon 1",
+        build_slot="main",
+        metric="FullDPS",
+        max_price_exalted=40.0,
+        securable_only=True,
+        top_n=15,
+    )
+    assert len(wand_w.weights) >= 8
+    assert wand_w.weights[0].dps_per_unit > 0
+    q = wand_w.trade2_weighted_filter["query"]
+    assert q["status"]["option"] == "securable"
+    assert q["filters"]["trade_filters"]["filters"]["price"]["max"] == 40.0
+
+    # Empty slot ('Ring 1')
+    ring_w = build_service.compute_slot_trade_weights(
+        "Ring 1",
+        build_slot="main",
+        metric="balanced",
+        min_rune_sockets=1,
+        top_n=15,
+    )
+    assert len(ring_w.weights) >= 5
+    assert ring_w.weights[0].dps_per_unit > 0
+    assert ring_w.weights[0].ehp_per_unit > 0
+    rq = ring_w.trade2_weighted_filter["query"]
+    assert rq["filters"]["equipment_filters"]["filters"]["rune_sockets"]["min"] == 1
+
+
+def test_find_live_slot_upgrades_mocked_closed_loop(build_service: BuildService) -> None:
+    fetch_items = [
+        {
+            "id": "listing_steal_securable",
+            "listing": {
+                "indexed": "2026-11-23T02:00:00Z",
+                "fee": 14200,
+                "account": {"name": "HonestCaster", "online": None},
+                "price": {"type": "~b/o", "amount": 20, "currency": "exalted"},
+            },
+            "item": {
+                "rarity": "Rare",
+                "name": "Tempest Horn",
+                "baseType": "Siphoning Wand",
+                "ilvl": 82,
+                "explicitMods": [
+                    {
+                        "description": "105% increased [SpellDamage|Spell Damage]",
+                        "domain": "explicit",
+                    },
+                    {
+                        "description": "80% increased [Lightning|Lightning] Damage",
+                        "domain": "explicit",
+                    },
+                    {
+                        "description": "+5 to Level of all [Lightning|Lightning] Spell Skills",
+                        "domain": "explicit",
+                    },
+                    {"description": "+160 to [MaximumMana|maximum Mana]", "domain": "explicit"},
+                    {"description": "30% increased [CastSpeed|Cast Speed]", "domain": "explicit"},
+                ],
+            },
+        },
+        {
+            "id": "listing_duplicate_same_account",
+            "listing": {
+                "indexed": "2026-11-23T02:01:00Z",
+                "fee": 14200,
+                "account": {"name": "HonestCaster", "online": None},
+                "price": {"type": "~b/o", "amount": 22, "currency": "exalted"},
+            },
+            "item": {
+                "rarity": "Rare",
+                "name": "Clone Horn",
+                "baseType": "Siphoning Wand",
+                "ilvl": 82,
+                "explicitMods": [
+                    {"description": "110% increased Spell Damage", "domain": "explicit"},
+                    {
+                        "description": "+5 to Level of all Lightning Spell Skills",
+                        "domain": "explicit",
+                    },
+                ],
+            },
+        },
+        {
+            "id": "listing_expensive_whisper",
+            "listing": {
+                "indexed": "2026-11-23T02:05:00Z",
+                "whisper": "@MirrorCrafter Hi, I would like to buy your Apocalypse Spire",
+                "account": {"name": "MirrorCrafter", "online": {"league": "Forbidden Rites"}},
+                "price": {"type": "~price", "amount": 1, "currency": "divine"},
+            },
+            "item": {
+                "rarity": "Rare",
+                "name": "Apocalypse Spire",
+                "baseType": "Siphoning Wand",
+                "ilvl": 84,
+                "explicitMods": [
+                    {"description": "120% increased Spell Damage", "domain": "explicit"},
+                    {"description": "95% increased Lightning Damage", "domain": "explicit"},
+                    {
+                        "description": "+5 to Level of all Lightning Spell Skills",
+                        "domain": "explicit",
+                    },
+                    {"description": "+190 to maximum Mana", "domain": "explicit"},
+                    {"description": "35% increased Cast Speed", "domain": "explicit"},
+                ],
+            },
+        },
+    ]
+
+    def mock_handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "/api/trade2/search/poe2/" in url:
+            body = json.loads(request.content.decode("utf-8"))
+            assert body["query"]["stats"][0]["type"] == "count"
+            assert len(body["query"]["stats"][0]["filters"]) >= 4
+            return httpx.Response(
+                200,
+                json={
+                    "id": "q_mock_storm",
+                    "total": 3,
+                    "result": [e["id"] for e in fetch_items],
+                },
+            )
+        if "/api/trade2/fetch/" in url:
+            return httpx.Response(200, json={"result": fetch_items})
+        if "/ReferenceCurrencies" in url or "/Items" in url or "/exchange/" in url:
+            return httpx.Response(404, json={"error": "offline mock"})
+        raise AssertionError(f"Unexpected URL in mock test: {url}")
+
+    limiter = GGGRateLimiter(sleep_sync=lambda _: None)
+    mock_http = Poe2HttpClient(
+        rate_limiter=limiter, sync_transport=httpx.MockTransport(mock_handler)
+    )
+    closed_loop_svc = BuildService(bridge=build_service.bridge, http_client=mock_http)
+    try:
+        # 1. Ranked by raw FullDPS gain
+        report = closed_loop_svc.find_live_slot_upgrades(
+            "Weapon 1",
+            build_slot="main",
+            metric="FullDPS",
+            league="Forbidden Rites",
+            max_price_exalted=500.0,
+            candidate_limit=5,
+        )
+        assert report.query_id == "q_mock_storm"
+        assert (
+            report.trade_url
+            == "https://www.pathofexile.com/trade2/search/poe2/Forbidden%20Rites/q_mock_storm"
+        )
+        # Duplicate HonestCaster listing deduplicated -> 2 unique sellers evaluated!
+        assert len(report.candidates) == 2
+        assert report.candidates[0].listing.item_name == "Apocalypse Spire"
+        assert report.candidates[0].listing.sale_type == SaleType.WHISPER
+        assert report.candidates[1].listing.item_name == "Tempest Horn"
+        assert report.candidates[1].listing.sale_type == SaleType.SECURABLE
+        assert report.candidates[1].listing.is_instant_buyout is True
+        assert (
+            report.candidates[0].upgrade_diff.full_dps_delta
+            > report.candidates[1].upgrade_diff.full_dps_delta
+            > 300.0
+        )
+
+        # 2. Ranked by DPS-per-Exalted value efficiency -> 20ex Tempest Horn wins!
+        value_report = closed_loop_svc.find_live_slot_upgrades(
+            "Weapon 1",
+            build_slot="main",
+            metric="FullDPS",
+            league="Forbidden Rites",
+            max_price_exalted=500.0,
+            candidate_limit=5,
+            sort_by_value=True,
+        )
+        assert value_report.candidates[0].listing.item_name == "Tempest Horn"
+        assert (
+            value_report.candidates[0].dps_gain_per_exalted is not None
+            and value_report.candidates[1].dps_gain_per_exalted is not None
+            and value_report.candidates[0].dps_gain_per_exalted
+            > value_report.candidates[1].dps_gain_per_exalted * 10
+        )
+    finally:
+        mock_http.close()
+
+
+@pytest.mark.skipif(
+    os.environ.get("POE2_LIVE_TESTS") != "1",
+    reason="Set POE2_LIVE_TESTS=1 to run live GGG trade2 closed-loop test",
+)
+def test_find_live_slot_upgrades_real_trade2(build_service: BuildService) -> None:
+    report = build_service.find_live_slot_upgrades(
+        "Weapon 1",
+        build_slot="main",
+        metric="FullDPS",
+        league="Forbidden Rites",
+        max_price_exalted=30.0,
+        securable_only=True,
+        candidate_limit=3,
+    )
+    assert report.query_id is not None
+    assert report.total_market_matches >= 0

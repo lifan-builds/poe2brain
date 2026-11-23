@@ -393,13 +393,19 @@ class Poe2HttpClient:
         for attempt in range(attempts):
             if is_ggg:
                 self.rate_limiter.acquire_sync(bucket)
-            resp = self.sync_client.request(
-                method,
-                url,
-                params=params,
-                json=json_body,
-                headers=headers,
-            )
+            try:
+                resp = self.sync_client.request(
+                    method,
+                    url,
+                    params=params,
+                    json=json_body,
+                    headers=headers,
+                )
+            except (httpx.TimeoutException, httpx.RemoteProtocolError):
+                if method.upper() == "GET" and attempt + 1 < attempts:
+                    self.rate_limiter._sleep_sync(0.5)
+                    continue
+                raise
             if is_ggg:
                 self.rate_limiter.update_from_headers(resp.headers, url=url, bucket=bucket)
             if resp.status_code == 429 and attempt + 1 < attempts:
@@ -431,13 +437,19 @@ class Poe2HttpClient:
         for attempt in range(attempts):
             if is_ggg:
                 await self.rate_limiter.acquire_async(bucket)
-            resp = await self.async_client.request(
-                method,
-                url,
-                params=params,
-                json=json_body,
-                headers=headers,
-            )
+            try:
+                resp = await self.async_client.request(
+                    method,
+                    url,
+                    params=params,
+                    json=json_body,
+                    headers=headers,
+                )
+            except (httpx.TimeoutException, httpx.RemoteProtocolError):
+                if method.upper() == "GET" and attempt + 1 < attempts:
+                    await self.rate_limiter._sleep_async(0.5)
+                    continue
+                raise
             if is_ggg:
                 self.rate_limiter.update_from_headers(resp.headers, url=url, bucket=bucket)
             if resp.status_code == 429 and attempt + 1 < attempts:

@@ -1,0 +1,56 @@
+{
+  "patch": "0.5.5",
+  "updated_at": "2026-11-23T03:26:00Z",
+  "defaults": {
+    "desecrated_unomen_weight": 2500,
+    "unmeasured_normal_pool_weight": 1000,
+    "corrupted_implicit_weight": 1000,
+    "corruption_upgrade_weight": 1000
+  },
+  "removed_levers_in_patch": [
+    "Omen of Homogenising Exaltation",
+    "Omen of Homogenising Coronation",
+    "Omen of Recombination"
+  ],
+  "dormant_poe1_currencies_blacklist": [
+    "Orb of Scouring",
+    "Orb of Alteration",
+    "Orb of Fusing",
+    "Chromatic Orb",
+    "Orb of Binding",
+    "Orb of Regret",
+    "Orb of Unmaking",
+    "Orb of Horizons",
+    "Harbinger's Orb",
+    "Unshaping Orb",
+    "Ancient Orb",
+    "Blessed Orb",
+    "Sacred Orb",
+    "Eternal Orb",
+    "Imprint",
+    "Awakener's Orb",
+    "Orb of Dominance",
+    "Orb of Conflict",
+    "Crusader's Exalted Orb",
+    "Hunter's Exalted Orb",
+    "Redeemer's Exalted Orb",
+    "Warlord's Exalted Orb",
+    "Eldritch Chaos Orb",
+    "Eldritch Exalted Orb",
+    "Eldritch Orb of Annulment",
+    "Enkindling Orb",
+    "Instilling Orb",
+    "Engineer's Orb",
+    "Infused Engineer's Orb",
+    "Tailoring Orb",
+    "Tempering Orb",
+    "Bestiary Orb"
+  ],
+  "mod_weight_overrides": {
+    "Ritual_Tablet:TowerMonsterEffectiveness1": {
+      "weight": 1000,
+      "confidence": "empirical_tablet",
+      "note": "Baseline Precursor Tablet weight anchor; override individual rare tablet mods here as rolling samples accrue."
+    }
+  }
+}

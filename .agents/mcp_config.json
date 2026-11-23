@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "poe2brain": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/Users/lfan/Project/poe2brain",
+        "run",
+        "poe2brain-mcp"
+      ]
+    }
+  }
+}

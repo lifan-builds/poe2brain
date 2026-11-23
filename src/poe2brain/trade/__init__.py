@@ -1,1 +1,76 @@
 """Pillar 3: Live PoE2 economy, item clipboard parser, stat matcher, and trade2 client."""
+
+from __future__ import annotations
+
+from poe2brain.trade.advisor import TradeAdvisor, TradeCandidate
+from poe2brain.trade.economy import (
+    EconomyService,
+    LeagueEconomySummary,
+    MarketOpportunity,
+    PriceHistoryPoint,
+    ReferenceRates,
+    UniqueMarketQuote,
+    normalize_market_slug,
+)
+from poe2brain.trade.ee2_bundle import DEFAULT_EE2_DATA_DIR, EE2Bundle, get_default_bundle
+from poe2brain.trade.item_parser import (
+    parse_clipboard_item,
+    parsed_item_to_pob2_text,
+    resolve_slot_or_category,
+    resolve_trade_category,
+    strip_wiki_markup,
+    trade2_fetch_to_pob2_text,
+)
+from poe2brain.trade.stat_matcher import (
+    MatchedStat,
+    NaturalStatCandidate,
+    build_item_trade_query,
+    build_natural_trade_query,
+    match_mod_line,
+    resolve_natural_stat,
+)
+from poe2brain.trade.trade2_client import (
+    DetailedPriceCheckResult,
+    ExchangeOffer,
+    Trade2Client,
+    TradeExchangeResponse,
+    TradeSearchResponse,
+    build_trade_url,
+    deduplicate_listings_by_account,
+    summarize_price_check,
+)
+
+__all__ = [
+    "DEFAULT_EE2_DATA_DIR",
+    "DetailedPriceCheckResult",
+    "EE2Bundle",
+    "EconomyService",
+    "ExchangeOffer",
+    "LeagueEconomySummary",
+    "MarketOpportunity",
+    "MatchedStat",
+    "NaturalStatCandidate",
+    "PriceHistoryPoint",
+    "ReferenceRates",
+    "Trade2Client",
+    "TradeAdvisor",
+    "TradeCandidate",
+    "TradeExchangeResponse",
+    "TradeSearchResponse",
+    "UniqueMarketQuote",
+    "build_item_trade_query",
+    "build_natural_trade_query",
+    "build_trade_url",
+    "deduplicate_listings_by_account",
+    "get_default_bundle",
+    "match_mod_line",
+    "normalize_market_slug",
+    "parse_clipboard_item",
+    "parsed_item_to_pob2_text",
+    "resolve_natural_stat",
+    "resolve_slot_or_category",
+    "resolve_trade_category",
+    "strip_wiki_markup",
+    "summarize_price_check",
+    "trade2_fetch_to_pob2_text",
+]

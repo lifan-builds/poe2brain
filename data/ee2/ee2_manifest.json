@@ -1,0 +1,16 @@
+{
+  "source_repo": "https://github.com/Kvan7/Exiled-Exchange-2",
+  "license": "MIT",
+  "commit": "cca30662bf31eaf38bd711e2ec1a6b899a06c40e",
+  "stat_count": 2526,
+  "item_count": 4063,
+  "item_namespaces": {
+    "GEM": 870,
+    "ITEM": 2358,
+    "UNIQUE": 835
+  },
+  "remnant_recipe_count": 164,
+  "remnant_reward_count": 322,
+  "item_drop_group_count": 115,
+  "official_trade2_stat_count": 8316
+}

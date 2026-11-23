@@ -1,0 +1,887 @@
+[
+  {
+    "slug": "damage_conversion_two_step",
+    "title": "Damage Conversion Two-Step Rule & Post-Conversion Scaling Only",
+    "category": "combat",
+    "tags": [
+      "conversion",
+      "damage",
+      "double dipping",
+      "physical",
+      "elemental",
+      "chaos",
+      "dot"
+    ],
+    "poe1_or_stale_trap": "Assuming PoE1's Phys->Lightning->Cold->Fire->Chaos multi-step conversion chain and scaling converted damage with BOTH source (% increased Physical) and target (% increased Lightning) modifiers.",
+    "poe2_live_rule": "PoE2 conversion is strictly a two-step process: (1) Skill-inherent conversion applies first, then (2) all non-skill conversion (gear, passives, Avatar of Fire) applies simultaneously to remaining unconverted damage. Damage can NEVER be converted twice, Damage over Time cannot be converted, and converted damage scales ONLY with modifiers to the final damage type (global % increased Physical grants 0% to converted Elemental damage; only local weapon % Physical increases base weapon roll prior to conversion).",
+    "formula_expr": "FinalTypeScaling = Mods(TargetType); SourceGlobalMods = 0",
+    "source_ref": "RePoE keywords.min.json[Conversion]; PoB2 v0.23.1 CalcOffence.lua",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "gain_as_extra_scaling",
+    "title": "Gain X% of Damage as Extra [Type] Scaling & Single-Hop Rule",
+    "category": "combat",
+    "tags": [
+      "gain as extra",
+      "extra damage",
+      "conversion",
+      "scaling"
+    ],
+    "poe1_or_stale_trap": "Assuming 'Gain 20% of Physical Damage as Extra Lightning Damage' scales with global % increased Physical Damage AND can be converted again (e.g. via Call of the Brotherhood).",
+    "poe2_live_rule": "Damage gained as extra X is computed before % increased/more multipliers, scales ONLY with modifiers matching the new type X (never the source type unless source == X), and cannot be subsequently converted to another damage type.",
+    "formula_expr": "ExtraDmg(X) = BasePreMod(Source) * GainPct * (1 + Inc(X)) * More(X)",
+    "source_ref": "RePoE keywords.min.json[Gain]; PoB2 v0.23.1 CalcOffence.lua",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "quality_multiplicative_more",
+    "title": "Weapon & Armour Quality is Multiplicative (MORE), Not Additive",
+    "category": "combat",
+    "tags": [
+      "quality",
+      "whetstone",
+      "scrap",
+      "infuser",
+      "physical damage",
+      "defences",
+      "more"
+    ],
+    "poe1_or_stale_trap": "Treating +20% Quality on a Martial Weapon or Armour as additive with local '% increased Physical Damage' or '% increased Armour/Evasion/ES' like PoE1.",
+    "poe2_live_rule": "In PoE2, Martial Weapons gain 1% MORE Physical Damage per 1% Quality (1.20x at 20% default cap; up to 1.30x with Vaal Infusers), multiplying local % increased Physical Damage! Armours similarly gain 1% MORE local Armour, Evasion, Energy Shield, and Runic Ward per 1% Quality.",
+    "formula_expr": "LocalPhys = round((BasePhys + FlatPhys) * (1 + LocalIncPhys) * (1 + Quality / 100))",
+    "source_ref": "RePoE keywords.min.json[Quality]; PoB2 v0.23.1 CalcSetup.lua",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "base_crit_damage_bonus_100",
+    "title": "Player Base Critical Hit Damage Bonus is +100% (2.0x Multiplier)",
+    "category": "combat",
+    "tags": [
+      "critical",
+      "crit multi",
+      "crit bonus",
+      "damage"
+    ],
+    "poe1_or_stale_trap": "Using PoE1's +50% base critical strike multiplier (150% total crit damage) or confusing 'increased critical damage bonus' with flat PoE1 '+% to Critical Strike Multiplier'.",
+    "poe2_live_rule": "Players in PoE2 have an inherent +100% Critical Hit Damage Bonus (200% total damage on crit; monsters have +30%, player minions +70%). Modifiers to '% increased Critical Damage Bonus' scale that +100% base bonus multiplicatively unless stated as flat '+X% to Critical Damage Bonus'.",
+    "formula_expr": "CritMult = 1 + (BaseCritBonus_1.00 + FlatCritBonus) * (1 + IncCritBonus)",
+    "source_ref": "PoB2 v0.23.1 Data/Misc.lua characterConstants.base_critical_hit_damage_bonus = 100",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "attribute_inherent_bonuses",
+    "title": "Inherent Attribute Bonuses & Zero Attributes Per Level",
+    "category": "combat",
+    "tags": [
+      "strength",
+      "dexterity",
+      "intelligence",
+      "attributes",
+      "life",
+      "accuracy",
+      "mana"
+    ],
+    "poe1_or_stale_trap": "Assuming Strength grants Melee Physical Damage %, Dexterity grants Evasion %, and Intelligence grants Energy Shield % like PoE1.",
+    "poe2_live_rule": "Characters gain 0 attributes per level (+12 Life, +4 Mana, +6 Accuracy per level). Inherent attribute bonuses are strictly single-stat: 1 Strength = +2 Maximum Life; 1 Dexterity = +6 Accuracy Rating (AccuracyPerDexBase = 6); 1 Intelligence = +2 Maximum Mana. Attribute highway nodes on the passive tree allow choosing Str, Dex, or Int freely.",
+    "formula_expr": "Life_Str = 2*Str; Acc_Dex = 6*Dex; Mana_Int = 2*Int",
+    "source_ref": "PoB2 v0.23.1 Data/Misc.lua & Modules/Data.lua",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "accuracy_distance_penalty",
+    "title": "Ranged Accuracy Distance Falloff (20 to 90 Units)",
+    "category": "combat",
+    "tags": [
+      "accuracy",
+      "distance",
+      "projectile",
+      "hit chance"
+    ],
+    "poe1_or_stale_trap": "Assuming Projectile Attacks have uniform Accuracy at all screen distances like PoE1.",
+    "poe2_live_rule": "PoE2 applies a distance penalty to Accuracy Rating starting beyond 20 units and reaching up to 90% less Accuracy Rating at 90 units (AccuracyFalloffStart = 20, AccuracyFalloffEnd = 90, MaxAccuracyRangePenalty = 90%).",
+    "formula_expr": "AccPenalty(d) = 0 if d<=20 else min(0.90, 0.90 * (d - 20) / 70)",
+    "source_ref": "PoB2 v0.23.1 Data/Misc.lua & Modules/Data.lua",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "uncut_gems_and_jewellers_sockets",
+    "title": "Sockets Live on Skill Gems (Jeweller's Orbs), Never on Gear Links",
+    "category": "gems",
+    "tags": [
+      "sockets",
+      "links",
+      "jewellers orb",
+      "uncut gem",
+      "six link",
+      "fusing",
+      "chromatic"
+    ],
+    "poe1_or_stale_trap": "Telling players to use Chromatic Orbs or Orbs of Fusing on Body Armour/Weapons to 6-link their skills.",
+    "poe2_live_rule": "Chromatic Orbs and Orbs of Fusing do NOT exist in PoE2. Active Skill Gems inherently hold 2 Support Gem sockets and upgrade deterministically via Lesser Jeweller's Orb (->3 support sockets), Greater Jeweller's Orb (->4), and Perfect Jeweller's Orb (->5 support sockets = 6-link), or Vaal Orb corruption (+1 socket). Uncut Skill, Support, and Spirit Gems engrave any eligible gem up to their drop level.",
+    "formula_expr": "GemSupportSockets in {2, 3 (Lesser), 4 (Greater), 5 (Perfect/Vaal)}",
+    "source_ref": "RePoE base_items.min.json[CurrencyAddSkillGemSocket3..5]",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "support_gems_0_3_tiered_freedom",
+    "title": "Support Gem Duplication Allowed Since Patch 0.3 (Stale 0.1 Trap!)",
+    "category": "gems",
+    "tags": [
+      "support gems",
+      "limit",
+      "one per character",
+      "tiered supports",
+      "lineage"
+    ],
+    "poe1_or_stale_trap": "Repeating PoE2 0.1.0's obsolete rule that 'you can only equip 1 copy of each Support Gem across your entire character', or thinking unmet support gem attributes disable the entire active skill.",
+    "poe2_live_rule": "Patch 0.3.0 (The Third Edict) REMOVED the 1-per-character restriction on standard Support Gems and introduced Support Tiers I, II, and III. You CAN socket multiple copies of standard Support Gems across different skills! Restrictions in 0.5.5: (1) max 1 Support Gem per SupportGemCategory inside the SAME skill; (2) max 1 copy across your character for Lineage Supports and supports granting global benefits to persistent reservation skills; (3) unmet attributes on a support disable ONLY that support gem.",
+    "formula_expr": "StandardSupportMaxPerChar = Unlimited (max 1 per Category per Skill); LineageSupportMaxPerChar = 1",
+    "source_ref": "RePoE keywords.min.json[SupportGem, LineageSupports]",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "lineage_supports_endgame",
+    "title": "Lineage Support Gems (Drop-Only Build-Defining Supports)",
+    "category": "gems",
+    "tags": [
+      "lineage support",
+      "support gems",
+      "boss drops",
+      "uncut support"
+    ],
+    "poe1_or_stale_trap": "Confusing PoE2 Lineage Supports with PoE1 Awakened Support Gems or trying to engrave them from Uncut Support Gems.",
+    "poe2_live_rule": "Lineage Supports (70+ variants in 0.5.5) are transformative drop-only endgame Support Gems from maps and specific bosses; they CANNOT be engraved from Uncut Support Gems, trade on the Currency Exchange (poe2scout/poe.ninja category 'lineagesupportgems'), and are strictly limited to 1 copy per Lineage Support across all character skills.",
+    "formula_expr": "Count(LineageSupport_X across all skills) <= 1",
+    "source_ref": "RePoE keywords.min.json[LineageSupports]",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "spirit_reservation_and_weapon_sets",
+    "title": "Spirit Reservation Resource & Per-Weapon-Set Spirit/Passives",
+    "category": "gems",
+    "tags": [
+      "spirit",
+      "reservation",
+      "auras",
+      "minions",
+      "heralds",
+      "sceptre",
+      "weapon set"
+    ],
+    "poe1_or_stale_trap": "Reserving Mana for Heralds/Auras/Banners like PoE1, or forgetting that swapping away from a Sceptre changes available Spirit.",
+    "poe2_live_rule": "Mana is NOT used for standard persistent reservations; Spirit powers Permanent Minions, Heralds, Persistent Buffs, and Meta-Gems (0 base Spirit; +100 from campaign bosses; flat/percent Spirit rolls on Sceptres, Solar Amulets, and 0.5 Body Armour/Amulet BaseSpirit prefixes). Weapon Sets 1 & 2 swap instantaneously (0ms base swap delay) and maintain independent Spirit totals, active persistent toggles, and Weapon Set Passive Skill Points.",
+    "formula_expr": "AvailableSpirit(ws) = Floor((CampaignSpirit + GearSpirit(ws)) * (1 + IncSpirit)) - ReservedSpirit(ws)",
+    "source_ref": "RePoE keywords.min.json[Spirit, WeaponSets, WeaponSetPassiveSkillPoints]",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "meta_gems_energy_mechanics",
+    "title": "Meta-Gems & Per-Skill Energy Trigger Scaling",
+    "category": "gems",
+    "tags": [
+      "meta gem",
+      "cast on shock",
+      "cast on freeze",
+      "cast on crit",
+      "energy",
+      "trigger"
+    ],
+    "poe1_or_stale_trap": "Assuming Cast on Crit / Cast on Shock triggers on a fixed 0.15s cooldown with no Energy bar like PoE1.",
+    "poe2_live_rule": "Meta-Gems (Cast on Shock, Cast on Freeze, Cast on Critical, Cast on Minion Death, etc.) reserve Spirit, hold both triggered Skill Gems and Support Gems in their sockets, and build an independent Energy pool per Meta-Gem. Maximum Energy required to trigger scales directly with the cast/use time of socketed spells, and monster Power scales Energy gained.",
+    "formula_expr": "Trigger fires when Energy >= MaxEnergy(TriggeredSpellUseTimes)",
+    "source_ref": "RePoE keywords.min.json[Meta, Energy]",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "armour_formula_and_before_resistances",
+    "title": "Armour Mitigation Formula (10x Hit) & Applies BEFORE Elemental Resistances",
+    "category": "defence",
+    "tags": [
+      "armour",
+      "physical damage reduction",
+      "elemental resistance",
+      "armour break",
+      "overbreak"
+    ],
+    "poe1_or_stale_trap": "Using PoE1's 5x hit divisor, early beta 12x rumours, or assuming 'Armour applies to Elemental Damage' mitigates the smaller post-resistance elemental hit like PoE1 Transcendence/Juggernaut.",
+    "poe2_live_rule": "PoE2 Armour uses a 10x raw-hit divisor (90% PDR cap): DR = A / (A + 10 * Hit). Crucially, when modifiers grant '% of Armour also applies to Fire/Cold/Lightning/Chaos Damage', Armour mitigation is calculated against the LARGE pre-resistance hit BEFORE Elemental/Chaos Resistances multiply it! Also, Armour Break below 0 (Overbreak) turns Armour negative, causing targets to take MORE Physical hit damage.",
+    "formula_expr": "Taken = RawHit * (1 - min(0.90, A / (A + 10 * RawHit))) * (1 - Resistance)",
+    "source_ref": "PoB2 v0.23.1 Data.lua (ArmourRatio=10) & CalcDefence.lua:L363-372",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "evasion_spells_and_acrobatics",
+    "title": "Evasion Rating Evades Attacks AND Projectile/Strike Spells (Acrobatics for AoE)",
+    "category": "defence",
+    "tags": [
+      "evasion",
+      "spells",
+      "acrobatics",
+      "aoe",
+      "dodge",
+      "accuracy"
+    ],
+    "poe1_or_stale_trap": "Assuming Evasion only works against Attacks and does nothing against Spells without Spell Dodge/Suppression like PoE1.",
+    "poe2_live_rule": "In PoE2, Evasion works against ALL non-AoE Hits — including Melee, Projectile Attacks, AND Projectile/Non-AoE Spells (can_evade_spells = 1), capped at 95% evade chance! Unavoidable AoE slams/spells cannot be evaded UNLESS the character allocates the Acrobatics keystone ('Can Evade all Hits; 75% less Evasion Rating').",
+    "formula_expr": "MonsterHitPct = clamp(round(100 * (1 - 0.95 * E / (E + 4 * EnemyAcc))), 5, 100); EvadePct = 100 - MonsterHitPct",
+    "source_ref": "PoB2 v0.23.1 Data/Misc.lua (can_evade_spells=1) & CalcDefence.lua:monsterHitChance",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "deflection_0_5_formula",
+    "title": "Deflection Layer & Reworked Patch 0.5 Formula (40% Mitigation, 95% Cap)",
+    "category": "defence",
+    "tags": [
+      "deflect",
+      "deflection",
+      "evasion",
+      "spell suppression",
+      "mitigation"
+    ],
+    "poe1_or_stale_trap": "Looking for PoE1 'Spell Suppression' on Dexterity gear, or using pre-0.5 uncapped/unreachable Deflection curves.",
+    "poe2_live_rule": "PoE2 replaces Spell Suppression on Dex/hybrid gear with Deflection Rating. Deflection rolls independently of Evasion against ALL hits (attacks & spells, including AoE), preventing 40% of hit damage (and ailment scaling) by default. Patch 0.5 reworked the Deflection vs Enemy Accuracy formula so 95% Deflect Chance cap is reachable at endgame.",
+    "formula_expr": "DeflectChancePct = clamp(100 - round(150 * Acc / (Acc + 0.12 * DeflectRating) - 50), 0, 95)",
+    "source_ref": "PoB2 v0.23.1 CalcDefence.lua:calcs.deflectChance & Data/Misc.lua (BasePercentDamageDeflected=40)",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "passive_block_cap_50_and_active_block",
+    "title": "Passive Block Base Cap is 50% (NOT 75%) + Active Raise Shield / Parry",
+    "category": "defence",
+    "tags": [
+      "block",
+      "shield",
+      "buckler",
+      "parry",
+      "raise shield",
+      "heavy stun",
+      "block cap"
+    ],
+    "poe1_or_stale_trap": "Assuming base maximum passive Block chance is 75% (from PoE1 or PoE2 0.1.0), or assuming all boss slams can be passively blocked without investment.",
+    "poe2_live_rule": "Base maximum passive Block chance in PoE2 0.5.5 is 50% (object_inherent_base_maximum_block_%_from_ot = 50; absolute hard cap 90% with +max block passives/uniques). Blocked hits deal 0 damage, still apply Light/Heavy Stun buildup, and cannot occur while Stunned/Frozen; red-glow Boss Windup attacks are Unblockable by default. Shields grant Active 'Raise Shield' and Bucklers grant 'Parry' (100% block in 210° front arc at the cost of Heavy Stun bar buildup).",
+    "formula_expr": "PassiveBlockCap_Base = 50%; HardCap = 90%; ActiveBlockArc = 210 deg",
+    "source_ref": "PoB2 v0.23.1 Data/Misc.lua:L138,203 & RePoE keywords.min.json[Block, ChanceToBlock]",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "energy_shield_chaos_2x_and_bleed_poison_bypass",
+    "title": "Energy Shield: Chaos Removes 2x ES (Does NOT Bypass!), Bleed & Poison BOTH Bypass ES",
+    "category": "defence",
+    "tags": [
+      "energy shield",
+      "chaos damage",
+      "bleeding",
+      "poison",
+      "bypass",
+      "recharge"
+    ],
+    "poe1_or_stale_trap": "Saying 'Chaos hit damage bypasses Energy Shield and hits Life directly, while Bleeding damages Energy Shield first' (the PoE1 rule).",
+    "poe2_live_rule": "PoE2 completely inverted PoE1's ES bypass rules: (1) Non-poison Chaos hit/DoT damage does NOT bypass Energy Shield — instead it removes TWICE (2x) as much Energy Shield! (2) Damage from BOTH Bleeding AND Poison bypasses Energy Shield to remove Life directly! Base ES Recharge is 12.5% per second after a 4.0-second delay without losing ES.",
+    "formula_expr": "ESLoss(ChaosHit) = 2 * MitigatedChaosHit; LifeLoss(Bleed | Poison) = DirectToLife",
+    "source_ref": "RePoE keywords.min.json[EnergyShield, ESRecharge] & PoB2 v0.23.1 CalcDefence.lua",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "grim_feast_minion_revival_rework",
+    "title": "Grim Feast Reworked from ES Overflow Aura into Minion Revival Skill (Stale 0.1 Trap!)",
+    "category": "defence",
+    "tags": [
+      "grim feast",
+      "energy shield",
+      "minion",
+      "revive",
+      "spirit"
+    ],
+    "poe1_or_stale_trap": "Recommending 'Grim Feast' as a mandatory Spirit gem to double Energy Shield via ES overflow remnants (its broken 0.1.0 behavior).",
+    "poe2_live_rule": "GGG disabled and completely reworked Grim Feast: it NO LONGER grants or overflows Energy Shield. In 0.5.5, Grim Feast is a Minion persistent skill that collects Remnants when your reviving minions die/expire (storing minion maximum life) and activates to mass-revive fallen minions.",
+    "formula_expr": "GrimFeast_ES_Bonus = 0 (Minion Revival Skill in 0.5.5)",
+    "source_ref": "PoB2 v0.23.1 Skills/ & Patch 0.2-0.5 Skill Gems",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "keystone_chaos_inoculation",
+    "title": "Chaos Inoculation (CI): Immune to Chaos AND Bleeding",
+    "category": "keystone",
+    "tags": [
+      "chaos inoculation",
+      "ci",
+      "bleeding",
+      "chaos",
+      "keystone",
+      "energy shield"
+    ],
+    "poe1_or_stale_trap": "Worrying that Bleeding will instantly kill a 1-Life CI character because Bleeding bypasses Energy Shield in PoE2, or forgetting CI grants Bleed immunity.",
+    "poe2_live_rule": "In PoE2, Chaos Inoculation sets Maximum Life to 1 and grants complete Immunity to BOTH Chaos Damage AND Bleeding!",
+    "formula_expr": "MaxLife = 1; ChaosImmune = true; BleedImmune = true",
+    "source_ref": "RePoE keywords.min.json[ChaosInoculation]",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "keystone_eldritch_battery",
+    "title": "Eldritch Battery (EB): Converts 100% Base ES to Mana & Doubles Mana Costs",
+    "category": "keystone",
+    "tags": [
+      "eldritch battery",
+      "eb",
+      "energy shield",
+      "mana",
+      "mind over matter",
+      "keystone"
+    ],
+    "poe1_or_stale_trap": "Assuming Eldritch Battery moves Energy Shield to protect Mana with zero cost penalty like PoE1.",
+    "poe2_live_rule": "In PoE2, Eldritch Battery converts 100% of Maximum Energy Shield into Maximum Mana (before % increased ES/Mana scaling rules apply) AND Doubles all Skill Mana Costs!",
+    "formula_expr": "ES -> Mana (100% conversion); ManaCostMultiplier = 2.0x",
+    "source_ref": "RePoE keywords.min.json[EldritchBattery]",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "keystone_mind_over_matter",
+    "title": "Mind Over Matter (MoM): 100% of Damage Taken from Mana Before Life & 50% Less Mana Recovery",
+    "category": "keystone",
+    "tags": [
+      "mind over matter",
+      "mom",
+      "mana",
+      "recovery",
+      "keystone",
+      "archmage"
+    ],
+    "poe1_or_stale_trap": "Using PoE1's '40% of Hit Damage taken from Mana before Life' with no Mana recovery penalty.",
+    "poe2_live_rule": "In PoE2, Mind Over Matter causes 100% of ALL Damage to be taken from Mana before Life, paired with a massive '50% less Mana Recovery Rate' penalty!",
+    "formula_expr": "DamageToManaBeforeLife = 100%; ManaRecoveryRate *= 0.50",
+    "source_ref": "RePoE keywords.min.json[MindOverMatter]",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "keystone_glancing_blows",
+    "title": "Glancing Blows Affects Evasion & Deflection (NOT Block!)",
+    "category": "keystone",
+    "tags": [
+      "glancing blows",
+      "block",
+      "evasion",
+      "deflect",
+      "lucky",
+      "unlucky",
+      "keystone"
+    ],
+    "poe1_or_stale_trap": "Recommending Glancing Blows to shield builds to 'double Block chance at 65% blocked damage taken' (the PoE1 keystone).",
+    "poe2_live_rule": "In PoE2, Glancing Blows has NOTHING to do with Block! Its exact effect is: 'Chance to Evade is Unlucky; Chance to Deflect is Lucky'.",
+    "formula_expr": "P_evade_eff = p_ev^2; P_deflect_eff = 1 - (1 - p_def)^2",
+    "source_ref": "RePoE keywords.min.json[GlancingBlows] & PoB2 CalcDefence.lua",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "keystone_avatar_of_fire",
+    "title": "Avatar of Fire Converts 75% (Not 50%) of All Damage to Fire",
+    "category": "keystone",
+    "tags": [
+      "avatar of fire",
+      "fire",
+      "conversion",
+      "keystone"
+    ],
+    "poe1_or_stale_trap": "Using PoE1's '50% of Physical, Cold and Lightning Converted to Fire'.",
+    "poe2_live_rule": "In PoE2, Avatar of Fire converts 75% of ALL Damage to Fire Damage and stipulates 'Deal no Non-Fire Damage'.",
+    "formula_expr": "GlobalConvertToFire += 75%; NonFireDamage = 0",
+    "source_ref": "RePoE keywords.min.json[AvatarOfFire]",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "ignite_flammability_system",
+    "title": "Ignite Uses Flammability Debuff Buildup & Aggravation (No Flat PoE1 Crit-Ignite)",
+    "category": "ailment",
+    "tags": [
+      "ignite",
+      "flammability",
+      "fire",
+      "ailment",
+      "aggravate"
+    ],
+    "poe1_or_stale_trap": "Assuming Critical Hits automatically have 100% chance to Ignite or rolling flat '% chance to Ignite' independent of hit size.",
+    "poe2_live_rule": "In PoE2, Fire Hit damage relative to the target's Elemental Ailment Threshold inflicts 'Flammability' magnitude (8s on monsters, 4s on players); total Flammability on the target determines the chance for hits to Ignite (4s base duration, 20% of hit Fire damage/sec = 1200%/min). Ignites (like Bleeding) can also be 'Aggravated' to deal 100% extra damage (2x DPS).",
+    "formula_expr": "BaseIgniteDPS = 0.20 * HitDamage (0.40 * HitDamage when Aggravated); Duration = 4s",
+    "source_ref": "RePoE keywords.min.json[Ignite, Flammability, AggravateIgnite] & PoB2 Data/Misc.lua",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "shock_chill_freeze_electrocute_thresholds",
+    "title": "Shock (20% Base), Chill (30-50%), Freeze & Electrocute Buildup Thresholds",
+    "category": "ailment",
+    "tags": [
+      "shock",
+      "chill",
+      "freeze",
+      "electrocute",
+      "ailment threshold",
+      "energy shield"
+    ],
+    "poe1_or_stale_trap": "Assuming Shock scales continuously from 5% to 50% by default or assuming all Lightning skills cause Electrocute.",
+    "poe2_live_rule": "Shock applies a flat 20% increased damage taken base magnitude (8s on monsters, 4s on players; scaled by Shock Magnitude mods), with Shock chance proportional to Lightning hit vs Elemental Ailment Threshold. Chill slows by 30%-50% (<30% ignored). Freeze (Cold) and Electrocute (ONLY Lightning skills/supports explicitly stating Electrocute!) fill cumulative buildup bars against Freeze/Electrocute Thresholds. Base player Ailment Threshold is 50% of Max Life (1-Life CI characters MUST get '+Ailment/Stun Threshold from % of Max ES' passives/mods!).",
+    "formula_expr": "PlayerBaseAilmentThreshold = 0.50 * MaxLife; BaseShock = 20%; ChillRange = [30%, 50%]",
+    "source_ref": "RePoE keywords.min.json[Shock, Chill, Freeze, Electrocute, AilmentThreshold] & PoB2 Misc.lua",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "light_stun_vs_heavy_stun_mechanics",
+    "title": "Dual Stun System: Light Stun (15% Floor) vs Heavy Stun Bar",
+    "category": "ailment",
+    "tags": [
+      "stun",
+      "light stun",
+      "heavy stun",
+      "stun threshold",
+      "physical",
+      "melee",
+      "bleeding"
+    ],
+    "poe1_or_stale_trap": "Treating Stun as a single mechanic or assuming Moving always causes Bleeding targets to take 3x damage without Aggravation.",
+    "poe2_live_rule": "PoE2 has TWO stun mechanics: (1) Light Stun (0.5s interrupt; <15% chance treated as 0%; each recent stun within 4s raises player Light Stun threshold by +50% more) and (2) Heavy Stun (3.0s incapacitation when the Heavy Stun poise bar fills; players cannot be Heavy Stunned except during Raise Shield, Parry, Sprint end, or Mounted combat). Player Physical damage and Melee damage each grant 50% MORE Stun chance/buildup multiplicatively (2.25x combined).",
+    "formula_expr": "PhysMeleeStunMult = 1.50 * 1.50 = 2.25x; LightStunFloor = 15%",
+    "source_ref": "RePoE keywords.min.json[Stun, HeavyStunPlayer] & PoB2 Data/Misc.lua",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "charms_replace_utility_flasks",
+    "title": "Utility Flasks Do NOT Exist — 1 Life Flask + 1 Mana Flask + Up to 3 Belt Charms",
+    "category": "defence",
+    "tags": [
+      "flasks",
+      "charms",
+      "quicksilver flask",
+      "mageblood",
+      "belt",
+      "charges"
+    ],
+    "poe1_or_stale_trap": "Recommending Quicksilver, Granite, Jade, or Quartz Utility Flasks, Enkindling/Instilling Orbs, or piano-flask setups.",
+    "poe2_live_rule": "Utility Flasks (and Quicksilver Flasks) do NOT exist in PoE2! Every character has strictly 1 Life Flask slot, 1 Mana Flask slot, and up to 3 Charm slots unlocked by Belt implicits/affixes (capped at 3). Charms trigger defensive effects automatically when their condition occurs (e.g. taking Fire damage, being Frozen/Stunned) using charges gained from monster Power kills, Checkpoints, and Town Wells.",
+    "formula_expr": "FlaskSlots = 1 Life + 1 Mana; CharmSlots <= 3 (unlocked via Belt)",
+    "source_ref": "RePoE keywords.min.json[Charm]",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "waystone_revives_portal_scaling",
+    "title": "Waystone Modifier Count Controls Map Revives / Portals (0 Revives on 6-Mod Rare!)",
+    "category": "atlas",
+    "tags": [
+      "waystone",
+      "portals",
+      "revives",
+      "maps",
+      "atlas",
+      "six mod"
+    ],
+    "poe1_or_stale_trap": "Assuming every map grants 6 death portals regardless of how juiced the map is (PoE1), or assuming every PoE2 map is strictly 1-portal regardless of rarity (stale 0.1 rule).",
+    "poe2_live_rule": "In PoE2 0.2-0.5.5, available revives per Waystone scale inversely with modifier count: Normal (0 mods) = 5 revives; Magic (2 mods) = 4 revives; 4-mod Rare = 2 revives; 6-mod Rare = 0 revives (dying once bricks the map). Boss Atlas Difficulty above 0 also reduces boss respawn attempts (capped at Difficulty 4).",
+    "formula_expr": "Revives(0 mods)=5, Revives(2 mods)=4, Revives(4 mods)=2, Revives(6 mods)=0",
+    "source_ref": "RePoE keywords.min.json[Waystone, AtlasDifficulty] & Patch 0.2-0.5 Atlas rules",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "tablets_in_map_device_and_towers",
+    "title": "Tablets Go Directly Into the Map Device (Stale Lost-Tower Slotting Trap!)",
+    "category": "atlas",
+    "tags": [
+      "tablet",
+      "precursor tower",
+      "map device",
+      "atlas",
+      "juicing"
+    ],
+    "poe1_or_stale_trap": "Telling players to slot Precursor Tablets inside completed Lost Towers on the Atlas (the obsolete 0.1-0.3 mechanic) or calling them Scarabs.",
+    "poe2_live_rule": "In PoE2 0.5.5, Tablets (Breach, Ritual, Delirium, Expedition, Abyss, Irradiated, Overseer, Temple) are placed DIRECTLY into the Map Device alongside your Waystone to add mechanics and multipliers to your maps! Precursor Towers on the Atlas are run to defeat the boss and activate the Precursor Beacon, revealing a large fog radius and dropping a Tablet.",
+    "formula_expr": "MapDeviceInputs = Waystone + Tablet(s)",
+    "source_ref": "RePoE keywords.min.json[Tablet, PrecursorTower]",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "atlas_masters_and_pinnacles_0_5",
+    "title": "Patch 0.5 Masters of the Atlas (Jado, Hilda, Doryani), Trials & Pinnacle Bosses",
+    "category": "atlas",
+    "tags": [
+      "atlas",
+      "masters",
+      "jado",
+      "hilda",
+      "doryani",
+      "arbiter of ash",
+      "ascendancy",
+      "sekhemas",
+      "trial of chaos"
+    ],
+    "poe1_or_stale_trap": "Referencing Kirac, Maven, Searing Exarch, Eater of Worlds, or the Lord's Labyrinth for Ascendancy points.",
+    "poe2_live_rule": "PoE2 0.5.5 features the Infinite Atlas with Masters of the Atlas (Jado, Hilda, Doryani) and mechanic-specific Atlas Passive Trees. Ascendancy Points 1-8 come from Trial of the Sekhemas (Honour) and/or Trial of Chaos (overhauled in 0.5.5) — there is NO Labyrinth. Core Pinnacles: Arbiter of Ash (+ Uber Arbiter via Crisis/Calamity fragments in Burning Monolith), Xesht (Breach), Olroth (Expedition), King in the Mists (Ritual), Simulacrum (Delirium), and Abyss Lords (Amanamu, Kurgal, Ulaman).",
+    "formula_expr": "AscendancyPoints = 8 max (4 sets of 2 via Sekhemas / Trial of Chaos)",
+    "source_ref": "PoE2 Patch 0.3-0.5.5 Atlas & Pinnacle progression",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "crafting_no_scour_no_alteration_no_bench",
+    "title": "Zero Orb of Scouring, Zero Orb of Alteration, Zero PoE1 Crafting Bench",
+    "category": "crafting",
+    "tags": [
+      "scouring",
+      "alteration",
+      "crafting bench",
+      "prefixes cannot be changed",
+      "reforging bench"
+    ],
+    "poe1_or_stale_trap": "Advising 'Alt-spam for +2 skills, Imprint, Regal, then craft Prefixes Cannot Be Changed + Scour' — NONE of those exist in PoE2!",
+    "poe2_live_rule": "Orb of Scouring, Orb of Alteration, Eternal Imprints, and the PoE1 Crafting Bench ('Prefixes/Suffixes Cannot Be Changed', 'Cannot Roll Attack/Caster Mods') DO NOT EXIST in PoE2! Dormant rows in raw BaseItemTypes.datc64 are unobtainable PoE1 leftovers. PoE2 crafting uses Forward Progression + In-Place Surgery (Tiered Orbs, Essences, Perfect Essences, Alloys, Desecration Bones, and Ritual/Abyss Omens) plus the 3-to-1 Reforging Bench.",
+    "formula_expr": "Available(Scouring, Alteration, BenchMetaMods) = FALSE",
+    "source_ref": "EE2 items.ndjson live item whitelist vs RePoE base_items.min.json",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "crafting_tier_numbering_t1_is_best",
+    "title": "In-Game Modifier Tier 1 is BEST Since Patch 0.2.1 (Internal IDs Are Inverted!)",
+    "category": "crafting",
+    "tags": [
+      "tier 1",
+      "t1",
+      "modifier tier",
+      "tooltip",
+      "datamined"
+    ],
+    "poe1_or_stale_trap": "Either telling players 'In PoE2 Tier 1 is the worst tier and Tier 10 is the best' (stale 0.1.0 rule) OR reading RePoE/PoB2 mod ID 'Strength1' (+5-8 Str, ilvl 1) and calling it 'Tier 1'!",
+    "poe2_live_rule": "Patch 0.2.1 reversed in-game item modifier tier numbering so Tier 1 (T1) is ALWAYS the strongest/highest tier on that base! However, internal GGG .datc64 / RePoE / PoB2 IDs (e.g. Strength1..Strength9) still number 1 as ilvl 1 (weakest). Tools MUST convert: display_tier = total_family_tiers_on_base - zero_based_asc_index.",
+    "formula_expr": "DisplayTier = TotalTiersInFamilyOnBase - AscIndex0 (1 = Best)",
+    "source_ref": "PoE2 Patch 0.2.1 Notes & RePoE mods_by_base.min.json",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "crafting_tiered_basic_orbs_floors",
+    "title": "Greater & Perfect Transmute / Augment / Regal / Exalt / Chaos Minimum Modifier Levels",
+    "category": "crafting",
+    "tags": [
+      "greater exalted orb",
+      "perfect exalted orb",
+      "greater chaos orb",
+      "perfect chaos orb",
+      "greater transmutation",
+      "minimum modifier level"
+    ],
+    "poe1_or_stale_trap": "Ignoring Greater and Perfect currency tiers or guessing wrong minimum ilvl cutoffs across Magic vs Rare orbs.",
+    "poe2_live_rule": "PoE2 basic crafting orbs come in 3 strengths (Basic, Greater, Perfect) enforcing a Minimum Modifier Level floor on newly rolled tiers: (1) Transmutation & Augmentation: Greater = floor 55, Perfect = floor 70; (2) Regal, Exalted & Chaos: Greater = floor 35, Perfect = floor 50. Culling low-level tiers shrinks the denominator dramatically — unless your desired mod's highest tier is below the floor (or if no tier of a family meets the floor, check per-family eligibility).",
+    "formula_expr": "Floor(Transmute/Aug) = {1, 55, 70}; Floor(Regal/Exalt/Chaos) = {1, 35, 50}",
+    "source_ref": "RePoE base_items.min.json[Currency*2, Currency*3] & PoE2DB item data",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "crafting_essences_vs_perfect_corrupted_essences",
+    "title": "Regular Essences Are Magic->Rare Regals; Perfect & Corrupted Essences Are Rare Remove-1-Add-1 Swaps",
+    "category": "crafting",
+    "tags": [
+      "essence",
+      "lesser essence",
+      "greater essence",
+      "perfect essence",
+      "corrupted essence",
+      "crystallisation"
+    ],
+    "poe1_or_stale_trap": "Treating PoE2 Essences like PoE1 Essences/Alchemy Orbs that reforge a Normal or Rare item with 4-6 new random modifiers.",
+    "poe2_live_rule": "PoE2 Essences work completely differently from PoE1: (1) Lesser, Normal, and Greater Essences (19 families) act as targeted Regal Orbs — they upgrade a MAGIC item to a RARE item, adding 1 deterministic guaranteed modifier while keeping existing Magic modifiers! (2) Perfect Essences (19 families) and Corrupted Essences (Horror, Hysteria, Insanity, Delirium, the Breach, the Abyss) apply to a RARE item, removing 1 random existing modifier and adding 1 guaranteed modifier (pair with Omen of Sinistral/Dextral Crystallisation to force removal from Prefixes or Suffixes only!).",
+    "formula_expr": "Lesser/Normal/Greater: Magic -> Rare (+1 forced); Perfect/Corrupted: Rare -> Rare (-1 random [or P/S w/ Omen], +1 forced)",
+    "source_ref": "RePoE base_items.min.json & PoE2DB ModsView[essence, perfect_essence]",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "crafting_verisium_alloys_and_runeforging_0_5",
+    "title": "Patch 0.5 Verisium Anvil Runeforging & 13 Deterministic Alloys",
+    "category": "crafting",
+    "tags": [
+      "verisium",
+      "runeforging",
+      "alloys",
+      "runes of aldur",
+      "remnants",
+      "adaptive alloy",
+      "transcendent alloy"
+    ],
+    "poe1_or_stale_trap": "Missing Patch 0.5's Verisium Anvil / Runeforging system or recommending phased-out Recombinators instead.",
+    "poe2_live_rule": "Patch 0.5 (Return of the Ancients / Runes of Aldur) introduced Kalguuran Remnants & Verisium Runeforging: combining exact sequences of Runes (tracked in VerisiumCrafts.lua & remnants.json) crafts advanced Runes, Runeforged bases, Unique upgrades, and 13 Verisium Alloys (Runic, Adaptive, Protective, Expansive, Swift, Cyclonic, Prismatic, Mystic, Sovereign, Celestial, Transcendent, Runebinder's, Runefather's). Each Alloy acts on a Rare item to remove 1 random modifier and add 1 guaranteed high-end modifier.",
+    "formula_expr": "Alloy: Rare -> Rare (-1 random mod, +1 guaranteed Alloy mod)",
+    "source_ref": "PoB2 v0.23.1 Data/VerisiumCrafts.lua, EE2 remnants.json & RePoE base_items.min.json",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "crafting_homogenising_and_recombinators_removed",
+    "title": "Omen of Homogenising Exaltation/Coronation (Removed 0.4) & Recombinators (Phased Out 0.5)",
+    "category": "crafting",
+    "tags": [
+      "homogenising exaltation",
+      "recombinator",
+      "removed",
+      "legacy",
+      "omen"
+    ],
+    "poe1_or_stale_trap": "Building crafting plans around 'Omen of Homogenising Exaltation' (0.1-0.3 meta) or 'Recombinators' (0.2-0.4 meta) in a live 0.5.5 league.",
+    "poe2_live_rule": "GGG removed Omen of Homogenising Exaltation and Omen of Homogenising Coronation from drop pools in Patch 0.4 because tag-matching Exalts made crafting too deterministic, and phased out Recombinators in Patch 0.5 alongside the Verisium Runeforging overhaul. Legacy copies still appear in Standard trade dictionaries, so active-league planners MUST exclude them by default.",
+    "formula_expr": "ActiveInLeague_0_5_5(HomogenisingOmens, Recombinator) = FALSE",
+    "source_ref": "PoE2 Patch 0.4 & 0.5 Crafting Notes",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "crafting_omens_sinistral_dextral_whittling_catalysing",
+    "title": "Active Crafting Omens: Sinistral (Prefix), Dextral (Suffix), Whittling & Catalysing",
+    "category": "crafting",
+    "tags": [
+      "omen",
+      "sinistral",
+      "dextral",
+      "whittling",
+      "erasure",
+      "annulment",
+      "catalysing exaltation"
+    ],
+    "poe1_or_stale_trap": "Confusing Sinistral vs Dextral sides or forgetting Omen of Whittling removes by lowest modifier required_level (not display tier number!).",
+    "poe2_live_rule": "Right-clicked active Omens in inventory modify the next orb: 'Sinistral' ALWAYS targets Prefixes; 'Dextral' ALWAYS targets Suffixes — covering Exaltation (Exalt), Coronation (Regal), Alchemy (max P or S), Annulment (Annul), Erasure (Chaos removal), Crystallisation (Perfect/Corrupted Essence removal), and Necromancy (Desecration). Omen of Greater Exaltation/Annulment adds/removes 2 mods. Omen of Catalysing Exaltation consumes Ring/Amulet/Jewel Catalyst quality to boost matching mod tag weights. Omen of Whittling forces a Chaos Orb to remove the modifier with the LOWEST required_level (ties broken uniformly).",
+    "formula_expr": "Sinistral -> Prefix; Dextral -> Suffix; Whittling -> argmin_m(m.required_level)",
+    "source_ref": "RePoE base_items.min.json[Omen*]",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "crafting_abyssal_desecration_bones_and_well",
+    "title": "Abyssal Desecration (Jawbones, Ribs, Collarbones), Well of Souls & Boss Omens",
+    "category": "crafting",
+    "tags": [
+      "desecrated",
+      "well of souls",
+      "jawbone",
+      "rib",
+      "collarbone",
+      "gnawed",
+      "preserved",
+      "ancient",
+      "amanamu",
+      "kurgal",
+      "ulaman",
+      "abyssal echoes",
+      "omen of light"
+    ],
+    "poe1_or_stale_trap": "Confusing Desecration with PoE1 Aisling/Veiled Chaos Orbs, trying to use Gnawed Bones on ilvl 82 endgame bases, or thinking an item can hold multiple Desecrated mods naturally.",
+    "poe2_live_rule": "Abyssal Bones Desecrate a Rare item by slot: Jawbones (Weapon/Quiver), Ribs (Armour), Collarbones (Amulets/Rings/Belts). Bone tiers: Gnawed (ilvl <= 64 ONLY), Preserved (any ilvl, floor=1), Ancient (any ilvl, minimum modifier level = 40!). If 6 mods are full, Desecration removes 1 random mod first; items with a Desecrated mod cannot be Desecrated again (unless removed via Annul + Omen of Light, which removes Desecrated mods with 100% certainty!). Unveiling at the Well of Souls presents 3 choices without replacement (rerollable once via Omen of Abyssal Echoes); Omen of the Liege / Blackblooded / Sovereign guarantees Amanamu / Kurgal / Ulaman faction mods.",
+    "formula_expr": "HitProb_Well = 1 - P(3 misses w/o replacement); w/ Echoes = 1 - (1 - HitProb_Well)^2",
+    "source_ref": "RePoE keywords.min.json[Abyssalify] & base_items.min.json[AbyssalBenchTicket*, Omen*]",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "crafting_essence_of_the_abyss_mark_loop",
+    "title": "Essence of the Abyss & Mark of the Abyssal Lord Deterministic Target Loop",
+    "category": "crafting",
+    "tags": [
+      "essence of the abyss",
+      "mark of the abyssal lord",
+      "desecrated",
+      "crystallisation"
+    ],
+    "poe1_or_stale_trap": "Risking a random 6-mod Desecration overwrite on finished prefixes/suffixes instead of isolating the slot with Essence of the Abyss.",
+    "poe2_live_rule": "Essence of the Abyss (Corrupted Essence; pairable with Sinistral/Dextral Crystallisation to remove only a bad Prefix or Suffix) places a placeholder 'Mark of the Abyssal Lord' modifier on a Rare item. When you subsequently apply an Abyssal Bone, Desecration deterministically targets and replaces the Mark with the Unrevealed Desecrated modifier — protecting your other 5 finished affixes!",
+    "formula_expr": "EssenceOfTheAbyss (+Crystallisation) -> MarkOfTheAbyss -> Bone replaces Mark 100%",
+    "source_ref": "RePoE base_items.min.json[CurrencyCorruptedEssenceAbyss] & Abyss crafting rules",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "crafting_fracturing_orb_4_mod_rule",
+    "title": "Fracturing Orb Locks 1 Random Mod on a Rare Item with >= 4 Modifiers (25% Optimal)",
+    "category": "crafting",
+    "tags": [
+      "fracturing orb",
+      "fractured",
+      "four mods",
+      "lock"
+    ],
+    "poe1_or_stale_trap": "Attempting to use a Fracturing Orb on a 2-mod Magic or 3-mod Regal'd Rare item.",
+    "poe2_live_rule": "Fracturing Orb requires a Rare item with AT LEAST 4 modifiers and permanently fractures 1 random modifier (probability 1/k for k in {4, 5, 6}; always fracture at exactly 4 mods for 25% max odds unless using placeholder manipulation). A Fractured mod can never be removed or altered by Annul, Chaos, Perfect Essence, or Desecration, and permanently blocks its mod family.",
+    "formula_expr": "P(Fracture target) = 1 / k where k = ModCount >= 4 (max 0.25 at k=4)",
+    "source_ref": "RePoE base_items.min.json[CurrencyFractureRare] & keywords.min.json[Fracture]",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "crafting_sanctification_and_corruption_finishers",
+    "title": "Sanctification (Divine + Omen of Sanctification: 0.78x-1.22x) vs Vaal Corruption",
+    "category": "crafting",
+    "tags": [
+      "sanctified",
+      "omen of sanctification",
+      "divine orb",
+      "vaal orb",
+      "omen of corruption",
+      "infuser"
+    ],
+    "poe1_or_stale_trap": "Not knowing what 'Sanctified' items are on trade or trying to craft further on a Sanctified item.",
+    "poe2_live_rule": "Using a Divine Orb while 'Omen of Sanctification' is active Sanctifies a Rare item: each modifier's numeric value is independently multiplied by a random factor in [78%, 122%] (capable of pushing +Skill Level or Spirit/Resist breakpoints past normal T1 caps!), locking the item against further currency crafting (standard Runes/Soul Cores with canSocketInCorruptedSanctified=true can still be socketed!). Vaal Orbs (+ Omen of Corruption to eliminate the no-change outcome) corrupt items unpredictably; Vaal Infusers push Quality up to 30% with corruption risk.",
+    "formula_expr": "SanctifiedModValue_i = ModValue_i * Uniform(0.78, 1.22); CraftingLocked = true",
+    "source_ref": "RePoE keywords.min.json[Sanctified, Corrupted] & base_items.min.json[Omen of Sanctification]",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "crafting_augment_sockets_overwrite_and_bonded",
+    "title": "Equipment Augment Sockets: Runes/Soul Cores/Idols CAN Be Overwritten (Stale 0.1 Trap!) + Shaman Bonded Mods",
+    "category": "crafting",
+    "tags": [
+      "runes",
+      "soul cores",
+      "idols",
+      "talisman",
+      "artificers orb",
+      "socket-bound",
+      "bonded",
+      "shaman"
+    ],
+    "poe1_or_stale_trap": "Warning players that 'once you socket a Rune into armour/weapons in PoE2, it is permanent forever and bricks the socket' (stale 0.1.0 launch behavior).",
+    "poe2_live_rule": "In PoE2 0.5.5, standard Augments (Runes, Soul Cores, Azmeri Idols, Ancient Augments — max 1 Ancient Augment equipped at once) placed into Artificer's Orb sockets CANNOT be retrieved, but CAN be overwritten/replaced by socketing a new Augment! The ONLY exception is 'Socket-bound' Augments (such as Atziri's Soul Cores), which explicitly state they cannot be removed or replaced. Additionally, Runes and Idols carry secondary 'Bonded' modifiers active only when the Druid Shaman's 'Wisdom of the Maji' notable is allocated.",
+    "formula_expr": "StandardAugmentOverwrite = Allowed; SocketBoundOverwrite = Forbidden",
+    "source_ref": "RePoE keywords.min.json[Augment, SocketBound, Ancient, ShamanOnlyMods] & augments.min.json",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "crafting_liquid_emotions_jewel_crafting",
+    "title": "Distilled / Liquid Emotions: Amulet Instilling AND Rare Jewel Deterministic Crafting",
+    "category": "crafting",
+    "tags": [
+      "liquid emotions",
+      "distilled emotions",
+      "delirium",
+      "instill",
+      "anoint",
+      "jewel",
+      "time-lost jewel"
+    ],
+    "poe1_or_stale_trap": "Assuming Delirium Distilled/Liquid Emotions are ONLY used to anoint/instill Amulets and Waystones.",
+    "poe2_live_rule": "In PoE2 0.5.5, 3-combinations of Liquid Emotions instill Notable passives onto Amulets (and Delirium layers onto Waystones), AND individual Liquid Emotions (Diluted/Normal/Concentrated/Potent) apply directly to Rare Basic Jewels (and Ancient Liquid Emotions to Rare Time-Lost Jewels) to remove 1 random modifier and augment 1 guaranteed crafted Jewel modifier!",
+    "formula_expr": "LiquidEmotion on Rare Jewel: -1 random mod, +1 guaranteed Delirium Jewel mod",
+    "source_ref": "RePoE base_items.min.json[DistilledEmotion*] & PoE2DB ModsView[liquid]",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "culling_strike_rarity_thresholds",
+    "title": "Culling Strike Thresholds Scale by Monster Rarity (35% / 20% / 10% / 5%)",
+    "category": "combat",
+    "tags": [
+      "culling strike",
+      "execute",
+      "unique boss",
+      "rare monster"
+    ],
+    "poe1_or_stale_trap": "Assuming Culling Strike kills all enemies including Unique Pinnacle Bosses at 10% Life like PoE1.",
+    "poe2_live_rule": "In PoE2, Culling Strike thresholds depend on monster rarity: Normal monsters = 35% Life, Magic monsters = 20% Life, Rare monsters = 10% Life, and Unique bosses = 5% Life!",
+    "formula_expr": "CullThreshold = {Normal: 35%, Magic: 20%, Rare: 10%, Unique: 5%}",
+    "source_ref": "PoB2 v0.23.1 Data/Misc.lua CullingStrike*Threshold",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "leech_one_second_and_40k_hit_cap",
+    "title": "Life/Mana/ES Leech Recovers Over 1 Second & Caps Per-Hit Input at 40,000 Damage",
+    "category": "defence",
+    "tags": [
+      "leech",
+      "life leech",
+      "mana leech",
+      "energy shield leech",
+      "leech resistance"
+    ],
+    "poe1_or_stale_trap": "Applying PoE1's complex 2%/sec per instance, 10% max leech cap, 20% total leech rate cap formulas.",
+    "poe2_live_rule": "In PoE2, each Hit with Leech recovers the leeched amount linearly over 1.0 second (modified by monster Leech Resistance), and hits dealing more than 40,000 total damage are treated as 40,000 damage for Leech calculations (EffectiveMaxDamageForLeech = 40000).",
+    "formula_expr": "LeechInstance = min(HitDamage, 40000) * LeechPct * (1 - MonsterLeechRes) over 1.0s",
+    "source_ref": "RePoE keywords.min.json[EnergyShieldLeech] & PoB2 Data/Misc.lua",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "armour_and_shield_movement_speed_penalties",
+    "title": "Equipped Body Armour & Shield Inherent Movement Speed Penalties",
+    "category": "defence",
+    "tags": [
+      "movement speed",
+      "body armour",
+      "shield",
+      "penalty",
+      "sprint"
+    ],
+    "poe1_or_stale_trap": "Ignoring hidden movement speed penalties on Strength Body Armours and Tower Shields, or forgetting PoE2's Sprint mechanic.",
+    "poe2_live_rule": "Body Armours and Shields apply inherent hidden movement speed penalties based on attribute requirements (pure Str Body Armour has the largest penalty, Dex/Int lightest). Holding Dodge Roll transitions into Sprint (+50% movement speed, dodge_roll_sprint_minimum_time_ms=100), but getting Hit while Sprinting causes heavy stun vulnerability.",
+    "formula_expr": "SprintSpeedBonus = +50% movement speed (stun vulnerable if hit)",
+    "source_ref": "RePoE keywords.min.json[ArmourPenalties] & PoB2 Data/Misc.lua",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "druid_shapeshifting_and_talismans_0_4",
+    "title": "Patch 0.4 Druid Class, Bear/Wolf/Wyvern Shapeshifting & Talisman Weapon Class",
+    "category": "gems",
+    "tags": [
+      "druid",
+      "shaman",
+      "bear",
+      "wolf",
+      "wyvern",
+      "shapeshift",
+      "talisman"
+    ],
+    "poe1_or_stale_trap": "Saying Druid is unreleased in PoE2 (stale 0.1-0.3 info) or confusing PoE2 Talismans (a 2-Handed Martial Weapon class!) with PoE1 Talisman League amulets.",
+    "poe2_live_rule": "Patch 0.4.0 (Last of the Druids) released the Str/Int Druid class with full Bear, Wolf, and Wyvern shapeshifting skills. Crucially, 'Talismans' in PoE2 are an equippable Weapon Class (used for Primal/Shapeshift attacks, rolling weapon attack prefixes/suffixes), NOT corrupted amulets like PoE1!",
+    "formula_expr": "PoE2 Talisman = Martial Weapon Class (NOT Amulet)",
+    "source_ref": "PoE2DB /us/Talismans & PoB2 v0.23.1 Data/Bases/",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "classes_released_vs_1_0_upcoming",
+    "title": "Playable Classes in Patch 0.5.5 vs Shadow & Duelist Arriving in 1.0 (Dec 11, 2026)",
+    "category": "combat",
+    "tags": [
+      "classes",
+      "ascendancy",
+      "warrior",
+      "monk",
+      "mercenary",
+      "witch",
+      "sorceress",
+      "ranger",
+      "huntress",
+      "druid",
+      "shadow",
+      "duelist"
+    ],
+    "poe1_or_stale_trap": "Recommending Shadow (Assassin/Trickster/Saboteur), Duelist (Slayer/Gladiator/Champion), Marauder, or Scion builds in PoE2 0.5.5, or saying Huntress/Druid aren't out yet.",
+    "poe2_live_rule": "Through Patch 0.5.5, PoE2 has 8 playable classes (Warrior, Ranger, Huntress [0.2], Mercenary, Sorceress, Witch, Monk, Druid [0.4]) across 23 Ascendancies. Shadow and Duelist (plus Acts 5 & 6) launch in Version 1.0.0 on December 11, 2026; Scion does not exist in PoE2.",
+    "formula_expr": "LiveClasses_0_5_5 = {Warrior, Ranger, Huntress, Mercenary, Sorceress, Witch, Monk, Druid}",
+    "source_ref": "PoB2 v0.23.1 tree 0_5 & PoE2 0.2-1.0 Roadmap",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "vaal_temple_incursion_currencies_0_4",
+    "title": "Vaal Temple / Incursion Currencies: Architect's Orb, Vaal Cultivation Orb & Orbs of Sacrifice",
+    "category": "crafting",
+    "tags": [
+      "architects orb",
+      "vaal cultivation orb",
+      "orb of sacrifice",
+      "double corrupt",
+      "incursion",
+      "core destabiliser"
+    ],
+    "poe1_or_stale_trap": "Looking for PoE1 Locus of Corruption Altar rooms instead of PoE2's itemized Vaal Temple currencies.",
+    "poe2_live_rule": "Patch 0.4's Vaal Temple introduced itemized corruption currencies: Architect's Orb (double-corrupts an already Corrupted Equipment/Jewel or destroys it), Vaal Cultivation Orb (mutates up to 2 mods on a Vaal Unique or transforms another Unique into a Corrupted Unique), Orbs of Sacrifice (Yaomac/Kopec/Kamasa/Yugul — upgrade a Corruption Enchantment on Rare Weapon/Armour/Jewellery/Jewel while removing a random mod), Ancient Infuser (corrupts a Tablet), and Core Destabiliser (mutates a Soul Core).",
+    "formula_expr": "ArchitectsOrb: Corrupted Item -> Twice Corrupted | Destroyed",
+    "source_ref": "RePoE base_items.min.json[CurrencyIncursion*]",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "gold_economy_respec_gamble_async_trade",
+    "title": "Gold is Account-Bound Utility Currency (Passive Respec, Gambling & Instant Buyout Trade Fees)",
+    "category": "atlas",
+    "tags": [
+      "gold",
+      "respec",
+      "orb of regret",
+      "currency exchange",
+      "instant buyout",
+      "alva"
+    ],
+    "poe1_or_stale_trap": "Telling players to buy Orbs of Regret to respec their passive tree.",
+    "poe2_live_rule": "Orbs of Regret do NOT drop in PoE2! Passive Tree and Ascendancy respecs cost Gold (scaling from 15 Gold at level 1 up to ~10,129 Gold per point at high level; Atlas passive respec = 5,000 Gold). Non-tradable Gold also pays Alva's Currency Exchange fees, Asynchronous Instant Buyout trade fees, and NPC Gambling.",
+    "formula_expr": "PassiveRespecCurrency = Gold (NO Orbs of Regret)",
+    "source_ref": "PoB2 v0.23.1 Data/Misc.lua goldRespecPrices & AtlasPassiveRespecCost",
+    "patch_verified": "0.5.5"
+  }
+]
