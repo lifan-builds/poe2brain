@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -352,8 +353,12 @@ def test_shorthand_planner_recipe_and_removed_lever_rejection(
     os.environ.get("POE2_LIVE_TESTS") != "1",
     reason="Set POE2_LIVE_TESTS=1 to verify live trade2 complexity cap on craft profit",
 )
-def test_live_craft_profit_unauth_trade2_roundtrip() -> None:
-    with CraftProfitScanner() as sc:
+def test_live_craft_profit_unauth_trade2_roundtrip(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("POE2BRAIN_CACHE_DIR", str(tmp_path))
+    with CraftProfitScanner(trade_cache_ttl_seconds=0) as sc:
         by_id = {r.recipe_id: r for r in sc.default_recipes()}
         target_recipes = [
             by_id["staff_plus6_spell_archmage"],

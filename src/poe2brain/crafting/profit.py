@@ -1439,14 +1439,16 @@ class CraftProfitScanner:
                 )
                 return res.model_dump(mode="json")
 
-            # Bypass disk cache when a custom mock Trade2Client is injected in tests
-            if self._trade2 is not None and not self._owns_trade2:
+            # Bypass disk cache when a non-Trade2Client test double is injected
+            if self._trade2 is not None and not isinstance(self._trade2, Trade2Client):
                 raw_res = _fetch_live()
             else:
                 raw_res = get_cached_json(
                     cache_key,
                     ttl_seconds=self.trade_cache_ttl_seconds,
                     fetcher=_fetch_live,
+                    force_refresh=(self.trade_cache_ttl_seconds <= 0),
+                    allow_stale_on_error=(self.trade_cache_ttl_seconds > 0),
                 )
 
             if network_hit:
