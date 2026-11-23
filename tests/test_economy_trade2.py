@@ -656,6 +656,441 @@ def test_economy_service_normalization_bulk_zero_guard_and_no_stash_url(tmp_path
         http_client.close()
 
 
+def test_trade2_exchange_defaults_status_to_online(tmp_path: Path) -> None:
+    import asyncio
+    import json as _json
+
+    from poe2brain.trade import ArbitrageOpportunity, ArbitrageScanner, ArbitrageScanReport
+
+    assert ArbitrageScanner is not None
+    assert ArbitrageScanReport is not None
+    assert ArbitrageOpportunity is not None
+
+    seen_exchange_statuses: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/api/trade2/exchange/poe2/"):
+            payload = _json.loads(request.content.decode("utf-8"))
+            seen_exchange_statuses.append(payload["query"]["status"]["option"])
+            return httpx.Response(
+                200,
+                json={"id": "exch_123", "total": 4, "result": {}},
+            )
+        raise AssertionError(f"Unexpected path: {request.url.path}")
+
+    http_client = Poe2HttpClient(
+        sync_transport=httpx.MockTransport(handler),
+        async_transport=httpx.MockTransport(handler),
+    )
+    tclient = Trade2Client(http_client=http_client, cache_dir=tmp_path)
+    try:
+        res_sync = tclient.exchange("divine", "chaos", league="Forbidden Rites")
+        assert res_sync.id == "exch_123"
+        res_any = tclient.exchange("divine", "chaos", league="Forbidden Rites", status_option="any")
+        assert res_any.id == "exch_123"
+        res_async = asyncio.run(tclient.aexchange("divine", "chaos", league="Forbidden Rites"))
+        assert res_async.id == "exch_123"
+        assert seen_exchange_statuses == ["online", "any", "online"]
+    finally:
+        http_client.close()
+
+
+def test_economy_reliquary_key_disambiguation_troll_filter_and_lag_free_spread(
+    tmp_path: Path,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/poe2/Leagues/Forbidden Rites/ReferenceCurrencies":
+            # poe2scout Divine=510 Ex vs poe.ninja Divine=450 Ex (13.3% Ex/Div index lag)
+            return httpx.Response(
+                200,
+                json=[
+                    {"ApiId": "exalted", "Text": "Exalted Orb", "RelativePrice": 1.0},
+                    {"ApiId": "chaos", "Text": "Chaos Orb", "RelativePrice": 40.8},
+                    {"ApiId": "divine", "Text": "Divine Orb", "RelativePrice": 510.0},
+                ],
+            )
+        if path == "/poe2/Leagues/Forbidden Rites/Items":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "ItemId": 1,
+                        "CategoryApiId": "currency",
+                        "ApiId": "exalted",
+                        "Text": "Exalted Orb",
+                        "CurrentPrice": 1.0,
+                    },
+                    {
+                        "ItemId": 2,
+                        "CategoryApiId": "currency",
+                        "ApiId": "chaos",
+                        "Text": "Chaos Orb",
+                        "CurrentPrice": 40.8,
+                    },
+                    {
+                        "ItemId": 3,
+                        "CategoryApiId": "currency",
+                        "ApiId": "divine",
+                        "Text": "Divine Orb",
+                        "CurrentPrice": 510.0,
+                    },
+                    # Placeholder internal item that must be filtered out
+                    {
+                        "ItemId": 10,
+                        "CategoryApiId": "weapon",
+                        "ApiId": None,
+                        "Name": "INCOMPLETE Dull Hatchet",
+                        "Type": "Dull Hatchet",
+                        "Text": "INCOMPLETE Dull Hatchet",
+                        "CurrentPrice": 999.0,
+                    },
+                    # Unique Jewel vs Zarokh's Reliquary Key sharing ApiId="against-the-darkness"
+                    {
+                        "ItemId": 221,
+                        "CategoryApiId": "jewel",
+                        "ApiId": None,
+                        "Name": "Against the Darkness",
+                        "Type": "Time-Lost Diamond",
+                        "Text": "Against the Darkness Time-Lost Diamond",
+                        "CurrentPrice": 1980.0,
+                    },
+                    {
+                        "ItemId": 477,
+                        "CategoryApiId": "vaultkeys",
+                        "ApiId": "against-the-darkness",
+                        "Name": None,
+                        "Text": "Zarokh's Reliquary Key: Against the Darkness",
+                        "CurrentPrice": 99000.0,
+                    },
+                    # Priced Unique Armour vs unpriced Reliquary Key on ApiId="sandstorm-visage"
+                    {
+                        "ItemId": 230,
+                        "CategoryApiId": "armour",
+                        "ApiId": None,
+                        "Name": "Sandstorm Visage",
+                        "Type": "Chain Tiara",
+                        "Text": "Sandstorm Visage Chain Tiara",
+                        "CurrentPrice": 2250.0,
+                    },
+                    {
+                        "ItemId": 480,
+                        "CategoryApiId": "vaultkeys",
+                        "ApiId": "sandstorm-visage",
+                        "Name": None,
+                        "Text": "Zarokh's Reliquary Key: Sandstorm Visage",
+                        "CurrentPrice": None,
+                    },
+                    # Zero-volume single-listing poe2scout troll quotes
+                    {
+                        "ItemId": 301,
+                        "CategoryApiId": "currency",
+                        "ApiId": "orb-of-transmutation",
+                        "Text": "Orb of Transmutation",
+                        "CurrentPrice": 2.2,
+                    },
+                    {
+                        "ItemId": 302,
+                        "CategoryApiId": "currency",
+                        "ApiId": "greater-orb-of-transmutation",
+                        "Text": "Greater Orb of Transmutation",
+                        "CurrentPrice": 5.5,
+                    },
+                    {
+                        "ItemId": 303,
+                        "CategoryApiId": "currency",
+                        "ApiId": "perfect-orb-of-transmutation",
+                        "Text": "Perfect Orb of Transmutation",
+                        "CurrentPrice": 14.0,
+                    },
+                    {
+                        "ItemId": 304,
+                        "CategoryApiId": "currency",
+                        "ApiId": "transmutation-shard",
+                        "Text": "Transmutation Shard",
+                        "CurrentPrice": 414.4,
+                    },
+                    {
+                        "ItemId": 310,
+                        "CategoryApiId": "runes",
+                        "ApiId": "lesser-charging-rune",
+                        "Text": "Lesser Charging Rune",
+                        "CurrentPrice": 7649.0,
+                    },
+                    {
+                        "ItemId": 311,
+                        "CategoryApiId": "runes",
+                        "ApiId": "greater-charging-rune",
+                        "Text": "Greater Charging Rune",
+                        "CurrentPrice": 2.0,
+                    },
+                    {
+                        "ItemId": 312,
+                        "CategoryApiId": "runes",
+                        "ApiId": "lesser-glacial-rune",
+                        "Text": "Lesser Glacial Rune",
+                        "CurrentPrice": 503.0,
+                    },
+                    {
+                        "ItemId": 320,
+                        "CategoryApiId": "essences",
+                        "ApiId": "essence-of-ruin",
+                        "Text": "Essence of Ruin",
+                        "CurrentPrice": 1343.0,
+                    },
+                    {
+                        "ItemId": 321,
+                        "CategoryApiId": "essences",
+                        "ApiId": "greater-essence-of-ruin",
+                        "Text": "Greater Essence of Ruin",
+                        "CurrentPrice": 1.2,
+                    },
+                    # Pure Ex/Div index-lag item: 2.0 Div in scout (1020/510) AND 2.0 Div in ninja
+                    {
+                        "ItemId": 401,
+                        "CategoryApiId": "currency",
+                        "ApiId": "perfect-exalted-orb",
+                        "Text": "Perfect Exalted Orb",
+                        "CurrentPrice": 1020.0,
+                    },
+                    # Genuine Divine-normalized spread: 2.0 Div scout (1020/510) vs 2.6 Div ninja
+                    {
+                        "ItemId": 402,
+                        "CategoryApiId": "currency",
+                        "ApiId": "vaal-cultivation-orb",
+                        "Text": "Vaal Cultivation Orb",
+                        "CurrentPrice": 1020.0,
+                    },
+                ],
+            )
+        if path == "/poe2/api/economy/exchange/current/overview":
+            extype = request.url.params.get("type")
+            core = {"primary": "divine", "rates": {"exalted": 450.0, "chaos": 12.5}}
+            if extype == "Currency":
+                return httpx.Response(
+                    200,
+                    json={
+                        "core": core,
+                        "lines": [
+                            {
+                                "id": "divine",
+                                "primaryValue": 1.0,
+                                "volumePrimaryValue": 8500.0,
+                                "maxVolumeCurrency": "chaos",
+                            },
+                            {
+                                "id": "chaos",
+                                "primaryValue": 0.08,
+                                "volumePrimaryValue": 4000.0,
+                                "maxVolumeCurrency": "divine",
+                            },
+                            {
+                                "id": "orb-of-transmutation",
+                                "primaryValue": 2.16 / 450.0,
+                                "volumePrimaryValue": 12.0,
+                            },
+                            {
+                                "id": "greater-orb-of-transmutation",
+                                "primaryValue": 0.28 / 450.0,
+                                "volumePrimaryValue": 0.02,
+                            },
+                            {
+                                "id": "perfect-orb-of-transmutation",
+                                "primaryValue": 13.6 / 450.0,
+                                "volumePrimaryValue": 5.0,
+                            },
+                            {
+                                "id": "prismatic-alloy",
+                                "primaryValue": 0.05 / 450.0,
+                                "volumePrimaryValue": 0.01,
+                            },
+                            {
+                                "id": "perfect-exalted-orb",
+                                "primaryValue": 2.0,
+                                "volumePrimaryValue": 500.0,
+                                "maxVolumeCurrency": "divine",
+                            },
+                            {
+                                "id": "vaal-cultivation-orb",
+                                "primaryValue": 2.6,
+                                "volumePrimaryValue": 120.0,
+                                "maxVolumeCurrency": "divine",
+                            },
+                        ],
+                        "items": [
+                            {"id": "divine", "name": "Divine Orb"},
+                            {"id": "chaos", "name": "Chaos Orb"},
+                            {"id": "orb-of-transmutation", "name": "Orb of Transmutation"},
+                            {
+                                "id": "greater-orb-of-transmutation",
+                                "name": "Greater Orb of Transmutation",
+                            },
+                            {
+                                "id": "perfect-orb-of-transmutation",
+                                "name": "Perfect Orb of Transmutation",
+                            },
+                            {"id": "prismatic-alloy", "name": "Prismatic Alloy"},
+                            {"id": "perfect-exalted-orb", "name": "Perfect Exalted Orb"},
+                            {"id": "vaal-cultivation-orb", "name": "Vaal Cultivation Orb"},
+                        ],
+                    },
+                )
+            if extype == "Ritual":
+                return httpx.Response(
+                    200,
+                    json={
+                        "core": core,
+                        "lines": [
+                            {
+                                "id": "omen-of-the-liege",
+                                "primaryValue": 0.09 / 450.0,
+                                "volumePrimaryValue": 0.01,
+                            }
+                        ],
+                        "items": [{"id": "omen-of-the-liege", "name": "Omen of the Liege"}],
+                    },
+                )
+            if extype == "Essences":
+                return httpx.Response(
+                    200,
+                    json={
+                        "core": core,
+                        "lines": [
+                            {
+                                "id": "greater-essence-of-ruin",
+                                "primaryValue": 1.2 / 450.0,
+                                "volumePrimaryValue": 2.0,
+                            },
+                            {
+                                "id": "lesser-essence-of-sorcery",
+                                "primaryValue": 1.0,
+                                "volumePrimaryValue": 0.01,
+                            },
+                            {
+                                "id": "greater-essence-of-sorcery",
+                                "primaryValue": 23.0 / 450.0,
+                                "volumePrimaryValue": 4.0,
+                            },
+                        ],
+                        "items": [
+                            {"id": "greater-essence-of-ruin", "name": "Greater Essence of Ruin"},
+                            {
+                                "id": "lesser-essence-of-sorcery",
+                                "name": "Lesser Essence of Sorcery",
+                            },
+                            {
+                                "id": "greater-essence-of-sorcery",
+                                "name": "Greater Essence of Sorcery",
+                            },
+                        ],
+                    },
+                )
+            if extype == "Runes":
+                return httpx.Response(
+                    200,
+                    json={
+                        "core": core,
+                        "lines": [
+                            {
+                                "id": "greater-charging-rune",
+                                "primaryValue": 2.0 / 450.0,
+                                "volumePrimaryValue": 3.0,
+                            },
+                            {
+                                "id": "lesser-glacial-rune",
+                                "primaryValue": 28.0 / 450.0,
+                                "volumePrimaryValue": 0.04,
+                            },
+                        ],
+                        "items": [
+                            {"id": "greater-charging-rune", "name": "Greater Charging Rune"},
+                            {"id": "lesser-glacial-rune", "name": "Lesser Glacial Rune"},
+                        ],
+                    },
+                )
+            if extype == "Fragments":
+                return httpx.Response(
+                    200,
+                    json={
+                        "core": core,
+                        "lines": [
+                            {
+                                "id": "against-the-darkness",
+                                "primaryValue": 220.0,
+                                "volumePrimaryValue": 15.0,
+                            }
+                        ],
+                        "items": [
+                            {
+                                "id": "against-the-darkness",
+                                "name": "Zarokh's Reliquary Key: Against the Darkness",
+                                "detailsId": "zarokhs-reliquary-key-against-the-darkness",
+                            }
+                        ],
+                    },
+                )
+            return httpx.Response(200, json={"core": core, "lines": [], "items": []})
+        if path == "/poe2/Leagues/Forbidden Rites/Uniques/ByCategory":
+            return httpx.Response(200, json={"CurrentPage": 1, "Pages": 1, "Total": 0, "Items": []})
+        raise AssertionError(f"Unexpected path: {path}")
+
+    http_client = Poe2HttpClient(sync_transport=httpx.MockTransport(handler))
+    econ = EconomyService(
+        http_client=http_client,
+        cache_dir=tmp_path,
+        ninja_exchange_types=("Currency", "Ritual", "Essences", "Runes", "Fragments"),
+    )
+    try:
+        # 1. INCOMPLETE placeholder rows filtered out
+        assert econ.get_price("INCOMPLETE Dull Hatchet", "Forbidden Rites") is None
+
+        # 2. Reliquary Key disambiguation preserves Unique Jewel & Unique Armour prices
+        atd = econ.get_price("Against the Darkness", "Forbidden Rites")
+        zrk = econ.get_price("Zarokh's Reliquary Key: Against the Darkness", "Forbidden Rites")
+        sv = econ.get_price("Sandstorm Visage", "Forbidden Rites")
+        assert atd is not None and atd.category == "jewel"
+        assert atd.exalted == pytest.approx(1980.0)
+        assert atd.divine == pytest.approx(1980.0 / 450.0)
+        assert zrk is not None and zrk.category == "vaultkeys"
+        assert zrk.divine == pytest.approx(220.0)
+        assert sv is not None and sv.category == "armour"
+        assert sv.exalted == pytest.approx(2250.0)
+
+        # 3. Zero-volume poe2scout troll quotes dropped; low-vol executed ninja trade kept
+        assert econ.get_price("Transmutation Shard", "Forbidden Rites") is None
+        assert econ.get_price("Lesser Charging Rune", "Forbidden Rites") is None
+        assert econ.get_price("Essence of Ruin", "Forbidden Rites") is None
+        glacial = econ.get_price("Lesser Glacial Rune", "Forbidden Rites")
+        assert glacial is not None and glacial.exalted == pytest.approx(28.0)
+
+        # 4. Bulk crafting prices sanitize thin-volume dust outliers & tier inversions
+        bulk = econ.get_bulk_crafting_prices("Forbidden Rites")
+        assert bulk["omen-of-the-liege"] is not None
+        assert bulk["omen-of-the-liege"].exalted == pytest.approx(25.0)
+        assert bulk["prismatic-alloy"] is not None
+        assert bulk["prismatic-alloy"].exalted == pytest.approx(25.0)
+        assert (
+            bulk["orb-of-transmutation"].exalted  # type: ignore[union-attr]
+            <= bulk["greater-orb-of-transmutation"].exalted  # type: ignore[union-attr]
+            <= bulk["perfect-orb-of-transmutation"].exalted  # type: ignore[union-attr]
+        )
+        assert (
+            bulk["lesser-essence-of-sorcery"].exalted  # type: ignore[union-attr]
+            < bulk["greater-essence-of-sorcery"].exalted  # type: ignore[union-attr]
+        )
+        assert bulk["omen-of-homogenising-exaltation"] is None
+        assert all(q is None or q.exalted > 0 for q in bulk.values())
+
+        # 5. Cross-source spread normalizes by each source's Divine rate (no fake Ex/Div lag!)
+        opps = econ.scan_market_opportunities("Forbidden Rites", min_volume_divine=5.0)
+        spread_ids = {o.id for o in opps if o.kind == "cross_source_spread"}
+        assert "perfect-exalted-orb" not in spread_ids
+        assert "divine" not in spread_ids
+        assert "vaal-cultivation-orb" in spread_ids
+    finally:
+        http_client.close()
+
+
 # ---------------------------------------------------------------------------
 # Live Integration Tests against `Forbidden Rites`
 # ---------------------------------------------------------------------------
@@ -694,6 +1129,8 @@ def test_live_economy_service_forbidden_rites(tmp_path: Path) -> None:
             assert quote.divine is not None and quote.divine > 0
 
         assert econ.get_price("exalted", league=DEFAULT_LEAGUE).exalted == 1.0  # type: ignore[union-attr]
+        atd_live = econ.get_price("Against the Darkness", league=DEFAULT_LEAGUE)
+        assert atd_live is not None and atd_live.category == "jewel"
 
         bulk = econ.get_bulk_crafting_prices(DEFAULT_LEAGUE)
         assert bulk["exalted"] is not None and bulk["exalted"].exalted == 1.0

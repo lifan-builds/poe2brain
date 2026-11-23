@@ -867,7 +867,6 @@ class BuildService:
         }
         if max_price_exalted is not None and max_price_exalted > 0:
             params["maxPrice"] = max_price_exalted
-            params["maxPriceType"] = "exalted"
 
         res = self.bridge.call("slot_stat_weights", params)
         base_summary = self.get_stats(slot=build_slot)

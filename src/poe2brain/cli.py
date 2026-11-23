@@ -18,6 +18,10 @@ from poe2brain.mcp_server import (
     execute_craft_odds,
     execute_craft_plan,
     execute_find_upgrades,
+    execute_inspect_ascendancy,
+    execute_meta_ladder,
+    execute_scan_arbitrage,
+    execute_scan_craft_profit,
     export_pob_slot,
     format_domain_error,
     get_build_service,
@@ -388,6 +392,111 @@ def wiki_runeforge_cmd(
                 f"[bold cyan]{rec['output_item']}[/bold cyan] "
                 f"({rec['category']}): {rec.get('inputs')}"
             )
+
+    _run_cli(json_output, _compute, _render)
+
+
+@wiki_app.command("ascendancy")
+def wiki_ascendancy_cmd(
+    name_or_class: Annotated[
+        str | None,
+        typer.Argument(
+            help="Ascendancy or base class name (omit to list all 23 PoE2 0.5.5 Ascendancies)."
+        ),
+    ] = None,
+    class_filter: Annotated[
+        str | None,
+        typer.Option("--class", "-c", help="Optional base class filter when listing Ascendancies."),
+    ] = None,
+    json_output: JsonOpt = False,
+) -> None:
+    """List all 23 PoE2 0.5.5 Ascendancies or inspect notables, choice nodes, and PoE1 traps."""
+
+    def _compute() -> dict[str, Any]:
+        return execute_inspect_ascendancy(
+            name_or_class=name_or_class,
+            class_filter=class_filter,
+        )
+
+    def _render(data: dict[str, Any]) -> None:
+        if data.get("mode") == "list":
+            table = Table(title=f"PoE2 {data.get('patch')} Ascendancies ({data['count']})")
+            table.add_column("Class", style="cyan")
+            table.add_column("Ascendancy", style="bold")
+            table.add_column("Summary")
+            for asc in data.get("ascendancies", []):
+                table.add_row(
+                    str(asc.get("class_name")),
+                    str(asc.get("name")),
+                    str(asc.get("summary") or "")[:96],
+                )
+            console.print(table)
+            return
+
+        for asc in data.get("ascendancies", []):
+            console.print(
+                f"[bold cyan]{asc['name']}[/bold cyan] ({asc['class_name']}) — "
+                f"{len(asc.get('notables', []))} notables"
+            )
+            if asc.get("summary"):
+                console.print(f"  [dim]{asc['summary']}[/dim]")
+            for nt in asc.get("notables", []):
+                stats_str = "; ".join(nt.get("stats") or [])
+                console.print(f"  • [bold]{nt['name']}[/bold]: {stats_str}")
+                for opt in nt.get("choice_options") or []:
+                    opt_stats = "; ".join(opt.get("stats") or [])
+                    console.print(f"      ↳ [cyan]{opt['name']}[/cyan]: {opt_stats}")
+
+    _run_cli(json_output, _compute, _render)
+
+
+@wiki_app.command("meta")
+def wiki_meta_cmd(
+    league: Annotated[str, typer.Option("--league", help="PoE2 league name.")] = DEFAULT_LEAGUE,
+    top_n: Annotated[
+        int, typer.Option("--top-n", help="Top ladder characters to inspect when available.")
+    ] = 200,
+    no_economy: Annotated[
+        bool, typer.Option("--no-economy", help="Skip live chase item demand signal enrichment.")
+    ] = False,
+    refresh: Annotated[
+        bool, typer.Option("--refresh", help="Bypass 30-minute ladder telemetry cache.")
+    ] = False,
+    json_output: JsonOpt = False,
+) -> None:
+    """Show live PoE2 SC/HC/SSF/HCSSF ladder shares, Ascendancy tier rankings, and chase demand."""
+
+    def _compute() -> dict[str, Any]:
+        return execute_meta_ladder(
+            league=league,
+            top_n=top_n,
+            include_economy_signals=not no_economy,
+            force_refresh=refresh,
+        )
+
+    def _render(data: dict[str, Any]) -> None:
+        div_s = f" | 1 Div = {data['divine_exalted']:.1f} Ex" if data.get("divine_exalted") else ""
+        table = Table(title=f"PoE2 {data['patch']} Ladder Meta — {data['league']}{div_s}")
+        table.add_column("#", justify="right", style="dim")
+        table.add_column("Tier", style="bold yellow")
+        table.add_column("Ascendancy", style="bold cyan")
+        table.add_column("Class")
+        table.add_column("SC %", justify="right")
+        table.add_column("HC %", justify="right")
+        table.add_column("SSF %", justify="right")
+        table.add_column("Score", justify="right")
+        for row in data.get("ascendancy_rankings", [])[:15]:
+            table.add_row(
+                str(row["rank"]),
+                str(row["tier"]),
+                str(row["ascendancy_name"]),
+                str(row["class_name"]),
+                f"{row['sc_share_pct']:.2f}%",
+                f"{row['hc_share_pct']:.2f}%",
+                f"{row['ssf_share_pct']:.2f}%",
+                f"{row['composite_score']:.1f}",
+            )
+        console.print(table)
 
     _run_cli(json_output, _compute, _render)
 
@@ -1000,6 +1109,78 @@ def econ_scan_cmd(
     _run_cli(json_output, _compute, _render)
 
 
+@econ_app.command("arbitrage")
+def econ_arbitrage_cmd(
+    min_volume_divine: Annotated[
+        float,
+        typer.Option("--min-volume-divine", help="Minimum leg liquidity in Divines."),
+    ] = 2.0,
+    min_roi_pct: Annotated[
+        float, typer.Option("--min-roi-pct", help="Minimum gross ROI percentage.")
+    ] = 5.0,
+    live_books: Annotated[
+        bool,
+        typer.Option(
+            "--live-books/--no-live-books",
+            help="Probe live online /api/trade2/exchange order books and triangular cycles.",
+        ),
+    ] = True,
+    encounter_gated: Annotated[
+        bool,
+        typer.Option(
+            "--encounter-gated/--no-encounter-gated",
+            help="Include encounter-gated Kalguuran Remnant recipes alongside hideout plays.",
+        ),
+    ] = True,
+    limit: Annotated[
+        int, typer.Option("--limit", "-n", help="Maximum arbitrage opportunities to return.")
+    ] = 25,
+    league: Annotated[str, typer.Option("--league", help="PoE2 league name.")] = DEFAULT_LEAGUE,
+    json_output: JsonOpt = False,
+) -> None:
+    """Scan executable PoE2 0.5.5 conversions, Alva spreads, order books, Gold ROI, and traps."""
+
+    def _compute() -> dict[str, Any]:
+        return execute_scan_arbitrage(
+            min_volume_divine=min_volume_divine,
+            min_roi_pct=min_roi_pct,
+            live_books=live_books,
+            include_encounter_gated=encounter_gated,
+            limit=limit,
+            league=league,
+        )
+
+    def _render(data: dict[str, Any]) -> None:
+        table = Table(
+            title=(
+                f"PoE2 Arbitrage Scanner — {data['league']} "
+                f"(1 Div = {data['divine_exalted']:.1f} Ex, "
+                f"1 Chaos = {data['chaos_exalted']:.2f} Ex)"
+            )
+        )
+        table.add_column("Mechanism", style="cyan")
+        table.add_column("Title", style="bold")
+        table.add_column("Profit (Div)", justify="right", style="green")
+        table.add_column("ROI %", justify="right")
+        table.add_column("Ex / 10k Gold", justify="right")
+        for opp in data.get("opportunities", [])[:15]:
+            table.add_row(
+                str(opp["mechanism"]),
+                str(opp["title"])[:64],
+                f"{opp['gross_profit_divine']:+.2f}",
+                f"{opp['roi_pct']:+.1f}%",
+                f"{opp['profit_ex_per_10k_gold']:,.1f}",
+            )
+        console.print(table)
+        for trap in data.get("trap_warnings", [])[:5]:
+            console.print(
+                f"  [yellow]Trap ({trap['kind']} — {trap['item_or_pair']}):[/yellow] "
+                f"{trap['explanation']}"
+            )
+
+    _run_cli(json_output, _compute, _render)
+
+
 # ---------------------------------------------------------------------------
 # Pillar 3b: Trade & Item Clipboard (`poe2 trade ...`)
 # ---------------------------------------------------------------------------
@@ -1370,6 +1551,79 @@ def craft_plan_cmd(
         if tvc:
             rec_up = tvc["recommendation"].upper()
             console.print(f"  [bold yellow]Verdict ({rec_up}):[/bold yellow] {tvc['rationale']}")
+
+    _run_cli(json_output, _compute, _render)
+
+
+@craft_app.command("profit")
+def craft_profit_cmd(
+    budget: Annotated[
+        str,
+        typer.Option("--budget", help="Budget tier filter: all, low (<5d), mid (5-40d), or high."),
+    ] = "all",
+    max_divine: Annotated[
+        float | None,
+        typer.Option("--max-divine", help="Optional maximum expected craft cost in Divines."),
+    ] = None,
+    live_trade: Annotated[
+        bool,
+        typer.Option(
+            "--live-trade/--no-live-trade",
+            help="Query live trade2 Instant Buyout (securable) exit & base quotes.",
+        ),
+    ] = True,
+    offline_prices: Annotated[
+        bool,
+        typer.Option("--offline-prices", help="Use offline Patch 0.5.5 reference quotes."),
+    ] = False,
+    max_trade_queries: Annotated[
+        int, typer.Option("--max-trade-queries", help="Max paced live trade2 queries per scan.")
+    ] = 8,
+    sims: Annotated[
+        int, typer.Option("--sims", help="Monte Carlo trial count for p50/p80/p95 drawdowns.")
+    ] = 3000,
+    league: Annotated[str, typer.Option("--league", help="PoE2 league name.")] = DEFAULT_LEAGUE,
+    json_output: JsonOpt = False,
+) -> None:
+    """Scan & rank profitable PoE2 0.5.5 crafts with live input costs, exit prices, and recipes."""
+
+    def _compute() -> dict[str, Any]:
+        return execute_scan_craft_profit(
+            budget=budget,
+            max_budget_divine=max_divine,
+            live_trade=live_trade,
+            offline_prices=offline_prices,
+            max_trade_queries=max_trade_queries,
+            sims=sims,
+            league=league,
+        )
+
+    def _render(data: dict[str, Any]) -> None:
+        table = Table(
+            title=(
+                f"Profitable Crafts — {data['league']} "
+                f"(1 Div = {data['divine_rate_ex']:.1f} Ex | "
+                f"profitable={data['profitable_count']}/{data['total_recipes_evaluated']})"
+            )
+        )
+        table.add_column("#", justify="right", style="dim")
+        table.add_column("Tier", style="cyan")
+        table.add_column("Craft", style="bold")
+        table.add_column("Cost (Div)", justify="right")
+        table.add_column("Exit (Div)", justify="right")
+        table.add_column("Net (Div)", justify="right", style="green")
+        table.add_column("ROI %", justify="right")
+        for ev in data.get("evaluations", []):
+            table.add_row(
+                str(ev["rank"]),
+                str(ev["budget_tier"]),
+                str(ev["name"])[:54],
+                f"{ev['expected_cost_divine']:.2f}",
+                f"{ev['exit_price_divine']:.2f}",
+                f"{ev['profit_divine']:+.2f}",
+                f"{ev['expected_roi_pct']:+.1f}%",
+            )
+        console.print(table)
 
     _run_cli(json_output, _compute, _render)
 

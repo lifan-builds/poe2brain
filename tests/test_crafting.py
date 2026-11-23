@@ -400,3 +400,83 @@ def test_gamedata_no_poe1_keyword_leak_and_removed_omens_not_live(engine: ModPoo
             "SELECT is_live_poe2 FROM base_items WHERE name = ?", (removed_omen,)
         ).fetchall()
         assert all(int(r[0]) == 0 for r in rows), f"{removed_omen} must have is_live_poe2=0!"
+
+
+def test_cross_pool_resolution_sunk_cost_restart_and_fracture_checkpoint(
+    engine: ModPoolEngine, planner: CraftingPlanner
+) -> None:
+    # 1. Cross-slot & cross-pool Essence / Alloy target resolution
+    horror_boots = engine.resolve_target(
+        "Boots_int", "60% increased effect of Socketed Augment Items", ilvl=80
+    )
+    assert "EssenceLocalRuneAndSoulCoreEffect1" in horror_boots.matching_mod_ids
+
+    staff_plus5 = engine.resolve_target("Staves", "+5 to Level of all Spell Skills", ilvl=81)
+    assert "GlobalSpellGemsLevelTwoHandWeapon4" in staff_plus5.matching_mod_ids
+    assert "EssenceSpellSkillLevel2H1" in staff_plus5.matching_mod_ids
+
+    wand_t2_cast = engine.resolve_target("Wands", "T2 Increased Cast Speed", ilvl=82)
+    assert "AlloyCastSpeedDamageAsExtraColdHybridOneHand1" in wand_t2_cast.matching_mod_ids
+
+    # Strict T1 Spell Damage must NOT include lower-magnitude T3 Greater Essence of Sorcery
+    wand_t1_spell = engine.resolve_target("Wands", "T1 Spell Damage", ilvl=82)
+    assert "SpellDamageOnWeapon8_" in wand_t1_spell.matching_mod_ids
+    assert "SpellDamageOnWeapon6" not in wand_t1_spell.matching_mod_ids
+
+    # 2. Sunk-cost restart fix: 1-mod +5 Lightning Wand never burns 9,500 Ex Erasure Omens
+    league_like_prices = {
+        "Exalted Orb": 1.0,
+        "Divine Orb": 450.0,
+        "Chaos Orb": 36.0,
+        "Perfect Orb of Transmutation": 13.5,
+        "Greater Orb of Transmutation": 2.5,
+        "Orb of Transmutation": 2.2,
+        "Omen of Sinistral Erasure": 9500.0,
+        "Omen of Dextral Erasure": 6450.0,
+        "Fracturing Orb": 3600.0,
+        "Greater Chaos Orb": 123.0,
+        "Perfect Essence of Sorcery": 56.0,
+        "Omen of Sinistral Crystallisation": 110.0,
+    }
+    wand_1m = planner.plan_craft(
+        base="Galvanic Wand",
+        ilvl=81,
+        target_mods=["GlobalLightningSpellGemsLevelWeapon5"],
+        currency_prices_ex=league_like_prices,
+        base_cost_ex=5.0,
+        n_sims=1200,
+        seed=42,
+    )
+    assert wand_1m.expected_cost_exalted < 2500.0
+
+    # 3. 2-step Crystallisation setup discovery on Staff (+5 All Spell + T3 Cast Speed)
+    staff_plan = planner.plan_craft(
+        base="Paralysing Staff",
+        ilvl=81,
+        target_mods=["+5 to Level of all Spell Skills", "T3 Cast Speed"],
+        currency_prices_ex=league_like_prices,
+        base_cost_ex=10.0,
+        n_sims=1000,
+        seed=42,
+    )
+    assert staff_plan.expected_cost_exalted < 2500.0
+    assert any(
+        "Perfect Essence of Sorcery" in s.recommended_action for s in staff_plan.policy_steps
+    )
+
+    # 4. 3-T1 stochastic Wand discovers 4-mod Fracturing Orb checkpoint (<250k Ex vs 2.3B Ex bug)
+    wand_3m = planner.plan_craft(
+        base="Attuned Wand",
+        ilvl=82,
+        target_mods=[
+            "+5 to Level of all Lightning Spell Skills",
+            "T1 Spell Damage",
+            "T1 Cast Speed",
+        ],
+        currency_prices_ex=league_like_prices,
+        base_cost_ex=0.0,
+        n_sims=800,
+        seed=42,
+    )
+    assert any(s.recommended_action == "Fracturing Orb" for s in wand_3m.policy_steps)
+    assert wand_3m.expected_cost_exalted < 250000.0

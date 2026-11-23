@@ -201,6 +201,36 @@ _NINJA_TYPE_TO_CATEGORY: dict[str, str] = {
     "LineageSupportGems": "lineagesupportgems",
 }
 
+_TIERED_ORB_SLUG_CHAINS: tuple[tuple[str, str, str], ...] = (
+    ("transmute", "greater-orb-of-transmutation", "perfect-orb-of-transmutation"),
+    ("aug", "greater-orb-of-augmentation", "perfect-orb-of-augmentation"),
+    ("regal", "greater-regal-orb", "perfect-regal-orb"),
+    ("exalted", "greater-exalted-orb", "perfect-exalted-orb"),
+    ("chaos", "greater-chaos-orb", "perfect-chaos-orb"),
+)
+
+_SHARD_PARENT_ORBS: dict[str, str] = {
+    "transmutation-shard": "transmute",
+    "regal-shard": "regal",
+    "chance-shard": "chance",
+    "artificers-shard": "artificers",
+}
+
+
+def _is_placeholder_item_name(name: str | None) -> bool:
+    if not name:
+        return True
+    cleaned = name.strip()
+    if not cleaned:
+        return True
+    upper = cleaned.upper()
+    return (
+        upper in ("INCOMPLETE", "UNKNOWN", "NULL")
+        or upper.startswith("INCOMPLETE ")
+        or cleaned.startswith("[DNT]")
+    )
+
+
 _APOSTROPHE_RE = re.compile(r"['’`]")
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 
@@ -508,22 +538,30 @@ class EconomyService:
         cat_filter = _normalize_category_filter(category)
 
         # 1. Exact ID or alias lookup
+        matched_unpriced_unique = False
         for cand in _candidate_alias_slugs(query_clean):
             canonical_id = snap.alias_to_id.get(cand) or (
                 cand if cand in snap.entries_by_id else None
             )
             if canonical_id:
                 entry = snap.entries_by_id.get(canonical_id)
-                if (
-                    entry is not None
-                    and entry.quote is not None
-                    and _matches_category(entry.category, cat_filter)
-                ):
-                    return entry.quote
+                if entry is not None and _matches_category(entry.category, cat_filter):
+                    if entry.quote is not None:
+                        return entry.quote
+                    if entry.category in POE2SCOUT_UNIQUE_CATEGORIES:
+                        matched_unpriced_unique = True
+                        break
+                    return None
 
-        # 2. Normalized fuzzy & token lookup across all priced entries
+        # 2. Normalized token/prefix lookup (reject low-score edit-distance substitutions)
+        min_score = 0.99 if matched_unpriced_unique else 0.78
         matches = self.search_prices(
-            query_clean, league=league, category=category, limit=1, force_refresh=False
+            query_clean,
+            league=league,
+            category=category,
+            limit=1,
+            force_refresh=False,
+            min_score=min_score,
         )
         return matches[0] if matches else None
 
@@ -535,6 +573,7 @@ class EconomyService:
         category: str | None = None,
         limit: int = 10,
         force_refresh: bool = False,
+        min_score: float = 0.0,
     ) -> list[CurrencyQuote]:
         query_slug = normalize_market_slug(query)
         if not query_slug:
@@ -543,10 +582,20 @@ class EconomyService:
         snap = self._ensure_snapshot(league, force_refresh=force_refresh)
         cat_filter = _normalize_category_filter(category)
         query_tokens = [t for t in query_slug.split("-") if t]
+        wants_reliquary = any(tok in query_slug for tok in ("reliquary", "zarokh", "vaultkey"))
+        exact_non_vault_entry = snap.entries_by_id.get(query_slug)
+        if exact_non_vault_entry is not None and exact_non_vault_entry.category == "vaultkeys":
+            exact_non_vault_entry = None
 
         scored: list[tuple[float, float, CurrencyQuote]] = []
         for entry in snap.entries_by_id.values():
             if entry.quote is None or not _matches_category(entry.category, cat_filter):
+                continue
+            if (
+                not wants_reliquary
+                and exact_non_vault_entry is not None
+                and (entry.category == "vaultkeys" or "reliquary key:" in entry.name.lower())
+            ):
                 continue
 
             name_slug = normalize_market_slug(entry.name)
@@ -581,7 +630,39 @@ class EconomyService:
                 scored.append((score, liquidity_tiebreak, entry.quote))
 
         scored.sort(key=lambda row: (row[0], row[1], row[2].exalted), reverse=True)
-        return [row[2] for row in scored[: max(1, limit)]]
+        has_exact = any(row[0] >= 0.99 for row in scored)
+        if not has_exact and not wants_reliquary:
+            probe_cats: list[str] = []
+            if cat_filter in POE2SCOUT_UNIQUE_CATEGORIES:
+                probe_cats = [cat_filter]
+            elif (
+                exact_non_vault_entry is not None
+                and exact_non_vault_entry.category in POE2SCOUT_UNIQUE_CATEGORIES
+            ):
+                probe_cats = [exact_non_vault_entry.category]
+            elif cat_filter in (None, "unique", "uniques") and (
+                not scored or all("reliquary-key" in r[2].id for r in scored)
+            ):
+                probe_cats = ["jewel"]
+            for ucat in probe_cats:
+                try:
+                    uqs = self.get_uniques_by_category(
+                        ucat, league=league, page=1, per_page=250, force_refresh=False
+                    )
+                except (httpx.HTTPError, OSError, AssertionError):
+                    continue
+                for uq in uqs:
+                    uq_slug = normalize_market_slug(uq.name)
+                    if query_slug in (
+                        uq_slug,
+                        normalize_market_slug(f"{uq.name} {uq.base_type or ''}"),
+                    ):
+                        scored.append((1.0, float(uq.quantity or 0), uq))
+                    elif query_slug in uq_slug:
+                        scored.append((0.85, float(uq.quantity or 0), uq))
+                scored.sort(key=lambda row: (row[0], row[1], row[2].exalted), reverse=True)
+
+        return [row[2] for row in scored if row[0] >= min_score][: max(1, limit)]
 
     def get_bulk_crafting_prices(
         self,
@@ -595,18 +676,119 @@ class EconomyService:
         - `exalted` is always `1.0`.
         - Unpriced (`<= 0`) or unavailable/removed crafting orbs are NEVER returned as `0`;
           they are explicitly mapped to `None`.
+        - Thin-volume (`< 0.08 Div`) dust/RMT outliers are floored/capped and Basic <= Greater
+          <= Perfect orb monotonicity is enforced.
         """
         snap = self._ensure_snapshot(league, force_refresh=force_refresh)
+        rates = snap.rates
         bulk: dict[str, CurrencyQuote | None] = {}
+
+        def _reprice(q: CurrencyQuote, new_ex: float) -> CurrencyQuote:
+            return _build_quote(
+                item_id=q.id,
+                name=q.name,
+                category=q.category,
+                league=q.league,
+                exalted_val=round(new_ex, 6),
+                rates=rates,
+                volume_primary=q.volume_primary,
+                change_7d_pct=q.change_7d_pct,
+                source=q.source,
+            )
 
         for entry in snap.entries_by_id.values():
             if entry.category not in CRAFTING_CATEGORIES:
                 continue
             val = entry.quote if (entry.quote is not None and entry.quote.exalted > 0) else None
+            if val is not None:
+                vol = entry.volume_divine
+                is_thin = vol is None or vol < 0.08
+                if is_thin:
+                    if (
+                        entry.id
+                        in (
+                            "omen-of-the-liege",
+                            "omen-of-the-blackblooded",
+                            "omen-of-the-sovereign",
+                        )
+                        and val.exalted < 25.0
+                    ):
+                        val = _reprice(val, 25.0)
+                    elif entry.id.endswith("-alloy") and val.exalted < 25.0:
+                        val = _reprice(val, 25.0)
+                    elif entry.id.startswith("perfect-essence-of-") and val.exalted < 15.0:
+                        val = _reprice(val, 15.0)
+
+                # Cap illiquid lesser/normal essences & runes that exceed their greater counterpart
+                if vol is None or vol < 0.25:
+                    g_slug: str | None = None
+                    cap_mult = 0.8
+                    if entry.id.startswith("lesser-essence-of-"):
+                        g_slug = "greater-" + entry.id.removeprefix("lesser-")
+                        cap_mult = 0.5
+                    elif entry.id.startswith("essence-of-"):
+                        rest = entry.id.removeprefix("essence-of-")
+                        if rest not in (
+                            "delirium",
+                            "horror",
+                            "hysteria",
+                            "insanity",
+                            "the-breach",
+                            "the-abyss",
+                        ):
+                            g_slug = f"greater-essence-of-{rest}"
+                    elif entry.id.startswith("lesser-") and entry.id.endswith("-rune"):
+                        g_slug = "greater-" + entry.id.removeprefix("lesser-")
+                        cap_mult = 0.5
+                    if g_slug:
+                        g_entry = snap.entries_by_id.get(g_slug)
+                        if (
+                            g_entry
+                            and g_entry.quote
+                            and g_entry.quote.exalted > 0
+                            and val.exalted > g_entry.quote.exalted
+                        ):
+                            val = _reprice(val, max(0.5, g_entry.quote.exalted * cap_mult))
+
             bulk[entry.id] = val
             name_slug = normalize_market_slug(entry.name)
             if name_slug and name_slug not in bulk:
                 bulk[name_slug] = val
+
+        # Bridge canonical slugs <-> full-name aliases before tier monotonicity checks
+        for alias_key, target_slug in DIRECT_SLUG_ALIASES.items():
+            if len(alias_key) <= 2:
+                continue
+            if bulk.get(target_slug) is None and bulk.get(alias_key) is not None:
+                bulk[target_slug] = bulk[alias_key]
+            elif bulk.get(alias_key) is None and bulk.get(target_slug) is not None:
+                bulk[alias_key] = bulk[target_slug]
+
+        # Enforce Basic <= Greater <= Perfect orb monotonicity on thin-volume inversions
+        for low_s, mid_s, high_s in _TIERED_ORB_SLUG_CHAINS:
+            q_low = bulk.get(low_s)
+            q_mid = bulk.get(mid_s)
+            q_high = bulk.get(high_s)
+            if q_low is not None and q_mid is not None and q_mid.exalted < q_low.exalted:
+                mid_vol = q_mid.volume_primary
+                if mid_vol is None or mid_vol < 0.5:
+                    mid_entry = snap.entries_by_id.get(mid_s)
+                    scout_mid = mid_entry.scout_exalted if mid_entry else None
+                    upper_bound = q_high.exalted if q_high else q_low.exalted * 25.0
+                    fixed_mid = (
+                        scout_mid
+                        if (scout_mid is not None and q_low.exalted <= scout_mid <= upper_bound)
+                        else q_low.exalted * 1.25
+                    )
+                    q_mid = _reprice(q_mid, fixed_mid)
+                    bulk[mid_s] = q_mid
+                    bulk[normalize_market_slug(q_mid.name)] = q_mid
+            if q_mid is not None and q_high is not None and q_high.exalted < q_mid.exalted:
+                high_vol = q_high.volume_primary
+                if high_vol is None or high_vol < 0.5:
+                    q_high = _reprice(q_high, q_mid.exalted * 1.5)
+                    bulk[high_s] = q_high
+                    bulk[normalize_market_slug(q_high.name)] = q_high
 
         for required_slug in REQUIRED_CRAFTING_SLUGS:
             if required_slug not in bulk:
@@ -617,12 +799,14 @@ class EconomyService:
                     else None
                 )
 
-        # Register clean crafting lever / full-name aliases so crafting callers never miss
+        # Register clean crafting lever / full-name aliases without clobbering priced entries
         for alias_key, target_slug in DIRECT_SLUG_ALIASES.items():
             if len(alias_key) <= 2:
                 continue
-            if alias_key not in bulk and target_slug in bulk:
+            if bulk.get(target_slug) is not None:
                 bulk[alias_key] = bulk[target_slug]
+            elif alias_key not in bulk and target_slug in bulk:
+                bulk[alias_key] = None
 
         return bulk
 
@@ -651,12 +835,16 @@ class EconomyService:
         items = raw.get("Items", []) if isinstance(raw, Mapping) else []
         out: list[CurrencyQuote] = []
         for row in items:
-            api_id = str(row.get("ApiId") or normalize_market_slug(str(row.get("Text") or "")))
+            raw_text = str(row.get("Text") or "")
+            if _is_placeholder_item_name(raw_text):
+                continue
+            api_id = str(row.get("ApiId") or normalize_market_slug(raw_text))
             if not api_id:
                 continue
             merged_entry = snap.entries_by_id.get(api_id)
-            if merged_entry is not None and merged_entry.quote is not None:
-                out.append(merged_entry.quote)
+            if merged_entry is not None:
+                if merged_entry.quote is not None:
+                    out.append(merged_entry.quote)
                 continue
             price_ex = 1.0 if api_id == "exalted" else _positive_float(row.get("CurrentPrice"))
             if price_ex is None:
@@ -705,7 +893,7 @@ class EconomyService:
                 continue
             name = str(row.get("Name") or row.get("Text") or "").strip()
             base_type = str(row.get("Type") or "").strip() or None
-            if not name:
+            if _is_placeholder_item_name(name):
                 continue
             slug = normalize_market_slug(name)
             chg_7d = _compute_7d_change_from_logs(row.get("PriceLogs"))
@@ -834,6 +1022,18 @@ class EconomyService:
         cat_filter = _normalize_category_filter(category)
         opportunities: list[MarketOpportunity] = []
 
+        div_entry = snap.entries_by_id.get("divine")
+        scout_div_ex = (
+            div_entry.scout_exalted
+            if (div_entry is not None and div_entry.scout_exalted and div_entry.scout_exalted > 0)
+            else rates.divine_exalted
+        )
+        ninja_div_ex = (
+            div_entry.ninja_exalted
+            if (div_entry is not None and div_entry.ninja_exalted and div_entry.ninja_exalted > 0)
+            else (rates.ninja_divine_exalted or rates.divine_exalted)
+        )
+
         for entry in snap.entries_by_id.values():
             if entry.quote is None or not _matches_category(entry.category, cat_filter):
                 continue
@@ -865,19 +1065,24 @@ class EconomyService:
                     )
                 )
 
-            # 2. Cross-source spread between poe2scout and poe.ninja on liquid pairs
+            # 2. Numeraire-normalized cross-source spread (eliminating Ex/Div VWAP lag)
             if (
-                vol_div >= min_volume_divine
+                entry.id not in ("divine", "exalted")
+                and vol_div >= min_volume_divine
                 and entry.scout_exalted is not None
                 and entry.ninja_exalted is not None
                 and entry.scout_exalted > 0
                 and entry.ninja_exalted > 0
+                and scout_div_ex > 0
+                and ninja_div_ex > 0
             ):
-                low = min(entry.scout_exalted, entry.ninja_exalted)
-                high = max(entry.scout_exalted, entry.ninja_exalted)
-                ratio = high / low
-                spread_pct = (ratio - 1.0) * 100.0
-                if 12.0 <= spread_pct <= 400.0:
+                scout_in_div = entry.scout_exalted / scout_div_ex
+                ninja_in_div = entry.ninja_exalted / ninja_div_ex
+                est_units = vol_div / max(0.001, ninja_in_div)
+                low_div = min(scout_in_div, ninja_in_div)
+                high_div = max(scout_in_div, ninja_in_div)
+                spread_pct = ((high_div / low_div) - 1.0) * 100.0
+                if 12.0 <= spread_pct <= 400.0 and est_units >= 5.0:
                     opportunities.append(
                         MarketOpportunity(
                             id=entry.id,
@@ -893,9 +1098,9 @@ class EconomyService:
                             scout_exalted=entry.scout_exalted,
                             ninja_exalted=entry.ninja_exalted,
                             rationale=(
-                                f"{spread_pct:.1f}% cross-source divergence "
-                                f"(poe.ninja {entry.ninja_exalted:.2f} ex vs "
-                                f"poe2scout {entry.scout_exalted:.2f} ex; {vol_div:.1f} div vol)."
+                                f"{spread_pct:.1f}% Divine-normalized divergence "
+                                f"(poe.ninja {ninja_in_div:.3f} Div vs "
+                                f"poe2scout {scout_in_div:.3f} Div; {vol_div:.1f} Div vol)."
                             ),
                         )
                     )
@@ -1270,13 +1475,24 @@ def _build_league_snapshot(
         api_id_raw = row.get("ApiId")
         category = str(row.get("CategoryApiId") or "currency").strip().lower()
         name_val = str(row.get("Name") or row.get("Text") or api_id_raw or "").strip()
-        if not name_val:
+        text_val = str(row.get("Text") or "").strip()
+        if (
+            not name_val
+            or _is_placeholder_item_name(name_val)
+            or _is_placeholder_item_name(text_val)
+        ):
             continue
         base_type = str(row.get("Type") or "").strip() or None
         scout_item_id = int(row["ItemId"]) if isinstance(row.get("ItemId"), int) else None
         raw_price = _positive_float(row.get("CurrentPrice"))
+        is_reliquary_key = category == "vaultkeys" or "reliquary key:" in name_val.lower()
 
-        if api_id_raw:
+        if is_reliquary_key:
+            cid = (
+                normalize_market_slug(name_val)
+                or f"vaultkey-{str(api_id_raw or scout_item_id or 'key').strip().lower()}"
+            )
+        elif api_id_raw:
             cid = str(api_id_raw).strip().lower()
         else:
             base_slug = normalize_market_slug(name_val)
@@ -1365,6 +1581,8 @@ def _build_league_snapshot(
             meta = item_meta_by_id.get(lid, {})
             details_id = str(meta.get("detailsId") or "").strip().lower() or None
             display_name = str(meta.get("name") or lid).strip()
+            if _is_placeholder_item_name(display_name):
+                continue
 
             ninja_ex = 1.0 if lid == "exalted" else _extract_ninja_exalted_price(line, core)
             vol_div = _positive_float(line.get("volumePrimaryValue"))
@@ -1376,20 +1594,32 @@ def _build_league_snapshot(
             if isinstance(spark, Mapping) and isinstance(spark.get("totalChange"), (int, float)):
                 chg_7d = float(spark["totalChange"])
 
-            target_id = lid
-            if target_id not in entries_by_id and details_id and details_id in entries_by_id:
-                target_id = details_id
-            elif target_id not in entries_by_id:
-                norm_name = normalize_market_slug(display_name)
-                if norm_name in alias_to_id:
-                    target_id = alias_to_id[norm_name]
+            is_reliquary_line = "reliquary key:" in display_name.lower() or bool(
+                details_id and "reliquary-key" in details_id
+            )
+            if is_reliquary_line:
+                rel_slug = normalize_market_slug(display_name) or details_id or f"vaultkey-{lid}"
+                if rel_slug in entries_by_id:
+                    target_id = rel_slug
+                elif details_id and details_id in entries_by_id:
+                    target_id = details_id
+                else:
+                    target_id = rel_slug
+            else:
+                target_id = lid
+                if target_id not in entries_by_id and details_id and details_id in entries_by_id:
+                    target_id = details_id
+                elif target_id not in entries_by_id:
+                    norm_name = normalize_market_slug(display_name)
+                    if norm_name in alias_to_id:
+                        target_id = alias_to_id[norm_name]
 
             entry = entries_by_id.get(target_id)
             if entry is None:
                 entry = _MergedMarketEntry(
-                    id=lid,
+                    id=target_id,
                     name=display_name,
-                    category=ninja_cat,
+                    category="vaultkeys" if is_reliquary_line else ninja_cat,
                     league=league,
                     item_id=None,
                     base_type=None,
@@ -1400,8 +1630,7 @@ def _build_league_snapshot(
                     change_7d_pct=chg_7d,
                     quote=None,
                 )
-                entries_by_id[lid] = entry
-                target_id = lid
+                entries_by_id[target_id] = entry
             else:
                 if ninja_ex is not None:
                     entry.ninja_exalted = ninja_ex
@@ -1412,7 +1641,8 @@ def _build_league_snapshot(
                 if chg_7d is not None:
                     entry.change_7d_pct = chg_7d
 
-            _register_alias(lid, target_id)
+            if not is_reliquary_line:
+                _register_alias(lid, target_id)
             _register_alias(details_id, target_id)
             _register_alias(display_name, target_id)
 
@@ -1425,16 +1655,61 @@ def _build_league_snapshot(
                 else ("poe.ninja" if entry.ninja_exalted is not None else "poe2scout")
             )
             return 1.0, src
-        if entry.ninja_exalted is not None and entry.scout_exalted is not None:
-            val = (
-                entry.ninja_exalted
-                if ((entry.volume_divine or 0.0) >= 0.05 or entry.scout_exalted <= 0)
-                else entry.scout_exalted
-            )
-            return val, "poe2scout+poe.ninja"
-        if entry.ninja_exalted is not None:
-            return entry.ninja_exalted, "poe.ninja"
-        if entry.scout_exalted is not None:
+        if entry.ninja_exalted is not None and entry.ninja_exalted > 0:
+            src = "poe2scout+poe.ninja" if entry.scout_exalted is not None else "poe.ninja"
+            return entry.ninja_exalted, src
+        if entry.scout_exalted is not None and entry.scout_exalted > 0:
+            if cid in _SHARD_PARENT_ORBS and "Currency" in ninja_payloads:
+                parent_entry = entries_by_id.get(_SHARD_PARENT_ORBS[cid])
+                parent_ex = (
+                    (parent_entry.ninja_exalted or parent_entry.scout_exalted)
+                    if parent_entry is not None
+                    else None
+                )
+                if entry.scout_exalted > max(5.0, (parent_ex or 5.0) * 0.5):
+                    return None, "poe2scout"
+            if (
+                entry.category == "runes"
+                and "Runes" in ninja_payloads
+                and cid.startswith("lesser-")
+                and cid.endswith("-rune")
+            ):
+                g_entry = entries_by_id.get("greater-" + cid.removeprefix("lesser-"))
+                b_entry = entries_by_id.get(cid.removeprefix("lesser-"))
+                refs = [
+                    val
+                    for val in (
+                        g_entry.ninja_exalted if g_entry is not None else None,
+                        b_entry.ninja_exalted if b_entry is not None else None,
+                    )
+                    if val is not None and val > 0
+                ]
+                if entry.scout_exalted > max(25.0, min(refs, default=25.0)):
+                    return None, "poe2scout"
+            if entry.category == "essences" and "Essences" in ninja_payloads:
+                g_slug: str | None = None
+                if cid.startswith("lesser-essence-of-"):
+                    g_slug = "greater-" + cid.removeprefix("lesser-")
+                elif cid.startswith("essence-of-"):
+                    rest = cid.removeprefix("essence-of-")
+                    if rest not in (
+                        "delirium",
+                        "horror",
+                        "hysteria",
+                        "insanity",
+                        "the-breach",
+                        "the-abyss",
+                    ):
+                        g_slug = f"greater-essence-of-{rest}"
+                if g_slug is not None:
+                    g_entry = entries_by_id.get(g_slug)
+                    g_ex = (
+                        (g_entry.ninja_exalted or g_entry.scout_exalted)
+                        if g_entry is not None
+                        else None
+                    )
+                    if entry.scout_exalted > max(25.0, g_ex or 25.0):
+                        return None, "poe2scout"
             return entry.scout_exalted, "poe2scout"
         return None, "poe2scout"
 

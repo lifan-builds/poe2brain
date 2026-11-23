@@ -1,6 +1,6 @@
 # PoE2 Patch `0.5.5` Crafting Decision Tree & Playbook
 
-All probabilities and expected Exalted costs must be computed via `poe2_craft_odds` and `poe2_craft_plan` (`ModPoolEngine` + `CraftingPlanner` over `data/poe2_0.5.5.sqlite` + live `EconomyService.get_bulk_crafting_prices`). Never eyeball mod weights or apply PoE1 crafting steps.
+All probabilities, expected Exalted costs, and profit rankings must be computed via `poe2_craft_odds`, `poe2_craft_plan`, and `poe2_scan_craft_profit` (`ModPoolEngine` + `CraftingPlanner` + `CraftProfitScanner` over `data/poe2_0.5.5.sqlite` + sanitized live `EconomyService` & `trade2` quotes). Never eyeball mod weights or apply PoE1 crafting steps.
 
 ## 1. Non-Negotiable `0.5.5` Crafting Invariants
 
@@ -117,3 +117,13 @@ When planning or explaining a craft (`poe2_craft_plan`), evaluate these six stag
   ├─ Apply 20% Quality / Catalysts + socket Runes / Soul Cores / Idols (overwritable BEFORE lock!)
   └─ Optional high-variance gamble ONLY at very end: `Omen of Sanctification` + Divine OR `Vaal Infuser` / `Omen of Corruption` + Vaal
 ```
+
+---
+
+## 4. Profitable Craft Discovery & Sunk-Cost Discipline (`poe2_scan_craft_profit`)
+
+When recommending crafts for profit (`poe2 craft profit --budget all|low|mid|high --json`):
+
+1. **Sunk-Cost Restart Rule**: Never burn `Chaos Orb` or `Omen of Sinistral/Dextral Erasure` on 0-hit Magic or unfractured partial Rare bases when buying a fresh Normal base + `Perfect Transmute / Greater Aug` is cheaper (`CraftingPlanner` enforces this automatically).
+2. **Deterministic Cross-Side `Crystallisation` Combos**: The highest risk-adjusted ROI crafts in `0.5.5` pad disposable prefixes/suffixes and force guaranteed `Perfect/Corrupted Essence` (*Horror, Hysteria, Breach, Sorcery*) or `Verisium Alloy` (*Swift, Transcendent, Sovereign, Celestial*) mods via `Omen of Sinistral / Dextral Crystallisation`, followed by guaranteed or 3-draw Abyssal Bone (`Jawbone` / `Rib` / `Collarbone` + `Liege` / `Blackblooded` + `Omen of Light`) finishers.
+3. **Verify `securable` Exit Depth & Sanitize Thin Quotes**: Always price exits against live `trade2` Instant Buyout (`securable` `p10` / `median`) and active listing count (`commoditized` generic 2-mod rares often sell below orb cost!), and reject `<0.08 Div`-volume exchange dust/RMT outliers (`build_sanitized_crafting_prices`).

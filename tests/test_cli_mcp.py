@@ -63,7 +63,7 @@ def test_skill_readme_mcp_and_cli_1_to_1_parity() -> None:
 
     skill_tools = set(re.findall(r"\|\s*`?(poe2_[a-z0-9_]+)`?\s*\|", skill_text))
     readme_tools = set(re.findall(r"\|\s*`?(poe2_[a-z0-9_]+)`?\s*\|", readme_text))
-    assert len(skill_tools) == 20
+    assert len(skill_tools) == 24
     assert skill_tools == readme_tools
 
     registered_tools = {t.name for t in mcp_mod.mcp._tool_manager.list_tools()}
@@ -115,6 +115,33 @@ def test_cli_wiki_and_trade_parse(isolated_cli_env: dict[str, str]) -> None:
     assert p_data["base_type"] == "Attuned Wand"
     assert p_data["fractured"] is True
     assert "Rarity: RARE" in p_data["pob_item_text"]
+
+    # New Pillar 1 Ascendancy list + inspection + PoE1 LookupError JSON trap
+    asc_list_res = runner.invoke(app, ["wiki", "ascendancy", "--json"])
+    assert asc_list_res.exit_code == 0
+    asc_list = json.loads(asc_list_res.stdout)
+    assert asc_list["class_count"] == 8
+    assert asc_list["count"] == 23
+
+    gemling_res = runner.invoke(app, ["wiki", "ascendancy", "Gemling Legionnaire", "--json"])
+    assert gemling_res.exit_code == 0
+    gemling_data = json.loads(gemling_res.stdout)
+    assert gemling_data["primary"]["name"] == "Gemling Legionnaire"
+    assert gemling_data["primary"]["choice_option_count"] == 3
+
+    abyss_res = runner.invoke(app, ["wiki", "ascendancy", "Abyssal Lich", "--json"])
+    assert abyss_res.exit_code == 0
+    abyss_data = json.loads(abyss_res.stdout)
+    assert abyss_data["primary"]["replaces_ascendancy"] == "Lich"
+    assert "Steward of Kulemak" in abyss_data["primary"]["notable_names"]
+
+    necro_res = runner.invoke(app, ["wiki", "ascendancy", "Necromancer", "--json"])
+    assert necro_res.exit_code == 1
+    assert "Traceback" not in necro_res.stdout
+    necro_err = json.loads(necro_res.stdout)
+    assert necro_err["ok"] is False
+    assert necro_err["error_type"] == "LookupError"
+    assert "Necromancer" in necro_err["error"]
 
 
 def test_cli_craft_odds_plan_and_removed_lever_structured_error(
@@ -198,6 +225,208 @@ def test_cli_craft_odds_plan_and_removed_lever_structured_error(
     assert rem_err["error_type"] == "RemovedLeverError"
     assert "0.4" in rem_err["error"]
 
+    # 4. Profitable craft scanner (`poe2 craft profit --budget low --offline-prices --json`)
+    prof_res = runner.invoke(
+        app,
+        [
+            "craft",
+            "profit",
+            "--budget",
+            "low",
+            "--offline-prices",
+            "--sims",
+            "250",
+            "--json",
+        ],
+    )
+    assert prof_res.exit_code == 0, prof_res.stdout
+    prof_data = json.loads(prof_res.stdout)
+    assert prof_data["total_recipes_evaluated"] >= 2
+    assert prof_data["profitable_count"] >= 1
+    assert prof_data["top_overall"][0]["expected_roi_pct"] > 0.0
+    assert len(prof_data["top_overall"][0]["execution_steps"]) >= 3
+
+
+def test_cli_meta_and_arbitrage_commands_mocked(
+    isolated_cli_env: dict[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_cli_env
+    import httpx
+
+    from poe2brain.http import GGGRateLimiter, Poe2HttpClient
+    from poe2brain.knowledge import MetaService
+    from poe2brain.trade import ArbitrageScanner, EconomyService, Trade2Client
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/build-index-state"):
+            return httpx.Response(
+                200,
+                json={
+                    "leagueBuilds": [
+                        {
+                            "leagueName": "Forbidden Rites",
+                            "leagueUrl": "forbidden-rites",
+                            "total": 1000,
+                            "status": 0,
+                            "statistics": [
+                                {"class": "Gemling Legionnaire", "count": 320, "trend": 1},
+                                {"class": "Martial Artist", "count": 120, "trend": 1},
+                                {"class": "Disciple of Varashta", "count": 90, "trend": 1},
+                            ],
+                        }
+                    ]
+                },
+            )
+        if "/api/ladders" in path:
+            return httpx.Response(404, json={"error": "not found"})
+        if path.endswith("/ReferenceCurrencies"):
+            return httpx.Response(
+                200,
+                json=[
+                    {"ApiId": "exalted", "Text": "Exalted Orb", "CurrentPrice": 1.0},
+                    {"ApiId": "chaos", "Text": "Chaos Orb", "CurrentPrice": 36.0},
+                    {"ApiId": "divine", "Text": "Divine Orb", "CurrentPrice": 450.0},
+                ],
+            )
+        if path.endswith("/Items"):
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "ItemId": 1,
+                        "ApiId": "divine",
+                        "Text": "Divine Orb",
+                        "CategoryApiId": "currency",
+                        "CurrentPrice": 450.0,
+                    },
+                    {
+                        "ItemId": 2,
+                        "ApiId": "chaos",
+                        "Text": "Chaos Orb",
+                        "CategoryApiId": "currency",
+                        "CurrentPrice": 36.0,
+                    },
+                    {
+                        "ItemId": 3,
+                        "ApiId": "origin-spark",
+                        "Text": "Origin Spark",
+                        "CategoryApiId": "fragments",
+                        "CurrentPrice": 1800.0,
+                    },
+                    {
+                        "ItemId": 4,
+                        "ApiId": "origin-cradle",
+                        "Text": "Origin Cradle",
+                        "CategoryApiId": "fragments",
+                        "CurrentPrice": 2000.0,
+                    },
+                    {
+                        "ItemId": 5,
+                        "ApiId": "origin-core",
+                        "Text": "Origin Core",
+                        "CategoryApiId": "fragments",
+                        "CurrentPrice": 4600.0,
+                    },
+                ],
+            )
+        if path.endswith("/economy/exchange/current/overview"):
+            extype = request.url.params.get("type", "Currency")
+            if extype == "Fragments":
+                return httpx.Response(
+                    200,
+                    json={
+                        "core": {
+                            "primary": "divine",
+                            "secondary": "chaos",
+                            "rates": {"exalted": 450.0, "chaos": 12.5},
+                            "items": [],
+                        },
+                        "items": [
+                            {"id": "origin-spark", "name": "Origin Spark"},
+                            {"id": "origin-cradle", "name": "Origin Cradle"},
+                            {"id": "origin-core", "name": "Origin Core"},
+                        ],
+                        "lines": [
+                            {
+                                "id": "origin-spark",
+                                "primaryValue": 4.0,
+                                "volumePrimaryValue": 80.0,
+                            },
+                            {
+                                "id": "origin-cradle",
+                                "primaryValue": 4.4,
+                                "volumePrimaryValue": 85.0,
+                            },
+                            {
+                                "id": "origin-core",
+                                "primaryValue": 10.2,
+                                "volumePrimaryValue": 120.0,
+                            },
+                        ],
+                    },
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "core": {
+                        "primary": "divine",
+                        "secondary": "chaos",
+                        "rates": {"exalted": 450.0, "chaos": 12.5},
+                        "items": [],
+                    },
+                    "items": [],
+                    "lines": [],
+                },
+            )
+        return httpx.Response(200, json={"result": []})
+
+    limiter = GGGRateLimiter(safety_buffer=0.0, sleep_sync=lambda _: None)
+    http_client = Poe2HttpClient(rate_limiter=limiter, sync_transport=httpx.MockTransport(handler))
+    econ = EconomyService(http_client=http_client, cache_dir=tmp_path / "http_mock")
+    t2 = Trade2Client(http_client=http_client, economy=econ, cache_dir=tmp_path / "http_mock")
+    meta_svc = MetaService(
+        http_client=http_client,
+        economy_service=econ,
+        cache_dir=tmp_path / "http_mock",
+    )
+    arb_scanner = ArbitrageScanner(
+        economy=econ,
+        trade2=t2,
+        db=mcp_mod.get_knowledge_service().db,
+    )
+    monkeypatch.setattr(mcp_mod, "_META_SVC", meta_svc)
+    monkeypatch.setattr(mcp_mod, "_ARBITRAGE_SCANNER", arb_scanner)
+
+    runner = CliRunner()
+    meta_res = runner.invoke(app, ["wiki", "meta", "--no-economy", "--json"])
+    assert meta_res.exit_code == 0, meta_res.stdout
+    meta_data = json.loads(meta_res.stdout)
+    assert meta_data["ascendancy_rankings"][0]["ascendancy_name"] == "Gemling Legionnaire"
+    assert len(meta_data["ascendancy_rankings"]) == 23
+
+    meta_human = runner.invoke(app, ["wiki", "meta", "--no-economy"])
+    assert meta_human.exit_code == 0, meta_human.stdout
+    assert "Gemling Legionnaire" in meta_human.stdout
+
+    arb_res = runner.invoke(
+        app,
+        ["econ", "arbitrage", "--no-live-books", "--min-volume-divine", "2.0", "--json"],
+    )
+    assert arb_res.exit_code == 0, arb_res.stdout
+    arb_data = json.loads(arb_res.stdout)
+    assert len(arb_data["opportunities"]) >= 1
+    assert arb_data["opportunities"][0]["profit_ex_per_10k_gold"] > 0
+    assert len(arb_data["trap_warnings"]) >= 3
+
+    arb_human = runner.invoke(
+        app,
+        ["econ", "arbitrage", "--no-live-books", "--min-volume-divine", "2.0"],
+    )
+    assert arb_human.exit_code == 0, arb_human.stdout
+
 
 def test_cross_process_cli_pob_slot_persistence(isolated_cli_env: dict[str, str]) -> None:
     def _run_poe2(*args: str) -> dict[str, object]:
@@ -279,15 +508,55 @@ async def test_mcp_server_stdio_roundtrip(isolated_cli_env: dict[str, str]) -> N
             await session.initialize()
             tools_resp = await session.list_tools()
             names = {t.name for t in tools_resp.tools}
-            assert len(names) == 20
-            assert "poe2_status" in names
-            assert "poe2_craft_plan" in names
+            assert len(names) == 24
+            assert {
+                "poe2_status",
+                "poe2_inspect_ascendancy",
+                "poe2_meta_ladder",
+                "poe2_scan_craft_profit",
+                "poe2_scan_arbitrage",
+                "poe2_craft_plan",
+            }.issubset(names)
 
             st_res = await session.call_tool("poe2_status", {})
             st_json = json.loads(st_res.content[0].text)  # type: ignore[union-attr]
             assert st_json["patch"] == "0.5.5"
             assert st_json["gamedata_db_ready"] is True
             assert st_json["pob2_runtime_ready"] is True
+
+            asc_res = await session.call_tool(
+                "poe2_inspect_ascendancy", {"name_or_class": "Gemling Legionnaire"}
+            )
+            asc_json = json.loads(asc_res.content[0].text)  # type: ignore[union-attr]
+            assert asc_json["primary"]["name"] == "Gemling Legionnaire"
+
+            trap_res = await session.call_tool(
+                "poe2_inspect_ascendancy", {"name_or_class": "Necromancer"}
+            )
+            trap_json = json.loads(trap_res.content[0].text)  # type: ignore[union-attr]
+            assert trap_json["ok"] is False
+            assert trap_json["error_type"] == "LookupError"
+
+            prof_res = await session.call_tool(
+                "poe2_scan_craft_profit",
+                {"budget": "low", "offline_prices": True, "sims": 200},
+            )
+            prof_json = json.loads(prof_res.content[0].text)  # type: ignore[union-attr]
+            assert prof_json["profitable_count"] >= 1
+
+            if os.environ.get("POE2_LIVE_TESTS") == "1":
+                meta_res = await session.call_tool(
+                    "poe2_meta_ladder", {"league": "Forbidden Rites"}
+                )
+                meta_json = json.loads(meta_res.content[0].text)  # type: ignore[union-attr]
+                assert len(meta_json["ascendancy_rankings"]) == 23
+
+                arb_res = await session.call_tool(
+                    "poe2_scan_arbitrage",
+                    {"league": "Forbidden Rites", "live_books": False},
+                )
+                arb_json = json.loads(arb_res.content[0].text)  # type: ignore[union-attr]
+                assert len(arb_json["opportunities"]) >= 1
 
             err_res = await session.call_tool(
                 "poe2_craft_odds",

@@ -10,6 +10,7 @@ from poe2brain.knowledge import (
     GAMEDATA_TABLES,
     GamedataDB,
     KnowledgeService,
+    MetaService,
     sanitize_fts5_query,
 )
 from poe2brain.models.knowledge import (
@@ -318,5 +319,43 @@ def test_inspect_unique_and_augment_and_runeforge(service: KnowledgeService) -> 
     remnant_recipes = service.search_runeforge("Adaptive Alloy")
     assert remnant_recipes
     assert remnant_recipes[0].category == "kalguuran_remnant_recipe"
-    assert remnant_recipes[0].output_item == "Adaptive"
+    assert remnant_recipes[0].output_item != "Adaptive"
     assert len(remnant_recipes[0].rune_sequence_ids) >= 3
+
+    pchaos_remnants = service.search_runeforge("Perfect Chaos Orb")
+    assert pchaos_remnants
+    assert any(
+        r.category == "kalguuran_remnant_recipe" and "Perfect Chaos Orb" in r.output_item
+        for r in pchaos_remnants
+    )
+
+
+def test_search_classes_and_ascendancies_via_knowledge_service(service: KnowledgeService) -> None:
+    assert MetaService is not None
+    if not service.list_ascendancies():
+        pytest.skip("PoB2 TreeData/0_5 not bootstrapped")
+
+    for q_asc, expected_class in [
+        ("Gemling Legionnaire", "Mercenary"),
+        ("Martial Artist", "Monk"),
+        ("Disciple of Varashta", "Sorceress"),
+        ("Abyssal Lich", "Witch"),
+        ("Spirit Walker", "Huntress"),
+        ("Stormweaver", "Sorceress"),
+    ]:
+        hits = service.search(q_asc, limit=5)
+        assert hits, f"Expected hits for {q_asc}"
+        assert hits[0].kind == "ascendancy"
+        assert hits[0].title == q_asc
+        assert hits[0].category == expected_class
+
+    notable_hits = service.search("Way of the Stonefist", category="ascendancy", limit=5)
+    assert notable_hits and notable_hits[0].title == "Martial Artist"
+
+    cls_hits = service.search("Sorceress", category="class", limit=5)
+    assert cls_hits and cls_hits[0].kind == "class" and cls_hits[0].title == "Sorceress"
+    assert set(cls_hits[0].metadata["ascendancies"]) == {
+        "Stormweaver",
+        "Chronomancer",
+        "Disciple of Varashta",
+    }

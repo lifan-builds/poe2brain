@@ -596,6 +596,7 @@ def test_trade2_fetch_to_pob2_text_conversion() -> None:
     assert "Rarity: RARE\nHonour Mark\nDualstring Bow" in pob_raw
     assert "Quality: 20" in pob_raw
     assert "Sockets: S S" in pob_raw
+    assert "Rune:" not in pob_raw
     assert "LevelReq: 48" in pob_raw
     assert "Item Level: 82" in pob_raw
     assert "Implicits: 3" in pob_raw
@@ -604,6 +605,46 @@ def test_trade2_fetch_to_pob2_text_conversion() -> None:
     assert "{implicit}+50% Surpassing chance to fire an additional Arrow" in pob_raw
     assert "{desecrated}Leeches 5.62% of Physical Damage as Mana" in pob_raw
     assert pob_raw.strip().endswith("Corrupted")
+
+    morior_fetch_entry = {
+        "id": "morior_4sock",
+        "item": {
+            "name": "Morior Invictus",
+            "typeLine": "Grand Regalia",
+            "baseType": "Grand Regalia",
+            "rarity": "Unique",
+            "ilvl": 82,
+            "sockets": [
+                {"group": 0, "type": "rune"},
+                {"group": 1, "type": "rune"},
+                {"group": 2, "type": "rune"},
+                {"group": 3, "type": "rune"},
+            ],
+            "socketedItems": [
+                {"socket": 0, "baseType": "Soul Core of Citaqualotl"},
+                {"socket": 1, "baseType": "Soul Core of Citaqualotl"},
+                {"socket": 2, "baseType": "Soul Core of Tacati"},
+            ],
+            "explicitMods": [
+                {"description": "+14 to [Spirit] per Socket filled", "domain": "explicit"},
+                {
+                    "description": (
+                        "+10% to all [ElementalResistances|Elemental Resistances] "
+                        "per Socket filled"
+                    ),
+                    "domain": "explicit",
+                },
+            ],
+        },
+    }
+    morior_pob = trade2_fetch_to_pob2_text(morior_fetch_entry)
+    assert (
+        "Sockets: S S S S\n"
+        "Rune: Soul Core of Citaqualotl\n"
+        "Rune: Soul Core of Citaqualotl\n"
+        "Rune: Soul Core of Tacati\n"
+        "Rune: None"
+    ) in morior_pob
 
     xbow = parse_clipboard_item(FIXTURE_01_CROSSBOW_ALL_MODS)
     xbow_pob = parsed_item_to_pob2_text(xbow)
@@ -824,3 +865,54 @@ def test_trade_advisor_live_candidates_with_pob2_text() -> None:
     assert first.fee is not None and first.fee > 0
     assert first.pob_item_text and first.pob_item_text.startswith("Rarity: ")
     assert "increased Movement Speed" in first.pob_item_text
+
+
+def test_hash_placeholder_constraints_and_chest_spirit_routing() -> None:
+    bundle = get_default_bundle()
+
+    # Literal #, #%, and +# placeholders must never raise StopIteration
+    wand_q = build_natural_trade_query(
+        category="weapon.wand",
+        stat_constraints=[
+            ("+# to Level of all Lightning Spell Skills", 5, None),
+            ("#% increased Spell Damage", 75, None),
+            ("+#% to Fire Resistance", 35, None),
+        ],
+        bundle=bundle,
+    )
+    and_ids = {f["id"] for f in wand_q["query"]["stats"][0]["filters"]}
+    assert "explicit.stat_1545858329" in and_ids
+    assert "explicit.stat_2974417149" in and_ids
+
+    # Only Sceptres use equipment_filters.spirit; Chests route Spirit to explicit/implicit mods
+    nl_chest_sp = resolve_natural_stat("spirit", category="armour.chest", bundle=bundle)
+    assert nl_chest_sp and nl_chest_sp[0].equipment_filter_key is None
+    assert "explicit.stat_3981240776" in nl_chest_sp[0].trade_ids
+
+    chest_q = build_natural_trade_query(
+        category="armour.chest",
+        min_es=550,
+        min_spirit_prop=45,
+        bundle=bundle,
+    )
+    eq_filters = chest_q["query"].get("filters", {}).get("equipment_filters", {}).get("filters", {})
+    assert "spirit" not in eq_filters
+    count_groups = [g for g in chest_q["query"]["stats"] if g["type"] == "count"]
+    assert len(count_groups) == 1
+    assert any(f["id"] == "explicit.stat_3981240776" for f in count_groups[0]["filters"])
+
+    sceptre_q = build_natural_trade_query(
+        category="weapon.sceptre",
+        min_spirit_prop=140,
+        max_price_exalted=25000,
+        bundle=bundle,
+    )
+    assert sceptre_q["query"]["filters"]["equipment_filters"]["filters"]["spirit"] == {"min": 140}
+    # Omit "option": "exalted" so GGG trade2 uses Exalted Orb Equivalent across Divine listings
+    assert sceptre_q["query"]["filters"]["trade_filters"]["filters"]["price"] == {"max": 25000}
+
+    amulet_item = parse_clipboard_item(FIXTURE_04_AMULET_CATALYST_ANOINT, bundle)
+    amulet_priced_q = build_item_trade_query(amulet_item, max_price_exalted=5000, bundle=bundle)
+    assert amulet_priced_q["query"]["filters"]["trade_filters"]["filters"]["price"] == {
+        "max": 5000
+    }

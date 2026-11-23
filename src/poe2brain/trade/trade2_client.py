@@ -26,6 +26,7 @@ from poe2brain.models.common import AffixSide, Poe2Model, SaleType, StatRollRang
 from poe2brain.models.items import ItemRarity, ItemRequirements, ModDomain, ParsedItem, ParsedMod
 from poe2brain.models.trade import PriceCheckResult, PriceDistribution, TradeListing
 from poe2brain.trade.economy import EconomyService
+from poe2brain.trade.item_parser import extract_socketed_rune_names
 
 DEFAULT_TRADE2_STATIC_TTL_SECONDS: float = 14400.0  # 4 hours
 TRADE2_MAX_FETCH_BATCH: int = 10
@@ -336,7 +337,11 @@ def parse_fetch_item(item_obj: Mapping[str, Any]) -> ParsedItem:
     )
 
 
-def format_parsed_item_for_pob2(parsed: ParsedItem) -> str:
+def format_parsed_item_for_pob2(
+    parsed: ParsedItem,
+    *,
+    item_obj: Mapping[str, Any] | None = None,
+) -> str:
     """Synthesize PoB2 `Item.lua`-compatible text from a parsed `trade2/fetch` item."""
     lines: list[str] = [f"Rarity: {parsed.rarity.value.upper()}"]
     if parsed.name:
@@ -346,8 +351,14 @@ def format_parsed_item_for_pob2(parsed: ParsedItem) -> str:
     is_jewelry = any(k in parsed.base_type.lower() for k in _JEWELRY_KEYWORDS)
     if parsed.quality > 0 and parsed.catalyst_type is None and not is_jewelry:
         lines.append(f"Quality: {parsed.quality}")
-    if parsed.rune_sockets > 0:
-        lines.append(f"Sockets: {' '.join(['S'] * parsed.rune_sockets)}")
+    sock_count = parsed.rune_sockets
+    rune_names: list[str] = []
+    if item_obj is not None:
+        sock_count, rune_names = extract_socketed_rune_names(item_obj, parsed.rune_sockets)
+    if sock_count > 0:
+        lines.append(f"Sockets: {' '.join(['S'] * sock_count)}")
+        for rune_name in rune_names:
+            lines.append(f"Rune: {rune_name}")
     if parsed.requirements.level > 0:
         lines.append(f"LevelReq: {parsed.requirements.level}")
     if parsed.item_level is not None:
@@ -832,7 +843,7 @@ class Trade2Client:
         want: Sequence[str] | str,
         *,
         league: str = DEFAULT_LEAGUE,
-        status_option: str = "any",
+        status_option: str = "online",
         minimum: int | None = None,
     ) -> TradeExchangeResponse:
         body = self._prepare_exchange_body(have, want, status_option=status_option, minimum=minimum)
@@ -846,7 +857,7 @@ class Trade2Client:
         want: Sequence[str] | str,
         *,
         league: str = DEFAULT_LEAGUE,
-        status_option: str = "any",
+        status_option: str = "online",
         minimum: int | None = None,
     ) -> TradeExchangeResponse:
         body = self._prepare_exchange_body(have, want, status_option=status_option, minimum=minimum)
@@ -916,7 +927,7 @@ class Trade2Client:
         online = acct_obj.get("online") is not None and acct_obj.get("online") is not False
 
         parsed_item = parse_fetch_item(item_obj)
-        pob_text = format_parsed_item_for_pob2(parsed_item)
+        pob_text = format_parsed_item_for_pob2(parsed_item, item_obj=item_obj)
         mod_lines = [format_mod_line_display(m) for m in parsed_item.mods]
 
         return TradeListing(

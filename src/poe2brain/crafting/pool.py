@@ -272,6 +272,19 @@ def _norm_key(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", text.strip().lower()).strip("_")
 
 
+def _extract_primary_roll_bounds(stat_text: str) -> tuple[float, float] | None:
+    first_line = stat_text.splitlines()[0] if stat_text else ""
+    range_m = re.search(r"\(([+-]?\d+(?:\.\d+)?)\s*-\s*([+-]?\d+(?:\.\d+)?)\)", first_line)
+    if range_m:
+        a, b = abs(float(range_m.group(1))), abs(float(range_m.group(2)))
+        return min(a, b), max(a, b)
+    num_m = re.search(r"[+-]?(\d+(?:\.\d+)?)", first_line)
+    if num_m:
+        v = abs(float(num_m.group(1)))
+        return v, v
+    return None
+
+
 def _strip_numbers_to_pattern(text: str) -> str:
     s = re.sub(r"\([^)]*\)", "#", text)
     s = re.sub(r"[+-]?\d+(?:\.\d+)?", "#", s)
@@ -580,6 +593,51 @@ class ModPoolEngine:
                         stat_text=r["stat_text"],
                     )
                 )
+            seen_ids = {m.mod_id for m in parsed}
+            for lv in self._all_levers:
+                if not lv.is_active_drop_in_patch or not lv.forced_mods:
+                    continue
+                forced_mid = lv.forced_mods.get(base_slug)
+                if forced_mid is None:
+                    for k_cls, v_mid in lv.forced_mods.items():
+                        mapped_pref = POB_CLASS_TO_SLUG_PREFIX.get(k_cls)
+                        if mapped_pref and base_slug.startswith(mapped_pref):
+                            forced_mid = v_mid
+                            break
+                if forced_mid and forced_mid not in seen_ids:
+                    frow = self._conn.execute(
+                        "SELECT * FROM mod_tiers WHERE mod_id = ? LIMIT 1", (forced_mid,)
+                    ).fetchone()
+                    if frow is not None and frow["affix_side"] in ("prefix", "suffix"):
+                        seen_ids.add(forced_mid)
+                        parsed.append(
+                            ModEntry(
+                                mod_id=frow["mod_id"],
+                                mod_type=frow["mod_type"],
+                                family_id=frow["family_id"],
+                                families=tuple(json.loads(frow["families_json"])),
+                                base_group_slug=base_slug,
+                                source_pool=frow["source_pool"]
+                                if frow["source_pool"] != "normal"
+                                else "essence",
+                                affix_side=AffixSide(frow["affix_side"]),
+                                affix_name=frow["affix_name"],
+                                internal_rank_asc=int(frow["internal_rank_asc"]),
+                                display_tier=int(frow["display_tier"]),
+                                required_level=int(frow["required_level"]),
+                                weight=0,
+                                weight_confidence="deterministic",
+                                boss_tag=None,
+                                currency_name=lv.name,
+                                is_alloy=lv.category == "alloy",
+                                removes_mod=lv.category
+                                in ("perfect_or_corrupted_essence", "alloy"),
+                                adds_tags=tuple(json.loads(frow["adds_tags_json"])),
+                                spawn_weights=(),
+                                mod_tags=tuple(json.loads(frow["mod_tags_json"])),
+                                stat_text=frow["stat_text"],
+                            )
+                        )
             self._mods_by_slug[base_slug] = parsed
 
         all_mods = self._mods_by_slug[base_slug]
@@ -597,11 +655,13 @@ class ModPoolEngine:
             return target
 
         max_tier: int | None = 1
+        explicit_tier_given = False
         pool_filter: str | None = None
         if isinstance(target, dict):
             query = str(
                 target.get("query") or target.get("mod") or target.get("mod_id") or ""
             ).strip()
+            explicit_tier_given = "max_display_tier" in target or "tier" in target
             max_tier = target.get("max_display_tier", target.get("tier", 1))
             pool_filter = target.get("source_pool")
         else:
@@ -609,8 +669,15 @@ class ModPoolEngine:
             # Parse inline tier prefix like "T2 Spell Damage" or "T1+ Cast Speed"
             tm = re.match(r"^[Tt](?:ier\s*)?(\d+)\+?\s+(.+)$", query)
             if tm:
+                explicit_tier_given = True
                 max_tier = int(tm.group(1))
                 query = tm.group(2).strip()
+
+        requested_val: float | None = None
+        if not explicit_tier_given:
+            vm = re.search(r"(?<![a-zA-Z])[+-]?(\d+(?:\.\d+)?)", query)
+            if vm:
+                requested_val = float(vm.group(1))
 
         candidates = [
             m
@@ -655,7 +722,13 @@ class ModPoolEngine:
         ]
         if not by_type:
             # 3. Substring / token match on stat_text or affix_name
-            q_tokens = [tok for tok in re.split(r"\s+", re.sub(r"[^a-z0-9+%]+", " ", q_low)) if tok]
+            raw_tokens = [
+                tok.lstrip("+")
+                for tok in re.split(r"\s+", re.sub(r"[^a-z0-9+%]+", " ", q_low))
+                if tok.lstrip("+")
+            ]
+            word_tokens = [t for t in raw_tokens if not re.fullmatch(r"\d+%?", t)]
+            q_tokens = raw_tokens
             scored: list[tuple[int, str, str]] = []
             grouped_ladders: dict[tuple[str, str], list[ModEntry]] = {}
             for m in candidates:
@@ -665,7 +738,19 @@ class ModPoolEngine:
                 sample_text = " ".join(
                     f"{x.stat_text} {x.affix_name} {x.mod_type} {x.boss_tag or ''}" for x in mlist
                 ).lower()
-                if q_low in sample_text or (q_tokens and all(t in sample_text for t in q_tokens)):
+                tok_ok = q_tokens and all(t in sample_text for t in q_tokens)
+                word_ok = (
+                    not tok_ok
+                    and requested_val is not None
+                    and len(word_tokens) >= 2
+                    and all(t in sample_text for t in word_tokens)
+                    and any(
+                        (b := _extract_primary_roll_bounds(x.stat_text)) is not None
+                        and b[0] <= requested_val <= b[1]
+                        for x in mlist
+                    )
+                )
+                if q_low in sample_text or tok_ok or word_ok:
                     pool_bonus = 100 if spool == "normal" else (60 if spool == "desecrated" else 40)
                     exact_sub = 50 if any(q_low in x.stat_text.lower() for x in mlist) else 0
                     shortest = min(len(x.stat_text) for x in mlist)
@@ -695,7 +780,46 @@ class ModPoolEngine:
             max(best_available_tier, max_tier) if max_tier is not None else ilvl_ok[-1].display_tier
         )
         chosen = [m for m in ilvl_ok if m.display_tier <= effective_max_tier]
+        if requested_val is not None and not explicit_tier_given:
+            val_hits = [
+                m
+                for m in ilvl_ok
+                if (b := _extract_primary_roll_bounds(m.stat_text)) is not None
+                and b[1] >= requested_val
+            ]
+            if val_hits:
+                chosen = val_hits
+                effective_max_tier = max(m.display_tier for m in chosen)
+
         top = chosen[0]
+
+        # Include equivalent cross-pool Essence / Perfect Essence / Alloy / Desecrated mods
+        # in the same family + affix side when their roll magnitude satisfies the target floor.
+        if pool_filter is None:
+            chosen_bounds = [
+                b[0] for m in chosen if (b := _extract_primary_roll_bounds(m.stat_text)) is not None
+            ]
+            min_roll_floor = (
+                requested_val
+                if requested_val is not None
+                else (min(chosen_bounds) if chosen_bounds else None)
+            )
+            chosen_ids = {m.mod_id for m in chosen}
+            for cand in candidates:
+                if cand.mod_id in chosen_ids or cand.required_level > ilvl:
+                    continue
+                if cand.source_pool == top.source_pool and cand.mod_type == top.mod_type:
+                    continue
+                if cand.affix_side != top.affix_side or cand.family_id != top.family_id:
+                    continue
+                if cand.source_pool not in ("essence", "perfect_essence", "alloy", "desecrated"):
+                    continue
+                c_bounds = _extract_primary_roll_bounds(cand.stat_text)
+                if min_roll_floor is not None and c_bounds is not None:
+                    if c_bounds[1] >= min_roll_floor:
+                        chosen.append(cand)
+                        chosen_ids.add(cand.mod_id)
+
         return TargetSpec(
             label=f"{top.stat_text} (<=T{effective_max_tier})",
             affix_side=top.affix_side,

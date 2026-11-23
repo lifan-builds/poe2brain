@@ -26,10 +26,11 @@ from poe2brain.crafting import (
     CraftingMod,
     CraftingPlanner,
     CraftingState,
+    CraftProfitScanner,
     ModPoolEngine,
     RemovedLeverError,
 )
-from poe2brain.knowledge import KnowledgeService
+from poe2brain.knowledge import KnowledgeService, MetaService
 from poe2brain.models.common import AffixSide, EngineStatus
 from poe2brain.models.items import ItemRarity
 from poe2brain.pob import (
@@ -39,6 +40,7 @@ from poe2brain.pob import (
     Pob2BridgeError,
 )
 from poe2brain.trade import (
+    ArbitrageScanner,
     EconomyService,
     Trade2Client,
     TradeAdvisor,
@@ -53,10 +55,13 @@ mcp = FastMCP("poe2brain")
 _SAFE_SLOT_RE = re.compile(r"[^a-zA-Z0-9._-]+")
 
 _KNOWLEDGE_SVC: KnowledgeService | None = None
+_META_SVC: MetaService | None = None
 _ECONOMY_SVC: EconomyService | None = None
 _TRADE2_CLIENT: Trade2Client | None = None
 _TRADE_ADVISOR: TradeAdvisor | None = None
 _CRAFTING_PLANNER: CraftingPlanner | None = None
+_CRAFT_PROFIT_SCANNER: CraftProfitScanner | None = None
+_ARBITRAGE_SCANNER: ArbitrageScanner | None = None
 _BUILD_SVC: BuildService | None = None
 _HYDRATED_SLOTS: dict[tuple[int, str], set[str]] = {}
 
@@ -109,6 +114,37 @@ def get_build_service() -> BuildService:
             economy_service=get_economy_service(),
         )
     return _BUILD_SVC
+
+
+def get_meta_service() -> MetaService:
+    global _META_SVC
+    if _META_SVC is None:
+        _META_SVC = MetaService(economy_service=get_economy_service())
+    return _META_SVC
+
+
+def get_craft_profit_scanner() -> CraftProfitScanner:
+    global _CRAFT_PROFIT_SCANNER
+    planner = get_crafting_planner()
+    if _CRAFT_PROFIT_SCANNER is None or _CRAFT_PROFIT_SCANNER.planner is not planner:
+        _CRAFT_PROFIT_SCANNER = CraftProfitScanner(
+            planner=planner,
+            economy=get_economy_service(),
+            trade2=get_trade2_client(),
+        )
+    return _CRAFT_PROFIT_SCANNER
+
+
+def get_arbitrage_scanner() -> ArbitrageScanner:
+    global _ARBITRAGE_SCANNER
+    k_db = get_knowledge_service().db
+    if _ARBITRAGE_SCANNER is None or _ARBITRAGE_SCANNER.db.db_path != k_db.db_path:
+        _ARBITRAGE_SCANNER = ArbitrageScanner(
+            economy=get_economy_service(),
+            trade2=get_trade2_client(),
+            db=k_db,
+        )
+    return _ARBITRAGE_SCANNER
 
 
 def get_pob_slot_snapshot_path(slot: str = "main") -> Path:
@@ -253,6 +289,16 @@ def format_domain_error(exc: Exception) -> dict[str, Any]:
             "hint": (
                 "Check build share code or item base name (avoid PoE1 or 0.1 'Expert ' bases) "
                 "or run './scripts/bootstrap_pob2.sh' if the PoB2 runtime is missing."
+            ),
+        }
+    if isinstance(exc, LookupError) and not isinstance(exc, KeyError):
+        return {
+            "ok": False,
+            "error": str(exc),
+            "error_type": type(exc).__name__,
+            "hint": (
+                "Run 'poe2 wiki ascendancy' / poe2_inspect_ascendancy() with no arguments to list "
+                "all 8 playable PoE2 Patch 0.5.5 classes and 23 Ascendancies."
             ),
         }
     if isinstance(exc, httpx.HTTPError):
@@ -592,18 +638,7 @@ def execute_find_upgrades(
         payload = dict(slot_weights.trade2_weighted_filter)
         query_block = dict(payload.get("query") or {})
         cat = resolve_slot_or_category(equip_slot) or ""
-        if cat == "accessory.amulet" or equip_slot.strip().lower() == "amulet":
-            spirit_cands = resolve_natural_stat("spirit", category="accessory.amulet", limit=1)
-            if spirit_cands:
-                stats_list = list(query_block.get("stats") or [])
-                stats_list.append(
-                    {
-                        "type": "and",
-                        "filters": [{"id": spirit_cands[0].stat_id, "value": {"min": min_spirit}}],
-                    }
-                )
-                query_block["stats"] = stats_list
-        else:
+        if cat == "weapon.sceptre":
             filters_block = dict(query_block.get("filters") or {})
             eq_block = dict(filters_block.get("equipment_filters") or {})
             eq_filters = dict(eq_block.get("filters") or {})
@@ -611,6 +646,23 @@ def execute_find_upgrades(
             eq_block["filters"] = eq_filters
             filters_block["equipment_filters"] = eq_block
             query_block["filters"] = filters_block
+        else:
+            spirit_cands = resolve_natural_stat(
+                "spirit", category=cat or "accessory.amulet", limit=1
+            )
+            if spirit_cands and spirit_cands[0].trade_ids:
+                stats_list = list(query_block.get("stats") or [])
+                stats_list.append(
+                    {
+                        "type": "count",
+                        "value": {"min": 1},
+                        "filters": [
+                            {"id": tid, "value": {"min": min_spirit}}
+                            for tid in spirit_cands[0].trade_ids
+                        ],
+                    }
+                )
+                query_block["stats"] = stats_list
         payload["query"] = query_block
 
         query_id, trade_url, total_matches, listings = svc._execute_trade2_weighted_search(
@@ -752,6 +804,83 @@ def poe2_inspect_augment(query: str, limit: int = 8) -> dict[str, Any]:
         }
 
     return _safe_tool_call(_run)
+
+
+def execute_inspect_ascendancy(
+    *,
+    name_or_class: str | None = None,
+    class_filter: str | None = None,
+) -> dict[str, Any]:
+    meta = get_meta_service()
+    if name_or_class is not None and name_or_class.strip():
+        return meta.inspect_ascendancy(name_or_class.strip()).model_dump(mode="json")
+    if class_filter is not None and class_filter.strip():
+        ascs = meta.list_ascendancies(class_name=class_filter.strip())
+        return {
+            "mode": "list",
+            "patch": POE2_PATCH,
+            "class_filter": class_filter.strip(),
+            "count": len(ascs),
+            "ascendancies": [a.model_dump(mode="json") for a in ascs],
+        }
+    classes = meta.list_classes()
+    ascs = meta.list_ascendancies()
+    return {
+        "mode": "list",
+        "patch": POE2_PATCH,
+        "class_count": len(classes),
+        "count": len(ascs),
+        "classes": [c.model_dump(mode="json") for c in classes],
+        "ascendancies": [a.model_dump(mode="json") for a in ascs],
+    }
+
+
+def execute_meta_ladder(
+    *,
+    league: str = DEFAULT_LEAGUE,
+    top_n: int = 200,
+    include_economy_signals: bool = True,
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    report = get_meta_service().get_ladder_meta(
+        league=league,
+        top_n=top_n,
+        include_economy_signals=include_economy_signals,
+        force_refresh=force_refresh,
+    )
+    return report.model_dump(mode="json")
+
+
+@mcp.tool()
+def poe2_inspect_ascendancy(
+    name_or_class: str | None = None,
+    class_filter: str | None = None,
+) -> dict[str, Any]:
+    """List all 23 PoE2 0.5.5 Ascendancies (8 classes) or inspect notables, choices, and traps."""
+    return _safe_tool_call(
+        lambda: execute_inspect_ascendancy(
+            name_or_class=name_or_class,
+            class_filter=class_filter,
+        )
+    )
+
+
+@mcp.tool()
+def poe2_meta_ladder(
+    league: str = DEFAULT_LEAGUE,
+    top_n: int = 200,
+    include_economy_signals: bool = True,
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    """Get live PoE2 SC/HC/SSF/HCSSF ladder shares, Ascendancy tier rankings, and chase demand."""
+    return _safe_tool_call(
+        lambda: execute_meta_ladder(
+            league=league,
+            top_n=top_n,
+            include_economy_signals=include_economy_signals,
+            force_refresh=force_refresh,
+        )
+    )
 
 
 @mcp.tool()
@@ -971,6 +1100,50 @@ def poe2_market_scan(
     return _safe_tool_call(_run)
 
 
+def execute_scan_arbitrage(
+    *,
+    min_volume_divine: float = 2.0,
+    min_roi_pct: float = 5.0,
+    live_books: bool = True,
+    include_encounter_gated: bool = True,
+    limit: int = 25,
+    force_refresh: bool = False,
+    league: str = DEFAULT_LEAGUE,
+) -> dict[str, Any]:
+    report = get_arbitrage_scanner().scan_all(
+        league=league,
+        min_volume_divine=min_volume_divine,
+        min_roi_pct=min_roi_pct,
+        include_live_exchange=live_books,
+        include_encounter_gated=include_encounter_gated,
+        limit=limit,
+        force_refresh=force_refresh,
+    )
+    return report.model_dump(mode="json")
+
+
+@mcp.tool()
+def poe2_scan_arbitrage(
+    min_volume_divine: float = 2.0,
+    min_roi_pct: float = 5.0,
+    live_books: bool = True,
+    include_encounter_gated: bool = True,
+    limit: int = 25,
+    league: str = DEFAULT_LEAGUE,
+) -> dict[str, Any]:
+    """Scan executable PoE2 0.5.5 conversions, Alva spreads, order books, Gold ROI, and traps."""
+    return _safe_tool_call(
+        lambda: execute_scan_arbitrage(
+            min_volume_divine=min_volume_divine,
+            min_roi_pct=min_roi_pct,
+            live_books=live_books,
+            include_encounter_gated=include_encounter_gated,
+            limit=limit,
+            league=league,
+        )
+    )
+
+
 @mcp.tool()
 def poe2_parse_item(item_text: str) -> dict[str, Any]:
     """Parse PoE2 Ctrl+C / Ctrl+Alt+C clipboard text into ParsedItem plus PoB2-ready item text."""
@@ -1080,6 +1253,60 @@ def poe2_craft_plan(
             sims=sims,
             base_cost_exalted=base_cost_exalted,
             item_text=item_text,
+            league=league,
+        )
+    )
+
+
+def execute_scan_craft_profit(
+    *,
+    budget: str = "all",
+    max_budget_divine: float | None = None,
+    live_trade: bool = True,
+    offline_prices: bool = False,
+    max_trade_queries: int = 8,
+    sims: int = 3000,
+    league: str = DEFAULT_LEAGUE,
+) -> dict[str, Any]:
+    norm_budget = budget.strip().lower()
+    if norm_budget not in ("all", "low", "mid", "high"):
+        raise ValueError(
+            f"Unsupported budget tier {budget!r} (expected 'all', 'low', 'mid', or 'high')."
+        )
+    tier_arg: Literal["low", "mid", "high"] | None = (
+        None if norm_budget == "all" else norm_budget  # type: ignore[assignment]
+    )
+    report = get_craft_profit_scanner().scan(
+        league=league,
+        budget_tier=tier_arg,
+        max_budget_divine=max_budget_divine,
+        live_economy=not offline_prices,
+        live_trade=(live_trade and not offline_prices),
+        max_trade_queries=max_trade_queries,
+        n_sims=sims,
+    )
+    return report.model_dump(mode="json")
+
+
+@mcp.tool()
+def poe2_scan_craft_profit(
+    budget: Literal["all", "low", "mid", "high"] = "all",
+    max_budget_divine: float | None = None,
+    live_trade: bool = True,
+    offline_prices: bool = False,
+    max_trade_queries: int = 8,
+    sims: int = 3000,
+    league: str = DEFAULT_LEAGUE,
+) -> dict[str, Any]:
+    """Scan & rank profitable PoE2 0.5.5 crafts with live costs, p50/p80, exit prices, and ROI."""
+    return _safe_tool_call(
+        lambda: execute_scan_craft_profit(
+            budget=budget,
+            max_budget_divine=max_budget_divine,
+            live_trade=live_trade,
+            offline_prices=offline_prices,
+            max_trade_queries=max_trade_queries,
+            sims=sims,
             league=league,
         )
     )

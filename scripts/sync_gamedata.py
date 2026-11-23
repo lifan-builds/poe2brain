@@ -1233,19 +1233,56 @@ def build_database(
     if remnants_path.exists():
         rem_data = json.loads(remnants_path.read_text(encoding="utf-8"))
         recipes_map = rem_data.get("recipes") or {}
-        items_lookup = rem_data.get("items") or {}
+        rewards_raw = rem_data.get("rewards")
+        rewards_list = rewards_raw if isinstance(rewards_raw, list) else []
         for rkey, seq in sorted(recipes_map.items()):
+            parts = rkey.split("|")
+            glyph_name = parts[0]
+            min_cnt = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+            total_slots = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else None
+            items_meta = [
+                {
+                    "idx": idx,
+                    "id": rewards_list[idx].get("id"),
+                    "reward": rewards_list[idx].get("refReward"),
+                    "count": rewards_list[idx].get("count", 1),
+                    "cat": rewards_list[idx].get("cat"),
+                    "gem_level": rewards_list[idx].get("gemLevel", 0),
+                }
+                for idx in (seq or [])
+                if isinstance(idx, int) and 0 <= idx < len(rewards_list)
+            ]
+            slot_prefix = f"{total_slots}Slot" if total_slots is not None else ""
+            top_meta = [
+                m
+                for m in items_meta
+                if slot_prefix and str(m.get("id") or "").startswith(slot_prefix)
+            ] or items_meta[:1]
+            reward_labels: list[str] = []
+            for m in top_meta:
+                rname = str(m.get("reward") or "").strip()
+                if not rname:
+                    continue
+                cnt = int(m.get("count") or 1)
+                glvl = int(m.get("gem_level") or 0)
+                lbl = f"{cnt}x {rname}" if cnt > 1 else rname
+                if glvl > 0:
+                    lbl = f"{lbl} (Lv.{glvl})"
+                if lbl not in reward_labels:
+                    reward_labels.append(lbl)
+            output_reward = " / ".join(reward_labels) if reward_labels else glyph_name
             payload = json.dumps(
                 {
+                    "runeshape": glyph_name,
+                    "min_glyph_count": min_cnt,
+                    "total_slots": total_slots,
                     "rune_sequence_ids": seq,
-                    "items_meta": items_lookup.get(rkey)
-                    if isinstance(items_lookup, dict)
-                    else None,
+                    "items_meta": items_meta,
                 },
                 ensure_ascii=False,
             )
             rf_rows.append(
-                (f"remnant:{rkey}", payload, rkey.split("|")[0], "kalguuran_remnant_recipe")
+                (f"remnant:{rkey}", payload, output_reward, "kalguuran_remnant_recipe")
             )
     cur.executemany("INSERT OR REPLACE INTO runeforge_recipes VALUES (?, ?, ?, ?)", rf_rows)
 

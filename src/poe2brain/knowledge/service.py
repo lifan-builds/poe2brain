@@ -10,6 +10,13 @@ from pydantic import Field
 
 from poe2brain.config import POE2_PATCH
 from poe2brain.knowledge.db import GamedataDB, GamedataHealth
+from poe2brain.knowledge.meta import (
+    ASCENDANCY_SHORTHAND_ALIASES,
+    AscendancyInspection,
+    AscendancySummary,
+    ClassSummary,
+    MetaService,
+)
 from poe2brain.models.common import Poe2Model
 from poe2brain.models.knowledge import (
     BaseItemSummary,
@@ -206,6 +213,10 @@ CATEGORY_DOC_TYPE_ALIASES: dict[str, str] = {
     "runeforging": "runeforge_recipe",
     "runeforge_recipe": "runeforge_recipe",
     "runeforge_recipes": "runeforge_recipe",
+    "ascendancy": "ascendancy",
+    "ascendancies": "ascendancy",
+    "class": "class",
+    "classes": "class",
 }
 
 POE1_BASE_TRAP_MAP: dict[str, tuple[str, str, str]] = {
@@ -526,11 +537,50 @@ def _truncate_text(text: str, max_chars: int = 260) -> str:
 class KnowledgeService:
     """PoE2 Patch 0.5.5 anti-hallucination game knowledge engine."""
 
-    def __init__(self, db: GamedataDB | Path | str | None = None) -> None:
+    def __init__(
+        self,
+        db: GamedataDB | Path | str | None = None,
+        *,
+        meta_service: MetaService | None = None,
+    ) -> None:
         if isinstance(db, GamedataDB):
             self.db = db
         else:
             self.db = GamedataDB(db)
+        self._meta_service: MetaService | None = meta_service
+        self._meta_unavailable: bool = False
+
+    def _get_meta_service(self) -> MetaService | None:
+        if self._meta_service is not None:
+            return self._meta_service
+        if self._meta_unavailable:
+            return None
+        try:
+            svc = MetaService()
+            svc._ensure_tree_loaded()
+            self._meta_service = svc
+            return svc
+        except (FileNotFoundError, OSError, ValueError):
+            self._meta_unavailable = True
+            return None
+
+    def list_classes(self) -> list[ClassSummary]:
+        svc = self._get_meta_service()
+        if svc is None:
+            return []
+        return svc.list_classes()
+
+    def list_ascendancies(self, class_name: str | None = None) -> list[AscendancySummary]:
+        svc = self._get_meta_service()
+        if svc is None:
+            return []
+        return svc.list_ascendancies(class_name=class_name)
+
+    def inspect_ascendancy(self, name_or_class: str) -> AscendancyInspection:
+        svc = self._get_meta_service()
+        if svc is None:
+            svc = MetaService()
+        return svc.inspect_ascendancy(name_or_class)
 
     def health_check(self) -> GamedataHealth:
         return self.db.health_check()
@@ -586,7 +636,7 @@ class KnowledgeService:
             if prev is None or pts > prev[0]:
                 scored[key] = (pts, title, cat)
 
-        if doc_type_filter != "runeforge_recipe":
+        if doc_type_filter not in ("runeforge_recipe", "ascendancy", "class"):
             where_parts = ["knowledge_fts MATCH ?"]
             base_params: list[Any] = []
             if doc_type_filter:
@@ -780,6 +830,58 @@ class KnowledgeService:
                 )
                 if len(seen_stat) >= 4:
                     break
+
+        # Include PoE2 0.5.5 8 Classes & 23 Ascendancies (+ notable names) from MetaService
+        if doc_type_filter in (None, "ascendancy", "class"):
+            meta_svc = self._get_meta_service()
+            if meta_svc is not None:
+                search_terms = [
+                    t.lower() for t in tokens if t.lower() not in FTS_STOPWORDS and len(t) >= 2
+                ]
+                compact_q = re.sub(r"[^a-z0-9]+", "", q_norm)
+                alias_asc = ASCENDANCY_SHORTHAND_ALIASES.get(compact_q)
+
+                if doc_type_filter in (None, "class"):
+                    for cls_obj in meta_svc.list_classes():
+                        c_low = cls_obj.name.lower()
+                        if c_low == q_norm:
+                            _record_hit("class", cls_obj.name, cls_obj.name, "class", 55.0)
+                        elif len(q_norm) >= 3 and c_low.startswith(q_norm):
+                            _record_hit("class", cls_obj.name, cls_obj.name, "class", 28.0)
+
+                if doc_type_filter in (None, "ascendancy"):
+                    for asc_name, detail in meta_svc._asc_details_by_name.items():
+                        a_low = POSSESSIVE_RE.sub("", asc_name).lower()
+                        cls_low = detail.class_name.lower()
+                        pts_asc = 0.0
+                        if a_low == q_norm or asc_name == alias_asc:
+                            pts_asc = 62.0
+                        elif len(q_norm) >= 3 and a_low.startswith(q_norm):
+                            pts_asc = 38.0
+                        elif cls_low == q_norm:
+                            pts_asc = 26.0
+                        elif search_terms:
+                            notable_lows = [
+                                POSSESSIVE_RE.sub("", n.name).lower() for n in detail.notables
+                            ]
+                            if any(nl == q_norm for nl in notable_lows):
+                                pts_asc = 46.0
+                            else:
+                                hay = (
+                                    f"{a_low} {cls_low} {' '.join(notable_lows)} "
+                                    f"{detail.archetype_summary.lower()}"
+                                )
+                                if all(st in hay for st in search_terms):
+                                    has_name_hit = any(st in a_low for st in search_terms)
+                                    pts_asc = 30.0 if has_name_hit else 19.0
+                        if pts_asc > 0.0:
+                            _record_hit(
+                                "ascendancy",
+                                detail.name,
+                                detail.name,
+                                detail.class_name,
+                                pts_asc,
+                            )
 
         # Apply exact/prefix adjustments and mechanics_facts anti-hallucination boost
         final_candidates: list[tuple[float, str, str]] = []
@@ -1052,6 +1154,59 @@ class KnowledgeService:
                     "display_tier": int(row["display_tier"]),
                     "required_level": int(row["required_level"]),
                     "weight": int(row["weight"]),
+                },
+            )
+
+        if doc_type == "ascendancy":
+            meta_svc = self._get_meta_service()
+            if meta_svc is None or doc_id not in meta_svc._asc_details_by_name:
+                return None
+            detail = meta_svc._asc_details_by_name[doc_id]
+            notable_preview = ", ".join(detail.notable_names[:6])
+            summary = _truncate_text(
+                f"{detail.class_name} Ascendancy ({detail.notable_count} notables): "
+                f"{detail.archetype_summary} | Notables: {notable_preview}",
+                320,
+            )
+            return KnowledgeRecord(
+                id=detail.internal_id or detail.name,
+                kind="ascendancy",
+                title=detail.name,
+                summary=summary,
+                category=detail.class_name,
+                score=score,
+                source_ref="PoB2 TreeData/0_5",
+                metadata={
+                    "class_name": detail.class_name,
+                    "notable_count": detail.notable_count,
+                    "notable_names": detail.notable_names,
+                    "granted_skills": detail.granted_skills,
+                    "replaces_ascendancy": detail.replaces_ascendancy,
+                },
+            )
+
+        if doc_type == "class":
+            meta_svc = self._get_meta_service()
+            if meta_svc is None or doc_id not in meta_svc._classes_by_name:
+                return None
+            cls_obj = meta_svc._classes_by_name[doc_id]
+            asc_names = [a.name for a in cls_obj.ascendancies]
+            summary = (
+                f"Playable PoE2 0.5.5 Class "
+                f"(Str {cls_obj.base_str} / Dex {cls_obj.base_dex} / Int {cls_obj.base_int}) — "
+                f"{cls_obj.ascendancy_count} Ascendancies: {', '.join(asc_names)}"
+            )
+            return KnowledgeRecord(
+                id=f"class:{cls_obj.name.lower()}",
+                kind="class",
+                title=cls_obj.name,
+                summary=_truncate_text(summary, 280),
+                category="class",
+                score=score,
+                source_ref="PoB2 TreeData/0_5",
+                metadata={
+                    "class_id": cls_obj.class_id,
+                    "ascendancies": asc_names,
                 },
             )
 

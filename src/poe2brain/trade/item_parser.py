@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from poe2brain.models.common import AffixSide, StatRollRange
@@ -927,6 +928,70 @@ def _extract_mod_descriptions(
     return out
 
 
+_JEWEL_SOCKET_BASES = frozenset({"Diamond", "Emerald", "Ruby", "Sapphire"})
+
+
+def extract_socketed_rune_names(
+    item_obj: Mapping[str, Any],
+    rune_sock_count: int | None = None,
+) -> tuple[int, list[str]]:
+    """Extract socket count and ordered `Rune: <Name>` entries from `item.socketedItems`.
+
+    Returns `(resolved_rune_sock_count, rune_lines)` where `rune_lines` is non-empty only
+    when `item.socketedItems` provides at least one non-jewel augment name (falling back
+    to `[]` when `socketedItems` is absent so PoB2's `{rune}` inference still runs).
+    """
+    sockets = item_obj.get("sockets") or []
+    raw_to_rune_pos: dict[int, int] = {}
+    if isinstance(sockets, Sequence):
+        for raw_idx, sock in enumerate(sockets):
+            if isinstance(sock, Mapping) and sock.get("type") in ("rune", None):
+                raw_to_rune_pos[raw_idx] = len(raw_to_rune_pos)
+
+    base_count = rune_sock_count if rune_sock_count is not None else len(raw_to_rune_pos)
+    socketed_items = item_obj.get("socketedItems")
+    if not isinstance(socketed_items, Sequence) or not socketed_items:
+        return base_count, []
+
+    indexed_entries: list[tuple[int | None, str]] = []
+    max_pos = base_count - 1
+    for si in socketed_items:
+        if not isinstance(si, Mapping):
+            continue
+        raw_name = strip_wiki_markup(
+            str(si.get("baseType") or si.get("typeLine") or si.get("name") or "").strip()
+        )
+        if not raw_name or raw_name in _JEWEL_SOCKET_BASES:
+            continue
+        sock_idx = si.get("socket")
+        if isinstance(sock_idx, int) and not isinstance(sock_idx, bool) and sock_idx >= 0:
+            pos = raw_to_rune_pos.get(sock_idx, sock_idx)
+            max_pos = max(max_pos, pos)
+            indexed_entries.append((pos, raw_name))
+        else:
+            indexed_entries.append((None, raw_name))
+
+    if not indexed_entries:
+        return base_count, []
+
+    resolved_count = max(base_count, max_pos + 1, len(indexed_entries))
+    slot_names: list[str] = ["None"] * resolved_count
+    for pos, name in indexed_entries:
+        if pos is not None and 0 <= pos < resolved_count and slot_names[pos] == "None":
+            slot_names[pos] = name
+    next_free = 0
+    for pos, name in indexed_entries:
+        if pos is not None and 0 <= pos < resolved_count:
+            continue
+        while next_free < resolved_count and slot_names[next_free] != "None":
+            next_free += 1
+        if next_free < resolved_count:
+            slot_names[next_free] = name
+            next_free += 1
+
+    return resolved_count, slot_names
+
+
 def trade2_fetch_to_pob2_text(fetch_entry: dict[str, Any]) -> str:
     """
     Convert an official PoE2 `/api/trade2/fetch` result entry (or inner `item` dict)
@@ -964,11 +1029,14 @@ def trade2_fetch_to_pob2_text(fetch_entry: dict[str, Any]) -> str:
                 lines.append(f"Quality: {int(m_q.group(0))}")
 
     sockets = item.get("sockets") or []
-    rune_sock_count = sum(
+    raw_rune_sock_count = sum(
         1 for s in sockets if isinstance(s, dict) and s.get("type") in ("rune", None)
     )
+    rune_sock_count, socketed_rune_names = extract_socketed_rune_names(item, raw_rune_sock_count)
     if rune_sock_count > 0:
         lines.append("Sockets: " + " ".join(["S"] * rune_sock_count))
+        for rune_name in socketed_rune_names:
+            lines.append(f"Rune: {rune_name}")
 
     for req in item.get("requirements") or []:
         req_name = strip_wiki_markup(req.get("name") or "")

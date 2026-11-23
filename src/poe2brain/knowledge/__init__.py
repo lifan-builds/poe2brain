@@ -1,6 +1,23 @@
 """Pillar 1: PoE2 game knowledge, FTS5 search, and anti-hallucination mechanics rules."""
 
 from poe2brain.knowledge.db import GAMEDATA_TABLES, GamedataDB, GamedataHealth
+from poe2brain.knowledge.meta import (
+    AscendancyChoiceOption,
+    AscendancyDetail,
+    AscendancyInspection,
+    AscendancyNotable,
+    AscendancyShareEntry,
+    AscendancySmallPassive,
+    AscendancySummary,
+    AscendancyTierEntry,
+    ClassShareEntry,
+    ClassSummary,
+    LadderLeaderEntry,
+    LadderMetaReport,
+    LadderModeSnapshot,
+    MetaDemandSignal,
+    MetaService,
+)
 from poe2brain.knowledge.service import (
     AugmentSummary,
     BaseItemInspection,
@@ -16,15 +33,30 @@ from poe2brain.knowledge.service import (
 )
 
 __all__ = [
+    "AscendancyChoiceOption",
+    "AscendancyDetail",
+    "AscendancyInspection",
+    "AscendancyNotable",
+    "AscendancyShareEntry",
+    "AscendancySmallPassive",
+    "AscendancySummary",
+    "AscendancyTierEntry",
     "AugmentSummary",
     "BaseItemInspection",
+    "ClassShareEntry",
+    "ClassSummary",
     "GAMEDATA_TABLES",
     "GamedataDB",
     "GamedataHealth",
     "GemInspection",
     "KeywordEntry",
     "KnowledgeService",
+    "LadderLeaderEntry",
+    "LadderMetaReport",
+    "LadderModeSnapshot",
     "MechanicExplanation",
+    "MetaDemandSignal",
+    "MetaService",
     "RuneforgeRecipeSummary",
     "TopAffixSummary",
     "UniqueInspection",

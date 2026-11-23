@@ -205,11 +205,12 @@ def _avg_roll_values(values: list[float]) -> float:
 
 def _generate_placeholder_candidates(stat_line: str):
     matches: list[tuple[str, float, bool]] = []
+    sentinel = "\x00"
 
     def _sub(m: re.Match[str]) -> str:
         s = m.group("val")
         matches.append((s, float(s), "." in s))
-        return "#"
+        return sentinel
 
     templated = NUMBER_TOKEN_RE.sub(_sub, stat_line)
     if len(matches) < len(PLACEHOLDER_MAP):
@@ -221,11 +222,13 @@ def _generate_placeholder_candidates(stat_line: str):
                 idx = next(it)
                 return matches[idx][0] if idx in ks else "#"
 
-            cand_str = re.sub(r"#", _restore, templated)
+            cand_str = re.sub(sentinel, _restore, templated)
             active_vals = [
                 (matches[i][1], matches[i][2]) for i in range(len(matches)) if i not in keep_set
             ]
             yield cand_str, active_vals
+            if cand_str.startswith("+#"):
+                yield cand_str[1:], active_vals
             if any(
                 matches[i][0].startswith("+") and i not in keep_set for i in range(len(matches))
             ):
@@ -237,11 +240,13 @@ def _generate_placeholder_candidates(stat_line: str):
                         return matches[idx][0]
                     return "+#" if matches[idx][0].startswith("+") else "#"
 
-                plus_str = re.sub(r"#", _restore_plus, templated)
+                plus_str = re.sub(sentinel, _restore_plus, templated)
                 if plus_str != cand_str:
                     yield plus_str, active_vals
 
     yield stat_line, []
+    if stat_line.startswith("+#"):
+        yield stat_line[1:], []
 
 
 def _resolve_domain_ids(
@@ -462,12 +467,7 @@ def resolve_natural_stat(
     seen_key: set[tuple[str, tuple[str, ...]]] = set()
 
     trade_cat = resolve_slot_or_category(category)
-    is_spirit_base = trade_cat in (
-        "weapon.sceptre",
-        "armour.chest",
-        "armour.focus",
-        "armour.shield",
-    )
+    is_spirit_base = trade_cat == "weapon.sceptre"
     if q_norm == "spirit" and is_spirit_base:
         results.append(
             NaturalStatCandidate(
@@ -479,6 +479,27 @@ def resolve_natural_stat(
                 equipment_filter_key="spirit",
             )
         )
+    elif q_norm == "spirit" and trade_cat is not None:
+        sp_obj = bundle.stat_by_ref.get("# to Spirit")
+        sp_ids_map = (sp_obj.get("trade") or {}).get("ids") or {} if sp_obj else {}
+        combined_sp_ids: list[str] = []
+        for dom_k in ("explicit", "implicit", "fractured", "desecrated"):
+            for tid in sp_ids_map.get(dom_k) or []:
+                if tid not in combined_sp_ids:
+                    combined_sp_ids.append(tid)
+        if combined_sp_ids:
+            k = ("explicit", tuple(combined_sp_ids))
+            seen_key.add(k)
+            results.append(
+                NaturalStatCandidate(
+                    query=query,
+                    ref="# to Spirit",
+                    domain="explicit",
+                    trade_ids=combined_sp_ids,
+                    score=109.5,
+                    ambiguous_local_global=len(combined_sp_ids) > 1,
+                )
+            )
 
     alias_targets = NATURAL_QUERY_ALIASES.get(q_norm, [])
     for idx_a, (pref_dom, ref_str) in enumerate(alias_targets):
@@ -716,7 +737,7 @@ def build_item_trade_query(
     if item.sanctified:
         _set_filter("misc_filters", "sanctified", {"option": "true"})
     if max_price_exalted is not None:
-        _set_filter("trade_filters", "price", {"option": "exalted", "max": max_price_exalted})
+        _set_filter("trade_filters", "price", {"max": max_price_exalted})
 
     for mod in item.mods:
         if mod.domain == ModDomain.RUNE and item.rarity != ItemRarity.UNIQUE:
@@ -834,8 +855,26 @@ def build_natural_trade_query(
     if unique_name:
         _set_filter("type_filters", "rarity", {"option": "unique"})
 
-    if min_spirit_prop is not None:
-        _set_filter("equipment_filters", "spirit", {"min": min_spirit_prop})
+    if min_spirit_prop is not None and min_spirit_prop > 0:
+        if trade_cat in (None, "weapon.sceptre"):
+            _set_filter("equipment_filters", "spirit", {"min": min_spirit_prop})
+        else:
+            sp_cands = resolve_natural_stat("spirit", category=trade_cat, limit=1, bundle=bundle)
+            if sp_cands and sp_cands[0].trade_ids:
+                extra_groups.append(
+                    {
+                        "type": "count",
+                        "value": {"min": 1},
+                        "filters": [
+                            {"id": tid, "value": {"min": min_spirit_prop}}
+                            for tid in sp_cands[0].trade_ids
+                        ],
+                    }
+                )
+            else:
+                _set_filter("equipment_filters", "spirit", {"min": min_spirit_prop})
+    elif min_spirit_prop == 0 and trade_cat in (None, "weapon.sceptre"):
+        _set_filter("equipment_filters", "spirit", {"min": 0})
     if min_rune_sockets is not None:
         _set_filter("equipment_filters", "rune_sockets", {"min": min_rune_sockets})
     if min_pdps is not None:
@@ -851,7 +890,7 @@ def build_natural_trade_query(
     if corrupted is not None:
         _set_filter("misc_filters", "corrupted", {"option": "true" if corrupted else "false"})
     if max_price_exalted is not None:
-        _set_filter("trade_filters", "price", {"option": "exalted", "max": max_price_exalted})
+        _set_filter("trade_filters", "price", {"max": max_price_exalted})
 
     for stat_q, min_v, max_v in _normalize_stat_constraints(stat_constraints):
         cands = resolve_natural_stat(stat_q, category=trade_cat, limit=1, bundle=bundle)

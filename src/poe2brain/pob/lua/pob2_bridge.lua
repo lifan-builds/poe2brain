@@ -2519,7 +2519,7 @@ methods.slot_stat_weights = function(params)
 
 	-- If targetSlot is currently empty, temporarily insert a zero-mod white item so
 	-- TradeQueryGenerator:StartQuery resolves itemCategory cleanly, then remove it after!
-	local tempItemId = nil
+	local tempItemObj = nil
 	local origSelItemId = slotCtrl.selItemId or 0
 	if origSelItemId == 0 and not targetSlot:find("^Jewel") then
 		local baseName = params.baseName or DEFAULT_SLOT_BASES[targetSlot]
@@ -2531,8 +2531,8 @@ methods.slot_stat_weights = function(params)
 			error("Invalid params.baseName '" .. tostring(baseName) .. "'", 0)
 		end
 		build.itemsTab:AddItem(tempItem, true)
-		tempItemId = tempItem.id
-		slotCtrl.selItemId = tempItemId
+		tempItemObj = tempItem
+		slotCtrl.selItemId = tempItem.id
 	end
 
 	local t0 = os.clock()
@@ -2557,7 +2557,7 @@ methods.slot_stat_weights = function(params)
 			sockets = tonumber(params.sockets) or 0,
 			maxLevel = tonumber(params.maxLevel) or nil,
 			maxPrice = tonumber(params.maxPrice) or nil,
-			maxPriceType = params.maxPriceType or "exalted",
+			maxPriceType = (type(params.maxPriceType) == "string" and params.maxPriceType ~= "") and params.maxPriceType or nil,
 		}
 		qg:StartQuery(slotCtrl, options)
 		while qg.calcContext and qg.calcContext.co do
@@ -2567,9 +2567,9 @@ methods.slot_stat_weights = function(params)
 	end)
 
 	-- Clean up temporary probe item if we inserted one
-	if tempItemId then
+	if tempItemObj then
 		slotCtrl.selItemId = origSelItemId
-		build.itemsTab.items[tempItemId] = nil
+		build.itemsTab:DeleteItem(tempItemObj, true)
 		closeAllPopups()
 	end
 

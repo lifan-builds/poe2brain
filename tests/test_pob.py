@@ -347,7 +347,7 @@ def test_slot_stat_weights_occupied_and_empty(build_service: BuildService) -> No
     assert wand_w.weights[0].dps_per_unit > 0
     q = wand_w.trade2_weighted_filter["query"]
     assert q["status"]["option"] == "securable"
-    assert q["filters"]["trade_filters"]["filters"]["price"]["max"] == 40.0
+    assert q["filters"]["trade_filters"]["filters"]["price"] == {"max": 40.0}
 
     # Empty slot ('Ring 1')
     ring_w = build_service.compute_slot_trade_weights(
@@ -518,6 +518,56 @@ def test_find_live_slot_upgrades_mocked_closed_loop(build_service: BuildService)
         )
     finally:
         mock_http.close()
+
+
+def test_morior_invictus_socketed_items_evaluates_per_socket_filled_in_pob2(
+    build_service: BuildService,
+) -> None:
+    from poe2brain.trade.item_parser import trade2_fetch_to_pob2_text
+
+    build_service.create_character("Monk", "Martial Artist", level=90, slot="morior_test")
+    base_stats = build_service.get_stats(slot="morior_test")
+
+    morior_fetch = {
+        "item": {
+            "name": "Morior Invictus",
+            "baseType": "Grand Regalia",
+            "rarity": "Unique",
+            "ilvl": 82,
+            "sockets": [
+                {"group": 0, "type": "rune"},
+                {"group": 1, "type": "rune"},
+                {"group": 2, "type": "rune"},
+                {"group": 3, "type": "rune"},
+            ],
+            "socketedItems": [
+                {"socket": 0, "baseType": "Soul Core of Citaqualotl"},
+                {"socket": 1, "baseType": "Soul Core of Citaqualotl"},
+                {"socket": 2, "baseType": "Soul Core of Citaqualotl"},
+                {"socket": 3, "baseType": "Soul Core of Tacati"},
+            ],
+            "explicitMods": [
+                {
+                    "description": "300% increased Armour, Evasion and Energy Shield",
+                    "domain": "explicit",
+                },
+                {"description": "+14 to [Spirit] per Socket filled", "domain": "explicit"},
+                {
+                    "description": (
+                        "+10% to all [ElementalResistances|Elemental Resistances] "
+                        "per Socket filled"
+                    ),
+                    "domain": "explicit",
+                },
+            ],
+        }
+    }
+    pob_txt = trade2_fetch_to_pob2_text(morior_fetch)
+    diff = build_service.diff_item(pob_txt, target_slot="Body Armour", slot="morior_test")
+    assert diff.spirit_unreserved_delta == 56
+    equipped = build_service.equip_item(pob_txt, target_slot="Body Armour", slot="morior_test")
+    assert equipped.spirit_total == base_stats.spirit_total + 56
+    assert equipped.fire_resist >= base_stats.fire_resist + 55.0
 
 
 @pytest.mark.skipif(

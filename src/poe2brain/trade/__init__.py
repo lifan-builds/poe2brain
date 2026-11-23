@@ -3,6 +3,17 @@
 from __future__ import annotations
 
 from poe2brain.trade.advisor import TradeAdvisor, TradeCandidate
+from poe2brain.trade.arbitrage import (
+    ArbitrageMechanism,
+    ArbitrageOpportunity,
+    ArbitrageScanner,
+    ArbitrageScanReport,
+    ArbitrageTrapWarning,
+    OrderBookQuote,
+    compute_profit_per_10k_gold,
+    estimate_alva_gold_per_unit,
+    estimate_leg_gold,
+)
 from poe2brain.trade.economy import (
     EconomyService,
     LeagueEconomySummary,
@@ -41,6 +52,11 @@ from poe2brain.trade.trade2_client import (
 )
 
 __all__ = [
+    "ArbitrageMechanism",
+    "ArbitrageOpportunity",
+    "ArbitrageScanReport",
+    "ArbitrageScanner",
+    "ArbitrageTrapWarning",
     "DEFAULT_EE2_DATA_DIR",
     "DetailedPriceCheckResult",
     "EE2Bundle",
@@ -50,6 +66,7 @@ __all__ = [
     "MarketOpportunity",
     "MatchedStat",
     "NaturalStatCandidate",
+    "OrderBookQuote",
     "PriceHistoryPoint",
     "ReferenceRates",
     "Trade2Client",
@@ -61,7 +78,10 @@ __all__ = [
     "build_item_trade_query",
     "build_natural_trade_query",
     "build_trade_url",
+    "compute_profit_per_10k_gold",
     "deduplicate_listings_by_account",
+    "estimate_alva_gold_per_unit",
+    "estimate_leg_gold",
     "get_default_bundle",
     "match_mod_line",
     "normalize_market_slug",

@@ -17,7 +17,7 @@ Verified against client `4.5.4.3`, Path of Building 2 `v0.23.1` (`CalcOffence.lu
 | **Bleed & Poison vs ES** | ES absorbs Poison/Bleed before Life (or only Poison bypasses) | **BOTH Bleeding AND Poison bypass Energy Shield** directly to Life |
 | **Grim Feast** | Overcaps/doubles maximum Energy Shield via remnants | **Reworked into a Minion Revival remnant skill** — provides **zero Energy Shield** |
 | **Spell Suppression** | `50%` damage prevented (`Spell Suppression`) | Replaced in `0.5` by **Deflection**: mitigates **`40%`** of hit & ailment damage (works on attacks & spells, `95%` cap) |
-| **Utility Flasks** | 5 Flask slots (Quicksilver, Granite, Mageblood, etc.) | **1 Life Flask + 1 Mana Flask + up to 3 Belt Charm slots** (zero utility flasks) |
+| **Utility Flasks** | 5 Flask slots (Quicksilver, Granite, Silver, etc.) | **1 Life Flask + 1 Mana Flask + up to 3 Belt Charm slots** (zero utility flasks; PoE2 `0.5` `Mageblood` grants 4× permanent `Mage's Legacies` instead of flasks) |
 | **Mod Tier Numbers** | `Tier 1` = worst (`.datc64` internal rank) or inconsistent | Since `0.2.1`, in-game **`Tier 1` (`display_tier = 1`) = BEST tier** (`internal_rank_asc = 1` = lowest ilvl) |
 | **Waystone Portals** | Always 6 portals per map | **Revives scale inversely with Waystone mod count**: `0 mods = 5`, `2 mods = 4`, `4 mods = 2`, **`6 mods = 0 revives`** |
 | **Precursor Tablets** | Socketed inside Precursor Towers on the Atlas | **Placed directly in the Map Device** alongside your Waystone (Towers reveal fog & drop Tablets) |
@@ -45,7 +45,9 @@ Verified against client `4.5.4.3`, Path of Building 2 `v0.23.1` (`CalcOffence.lu
 
 ## 3. Gems, Spirit, Meta-Gems & Dual Weapon Sets
 
-- **Classes & Tree (`0_5`)**: 8 playable classes (**Witch, Ranger, Warrior, Sorceress, Huntress, Mercenary, Monk, Druid** — including **Talismans** & shapeshifting forms) across 23 Ascendancies.
+- **Classes, 23 Ascendancies & Ladder Meta (`TreeData/0_5`)**: Query `poe2_inspect_ascendancy` (`poe2 wiki ascendancy`) and `poe2_meta_ladder` (`poe2 wiki meta`):
+  - **8 playable classes / 23 Ascendancies**: **Witch** (*Infernalist, Blood Mage, Lich, Abyssal Lich*), **Ranger** (*Deadeye, Pathfinder*), **Warrior** (*Titan, Warbringer, Smith of Kitava*), **Sorceress** (*Stormweaver, Chronomancer, Disciple of Varashta*), **Huntress** (*Amazon, Ritualist, Spirit Walker*), **Mercenary** (*Witchhunter, Gemling Legionnaire, Tactician*), **Monk** (*Invoker, Acolyte of Chayula, Martial Artist*), and **Druid** (*Oracle, Shaman* — including **Talismans** & shapeshifting forms).
+  - **PoE1 / Unreleased `1.0` Traps**: *Shadow, Duelist, Templar, Marauder, Scion, Necromancer, Elementalist, Occultist, Assassin, Trickster, Slayer, Juggernaut, Inquisitor, Hierophant* do **NOT** exist in `0.5.5` (`poe2_inspect_ascendancy` returns structured `LookupError` guidance). Note that `Abyssal Lich` inherits `Lich`'s base tree while replacing 4 notables (*Steward of Kulemak, Umbral Well, Unwilling Offering, Rupture the Flesh*), and notables like `Implanted Gems`, `Brew Concoction`, `Path Seeker`, and `Lucid Dreaming` expand into multiple-choice sub-notables.
 - **Gem Sockets**: Sockets live on Skill/Spirit/Meta Gems, NOT gear:
   - Base = `2` support sockets -> **Lesser Jeweller's Orb** (`3`) -> **Greater Jeweller's Orb** (`4`) -> **Perfect Jeweller's Orb** (`5` support sockets = "6-link"; Vaal corruption can add +1 on eligible gems).
 - **Support Gem Rules (`0.3+` vs Lineage)**:
