@@ -249,6 +249,22 @@ def test_poe2_inspection_and_dewater_audit(build_service: BuildService) -> None:
     after_readonly = build_service.get_stats("warrior_slot")
     assert math.isclose(after_readonly.full_dps, inflated.full_dps, rel_tol=1e-5)
 
+    # Regression check: export eN... share code -> load into fresh slot -> audit_build
+    # must preserve BOTH lines of multi-line customMods (<CustomModifierBlock>) AND strip them!
+    warrior_code = build_service.export_build("warrior_slot", fmt="code")
+    reloaded_warrior = build_service.load_build(warrior_code, slot="warrior_reloaded")
+    assert math.isclose(reloaded_warrior.full_dps, inflated.full_dps, rel_tol=1e-5)
+    assert math.isclose(reloaded_warrior.energy_shield, inflated.energy_shield, rel_tol=1e-5)
+    reloaded_audit = build_service.audit_build("warrior_reloaded", apply_dewater=False)
+    reloaded_flags = {f.flag: f for f in reloaded_audit.stripped_flags}
+    assert "customMods" in reloaded_flags
+    assert "+250 to maximum Energy Shield" in str(reloaded_flags["customMods"].raw_value)
+    assert math.isclose(
+        reloaded_audit.sustainable_pinnacle_stats.full_dps,
+        audit.sustainable_pinnacle_stats.full_dps,
+        rel_tol=1e-5,
+    )
+
     # Apply dewatering persistently (apply_dewater=True) + verify 1-step undo
     applied_audit = build_service.audit_build("warrior_slot", apply_dewater=True)
     now_sust = build_service.get_stats("warrior_slot")

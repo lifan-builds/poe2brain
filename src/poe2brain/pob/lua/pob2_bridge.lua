@@ -692,6 +692,45 @@ local function extractItemsInfo(includeRaw)
 	return equipped
 end
 
+local function getActiveCustomModsText()
+	local ct = build and build.configTab
+	local activeSet = ct and ct.configSets and ct.configSets[ct.activeConfigSetId]
+	local parts = {}
+	if activeSet and type(activeSet.customModsList) == "table" then
+		for _, block in ipairs(activeSet.customModsList) do
+			if block.enabled ~= false and type(block.text) == "string" then
+				local trimmed = block.text:match("^%s*(.-)%s*$")
+				if trimmed ~= "" then
+					parts[#parts + 1] = trimmed
+				end
+			end
+		end
+	end
+	if #parts > 0 then
+		return table.concat(parts, "\n")
+	end
+	local legacy = ct and ct.input and ct.input.customMods
+	if type(legacy) == "string" then
+		return legacy:match("^%s*(.-)%s*$")
+	end
+	return ""
+end
+
+local function setActiveCustomModsText(txt)
+	local clean = tostring(txt or "")
+	local ct = build and build.configTab
+	if not ct then return end
+	local activeSet = ct.configSets and ct.configSets[ct.activeConfigSetId]
+	if activeSet then
+		activeSet.customModsList = {
+			{ title = "Default", enabled = true, text = clean },
+		}
+	end
+	if ct.input then
+		ct.input.customMods = nil
+	end
+end
+
 local function extractConfigInfo()
 	local input = {}
 	for k, v in pairs(build.configTab.input or {}) do
@@ -701,7 +740,7 @@ local function extractConfigInfo()
 	end
 	return {
 		input = jsonObj(input),
-		customMods = (build.configTab.input and build.configTab.input.customMods) or "",
+		customMods = getActiveCustomModsText(),
 	}
 end
 
@@ -1728,7 +1767,8 @@ methods.set_config = function(params)
 		end
 	end
 	if params and params.customMods ~= nil then
-		build.configTab.input.customMods = (params.customMods == dkjson.null) and "" or tostring(params.customMods)
+		local txt = (params.customMods == dkjson.null) and "" or tostring(params.customMods)
+		setActiveCustomModsText(txt)
 	end
 	build.configTab:BuildModList()
 	finalizeSlotMutation(entry)
@@ -1787,6 +1827,10 @@ methods.audit_build = function(params)
 	-- 1. Snapshot original state
 	local origInput = copyTable(build.configTab.input)
 	local origPlaceholder = copyTable(build.configTab.placeholder)
+	local activeConfigSet = build.configTab.configSets and build.configTab.configSets[build.configTab.activeConfigSetId]
+	local origCustomModsList = (activeConfigSet and activeConfigSet.customModsList)
+		and copyTable(activeConfigSet.customModsList)
+		or nil
 	local origSlotActive = {}
 	for sName, sCtrl in pairs(build.itemsTab.slots or {}) do
 		origSlotActive[sName] = sCtrl.active
@@ -1797,6 +1841,12 @@ methods.audit_build = function(params)
 		for k, v in pairs(origInput) do build.configTab.input[k] = v end
 		wipeTable(build.configTab.placeholder)
 		for k, v in pairs(origPlaceholder) do build.configTab.placeholder[k] = v end
+		local curSet = build.configTab.configSets and build.configTab.configSets[build.configTab.activeConfigSetId]
+		if curSet then
+			curSet.customModsList = origCustomModsList
+				and copyTable(origCustomModsList)
+				or { { title = "Default", enabled = true, text = "" } }
+		end
 		for sName, wasActive in pairs(origSlotActive) do
 			if build.itemsTab.slots[sName] then
 				build.itemsTab.slots[sName].active = wasActive
@@ -1846,8 +1896,8 @@ methods.audit_build = function(params)
 			}
 		end
 
-		-- C. Arbitrary customMods text
-		local customTxt = tostring(origInput.customMods or ""):match("^%s*(.-)%s*$")
+		-- C. Arbitrary customMods text (both ConfigTab customModsList blocks & legacy input.customMods)
+		local customTxt = getActiveCustomModsText()
 		if customTxt ~= "" and not keepSet["customMods"] then
 			actions[#actions + 1] = {
 				id = "config:customMods",
@@ -1857,7 +1907,7 @@ methods.audit_build = function(params)
 				originalValue = customTxt,
 				sustainableValue = "",
 				apply = function()
-					build.configTab.input.customMods = ""
+					setActiveCustomModsText("")
 				end,
 			}
 		end
