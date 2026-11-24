@@ -326,12 +326,14 @@ class NinjaBuildsService:
 
     def _ensure_build_service(self) -> BuildService:
         if self._build_service is None:
-            from poe2brain.pob.bridge import Pob2Bridge
+            from poe2brain.pob.bridge import get_default_pob2_bridge
             from poe2brain.pob.service import BuildService
 
-            bridge = Pob2Bridge(request_timeout=120.0)
-            bridge.ping()
-            self._build_service = BuildService(bridge=bridge, http_client=self.http_client)
+            self._build_service = BuildService(
+                bridge=get_default_pob2_bridge(),
+                owns_bridge=False,
+                http_client=self.http_client,
+            )
             self._owns_build_service = True
         return self._build_service
 

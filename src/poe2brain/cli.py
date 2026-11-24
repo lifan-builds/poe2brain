@@ -12,6 +12,7 @@ from rich.table import Table
 
 from poe2brain.config import DEFAULT_LEAGUE
 from poe2brain.mcp_server import (
+    close_pob_services,
     collect_engine_status,
     delete_pob_slot_snapshot,
     ensure_pob_slot_loaded,
@@ -116,28 +117,32 @@ def _run_cli(
     render_fn: Callable[[Any], None],
 ) -> None:
     try:
-        result = compute_fn()
-    except typer.Exit:
-        raise
-    except Exception as exc:
-        err_payload = format_domain_error(exc)
-        if json_output:
-            _emit_json(err_payload)
-        else:
-            err_console.print(
-                f"[bold red]Error ({err_payload['error_type']}):[/bold red] {err_payload['error']}"
-            )
-            if err_payload.get("hint"):
-                err_console.print(f"[yellow]Hint:[/yellow] {err_payload['hint']}")
-        raise typer.Exit(code=1) from None
+        try:
+            result = compute_fn()
+        except typer.Exit:
+            raise
+        except Exception as exc:
+            err_payload = format_domain_error(exc)
+            if json_output:
+                _emit_json(err_payload)
+            else:
+                err_console.print(
+                    f"[bold red]Error ({err_payload['error_type']}):[/bold red] "
+                    f"{err_payload['error']}"
+                )
+                if err_payload.get("hint"):
+                    err_console.print(f"[yellow]Hint:[/yellow] {err_payload['hint']}")
+            raise typer.Exit(code=1) from None
 
-    if json_output:
-        if hasattr(result, "model_dump"):
-            _emit_json(result.model_dump(mode="json"))
+        if json_output:
+            if hasattr(result, "model_dump"):
+                _emit_json(result.model_dump(mode="json"))
+            else:
+                _emit_json(result)
         else:
-            _emit_json(result)
-    else:
-        render_fn(result)
+            render_fn(result)
+    finally:
+        close_pob_services()
 
 
 def _read_item_input(
@@ -1112,10 +1117,22 @@ def pob_slots_cmd(
     """List, clone, create, configure, or delete persisted PoB2 build slots."""
 
     def _compute() -> dict[str, Any]:
-        svc = get_build_service()
         if delete_slot:
-            delete_pob_slot_snapshot(svc, delete_slot)
+            delete_pob_slot_snapshot(None, delete_slot)
             return {"action": "deleted", "slot": delete_slot}
+
+        if (
+            not create_slot
+            and not (clone_from and clone_to)
+            and not gems
+            and custom_mods is None
+            and not config_kv
+        ):
+            slots_dir = get_pob_slot_snapshot_path("main").parent
+            saved = sorted(p.stem for p in slots_dir.glob("*.xml")) if slots_dir.is_dir() else []
+            return {"persisted_slots": saved, "slots_dir": str(slots_dir)}
+
+        svc = get_build_service()
 
         if create_slot:
             stats = svc.create_character(

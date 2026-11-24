@@ -4,6 +4,7 @@ import atexit
 import json
 import os
 import selectors
+import signal
 import socket
 import subprocess
 import threading
@@ -18,6 +19,8 @@ from poe2brain.config import REPO_ROOT, Pob2RuntimePaths, get_pob2_paths
 BRIDGE_LUA_PATH: Path = Path(__file__).resolve().parent / "lua" / "pob2_bridge.lua"
 BOOTSTRAP_SCRIPT_PATH: Path = REPO_ROOT / "scripts" / "bootstrap_pob2.sh"
 POB_SOCKET_ENV_VAR: str = "POE2BRAIN_POB_SOCKET"
+POB_IDLE_TIMEOUT_ENV_VAR: str = "POE2BRAIN_POB_IDLE_TIMEOUT"
+DEFAULT_IDLE_TIMEOUT_SECONDS: float = 60.0
 
 
 class Pob2BridgeError(RuntimeError):
@@ -26,6 +29,70 @@ class Pob2BridgeError(RuntimeError):
     def __init__(self, message: str, *, code: int | None = None) -> None:
         super().__init__(message)
         self.code = code
+
+
+def _reap_popen(proc: subprocess.Popen[str]) -> None:
+    """Unconditionally close stdio pipes and hard-SIGKILL + reap a LuaJIT subprocess."""
+    if proc.stdin is not None:
+        try:
+            proc.stdin.close()
+        except (OSError, ValueError):
+            pass
+    if proc.poll() is None:
+        if os.name != "nt":
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                pass
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=2.0)
+        except Exception:
+            pass
+    for stream in (proc.stdout, proc.stderr):
+        if stream is not None:
+            try:
+                stream.close()
+            except (OSError, ValueError):
+                pass
+
+
+def _idle_watchdog_entry(
+    bridge_ref: weakref.ReferenceType[Pob2Bridge],
+    proc: subprocess.Popen[str],
+) -> None:
+    while True:
+        bridge = bridge_ref()
+        if bridge is None or proc.poll() is not None:
+            return
+        timeout = bridge.idle_timeout_seconds
+        if timeout <= 0:
+            return
+        poll_step = min(0.25, max(0.05, timeout / 4.0))
+        bridge._idle_wake_event.wait(timeout=poll_step)
+
+        bridge = bridge_ref()
+        if bridge is None or proc.poll() is not None:
+            return
+        if not bridge._lock.acquire(blocking=False):
+            continue
+        try:
+            if bridge._proc is not proc or proc.poll() is not None:
+                return
+            eff_timeout = bridge.idle_timeout_seconds
+            if eff_timeout <= 0:
+                return
+            if (
+                bridge._active_calls == 0
+                and (time.monotonic() - bridge._last_activity_ts) >= eff_timeout
+            ):
+                bridge._hibernate_locked()
+                return
+        finally:
+            bridge._lock.release()
 
 
 class Pob2Bridge:
@@ -37,8 +104,9 @@ class Pob2Bridge:
         pob2_dir: Path | None = None,
         bridge_lua_path: Path | None = None,
         auto_bootstrap: bool = True,
-        request_timeout: float = 45.0,
+        request_timeout: float = 120.0,
         bootstrap_timeout: float = 180.0,
+        idle_timeout_seconds: float | None = None,
         socket_path: Path | str | None = None,
         use_daemon: bool = True,
     ) -> None:
@@ -47,18 +115,38 @@ class Pob2Bridge:
         self.auto_bootstrap = auto_bootstrap
         self.request_timeout = request_timeout
         self.bootstrap_timeout = bootstrap_timeout
+        self._explicit_idle_timeout = idle_timeout_seconds
         self._explicit_socket_path = Path(socket_path) if socket_path is not None else None
         self.use_daemon = use_daemon
         self._lock = threading.RLock()
         self._proc: subprocess.Popen[str] | None = None
+        self._proc_finalizer: weakref.finalize[Any, subprocess.Popen[str]] | None = None
         self._sock: socket.socket | None = None
         self._sock_rfile: TextIO | None = None
         self._next_id = 0
+        self._hibernated_snapshot: dict[str, Any] | None = None
+        self._last_activity_ts = time.monotonic()
+        self._active_calls = 0
+        self._state_epoch = 0
+        self._idle_wake_event = threading.Event()
+        self._idle_thread: threading.Thread | None = None
         _LIVE_BRIDGES.add(self)
 
     @property
     def paths(self) -> Pob2RuntimePaths:
         return get_pob2_paths(self._explicit_pob2_dir)
+
+    @property
+    def idle_timeout_seconds(self) -> float:
+        if self._explicit_idle_timeout is not None:
+            return float(self._explicit_idle_timeout)
+        raw = os.environ.get(POB_IDLE_TIMEOUT_ENV_VAR, "").strip()
+        if raw:
+            try:
+                return float(raw)
+            except ValueError:
+                return DEFAULT_IDLE_TIMEOUT_SECONDS
+        return DEFAULT_IDLE_TIMEOUT_SECONDS
 
     @property
     def socket_path(self) -> Path | None:
@@ -78,6 +166,15 @@ class Pob2Bridge:
                 return True
             return self._proc is not None and self._proc.poll() is None
 
+    @property
+    def is_hibernated(self) -> bool:
+        with self._lock:
+            return self._hibernated_snapshot is not None and not self.is_running
+
+    @property
+    def state_epoch(self) -> int:
+        return self._state_epoch
+
     def __enter__(self) -> Pob2Bridge:
         self.ensure_started()
         return self
@@ -88,7 +185,7 @@ class Pob2Bridge:
     def __del__(self) -> None:
         try:
             self._close_sock_locked()
-            self._kill_locked()
+            self._kill_locked(preserve_snapshot=False)
         except Exception:
             pass
 
@@ -122,6 +219,19 @@ class Pob2Bridge:
             raise Pob2BridgeError(f"bootstrap_pob2.sh failed (rc={proc.returncode}): {detail}")
         return refreshed
 
+    def _start_idle_watchdog_locked(self, proc: subprocess.Popen[str]) -> None:
+        if self.idle_timeout_seconds <= 0:
+            return
+        self._idle_wake_event.clear()
+        thread = threading.Thread(
+            target=_idle_watchdog_entry,
+            args=(weakref.ref(self), proc),
+            name="poe2brain-pob-idle-watchdog",
+            daemon=True,
+        )
+        self._idle_thread = thread
+        thread.start()
+
     def ensure_started(self) -> None:
         with self._lock:
             if self._sock is not None:
@@ -137,6 +247,7 @@ class Pob2Bridge:
                     sock.connect(str(sock_path))
                     self._sock = sock
                     self._sock_rfile = sock.makefile("r", encoding="utf-8")
+                    self._last_activity_ts = time.monotonic()
                     return
                 except OSError as exc:
                     sock.close()
@@ -144,7 +255,8 @@ class Pob2Bridge:
                         f"Failed to connect to PoB2 daemon socket {sock_path}: {exc}"
                     ) from exc
 
-            self._kill_locked()
+            saved_snap = self._hibernated_snapshot
+            self._kill_locked(preserve_snapshot=saved_snap is not None)
             paths = self.ensure_runtime_ready()
             if not self.bridge_lua_path.is_file():
                 raise Pob2BridgeError(f"Missing pob2_bridge.lua at {self.bridge_lua_path}")
@@ -154,7 +266,7 @@ class Pob2Bridge:
             env["LUA_CPATH"] = f"{paths.bin_dir}/?.so;{existing_cpath};;"
             env["POB2_SRC_DIR"] = str(paths.src_dir)
 
-            self._proc = subprocess.Popen(
+            proc = subprocess.Popen(
                 [str(paths.luajit_bin), str(self.bridge_lua_path)],
                 cwd=str(paths.src_dir),
                 stdin=subprocess.PIPE,
@@ -164,29 +276,63 @@ class Pob2Bridge:
                 encoding="utf-8",
                 bufsize=1,
                 env=env,
+                start_new_session=(os.name != "nt"),
             )
+            self._proc = proc
+            self._proc_finalizer = weakref.finalize(self, _reap_popen, proc)
+            self._last_activity_ts = time.monotonic()
+
+            if saved_snap is not None:
+                self._hibernated_snapshot = None
+                try:
+                    self._send_and_recv_locked(
+                        "restore_all_slots",
+                        saved_snap,
+                        timeout=self.request_timeout,
+                    )
+                except Exception:
+                    self._hibernated_snapshot = saved_snap
+                    self._kill_locked(preserve_snapshot=True)
+                    raise
+
+            self._last_activity_ts = time.monotonic()
+            self._start_idle_watchdog_locked(proc)
+
+    def hibernate(self) -> bool:
+        """Snapshot all build slots in Python memory and terminate the idle LuaJIT child."""
+        with self._lock:
+            return self._hibernate_locked()
+
+    def _hibernate_locked(self) -> bool:
+        if self._sock is not None or self._proc is None:
+            return False
+        if self._proc.poll() is None:
+            try:
+                snap = self._send_and_recv_locked("snapshot_all_slots", {}, timeout=5.0)
+                if isinstance(snap, Mapping) and "slots" in snap:
+                    self._hibernated_snapshot = dict(snap)
+            except Exception:
+                pass
+        self._kill_locked(preserve_snapshot=self._hibernated_snapshot is not None)
+        return self._hibernated_snapshot is not None
 
     def restart(self) -> dict[str, Any]:
         with self._lock:
+            self._hibernated_snapshot = None
             if self.socket_path is not None:
                 self._close_sock_locked()
+                self._state_epoch += 1
                 self.ensure_started()
                 return self.ping()
-            self._kill_locked()
+            self._kill_locked(preserve_snapshot=False)
             self.ensure_started()
             return self.ping()
 
     def close(self) -> None:
         with self._lock:
+            self._hibernated_snapshot = None
             self._close_sock_locked()
-            if self._proc is None:
-                return
-            if self._proc.poll() is None:
-                try:
-                    self._send_and_recv_locked("shutdown", {}, timeout=3.0)
-                except Exception:
-                    pass
-            self._kill_locked()
+            self._kill_locked(preserve_snapshot=False)
 
     def _close_sock_locked(self) -> None:
         rfile = self._sock_rfile
@@ -204,33 +350,29 @@ class Pob2Bridge:
             except OSError:
                 pass
 
-    def _kill_locked(self) -> None:
+    def _kill_locked(self, *, preserve_snapshot: bool = False) -> None:
         proc = self._proc
+        fin = self._proc_finalizer
         self._proc = None
-        if proc is None:
-            return
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=2.0)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=2.0)
-        for stream in (proc.stdin, proc.stdout, proc.stderr):
-            if stream is not None:
-                try:
-                    stream.close()
-                except OSError:
-                    pass
+        self._proc_finalizer = None
+        self._idle_wake_event.set()
+        if not preserve_snapshot:
+            self._hibernated_snapshot = None
+            if proc is not None:
+                self._state_epoch += 1
+        if fin is not None:
+            fin.detach()
+        if proc is not None:
+            _reap_popen(proc)
 
     def _read_stderr_tail(self, proc: subprocess.Popen[str]) -> str:
-        if proc.stderr is None:
+        if proc.stderr is None or proc.stderr.closed:
             return ""
         if proc.poll() is None:
             return ""
         try:
             text = proc.stderr.read()
-        except OSError:
+        except (OSError, ValueError):
             return ""
         return text.strip()[-1000:]
 
@@ -290,17 +432,20 @@ class Pob2Bridge:
             line = rfile.readline()
         except TimeoutError as exc:
             self._close_sock_locked()
+            self._state_epoch += 1
             raise Pob2BridgeError(
                 f"Timeout calling PoB2 daemon method '{method}': {exc}"
             ) from exc
         except OSError as exc:
             self._close_sock_locked()
+            self._state_epoch += 1
             raise Pob2BridgeError(
                 f"Broken socket calling PoB2 daemon method '{method}': {exc}"
             ) from exc
 
         if not line:
             self._close_sock_locked()
+            self._state_epoch += 1
             raise Pob2BridgeError(f"PoB2 daemon closed connection unexpectedly on '{method}'.")
 
         return self._parse_response_frame(line, method=method, req_id=req_id)
@@ -337,11 +482,11 @@ class Pob2Bridge:
             proc.stdin.flush()
             line = self._readline_with_timeout(proc, timeout)
         except TimeoutError as exc:
-            self._kill_locked()
+            self._kill_locked(preserve_snapshot=False)
             raise Pob2BridgeError(f"Timeout calling PoB2 method '{method}': {exc}") from exc
         except OSError as exc:
             stderr_tail = self._read_stderr_tail(proc)
-            self._kill_locked()
+            self._kill_locked(preserve_snapshot=False)
             raise Pob2BridgeError(
                 f"Broken pipe calling PoB2 method '{method}': {exc} {stderr_tail}".strip()
             ) from exc
@@ -349,7 +494,7 @@ class Pob2Bridge:
         if not line:
             rc = proc.poll()
             stderr_tail = self._read_stderr_tail(proc)
-            self._kill_locked()
+            self._kill_locked(preserve_snapshot=False)
             raise Pob2BridgeError(
                 f"PoB2 bridge exited unexpectedly (rc={rc}) on '{method}'. {stderr_tail}".strip()
             )
@@ -366,26 +511,32 @@ class Pob2Bridge:
     ) -> Any:
         eff_timeout = self.request_timeout if timeout is None else timeout
         with self._lock:
-            was_already_running = self._sock is not None or (
-                self._proc is not None and self._proc.poll() is None
-            )
-            self.ensure_started()
+            self._active_calls += 1
+            self._last_activity_ts = time.monotonic()
             try:
-                return self._send_and_recv_locked(method, params, timeout=eff_timeout)
-            except Pob2BridgeError as exc:
-                # Only auto-retry once if the underlying subprocess/socket died cleanly
-                # (never retry logical RPC validation errors where the transport is still alive).
-                if (
-                    retry_on_crash
-                    and was_already_running
-                    and exc.code is None
-                    and self._proc is None
-                    and self._sock is None
-                    and method != "shutdown"
-                ):
-                    self.ensure_started()
+                was_already_running = self._sock is not None or (
+                    self._proc is not None and self._proc.poll() is None
+                )
+                self.ensure_started()
+                try:
                     return self._send_and_recv_locked(method, params, timeout=eff_timeout)
-                raise
+                except Pob2BridgeError as exc:
+                    # Only auto-retry once if the underlying subprocess/socket died cleanly
+                    # (never retry logical RPC errors where the transport is still alive).
+                    if (
+                        retry_on_crash
+                        and was_already_running
+                        and exc.code is None
+                        and self._proc is None
+                        and self._sock is None
+                        and method != "shutdown"
+                    ):
+                        self.ensure_started()
+                        return self._send_and_recv_locked(method, params, timeout=eff_timeout)
+                    raise
+            finally:
+                self._last_activity_ts = time.monotonic()
+                self._active_calls = max(0, self._active_calls - 1)
 
     def ping(self) -> dict[str, Any]:
         res = self.call("ping")
@@ -402,9 +553,45 @@ class Pob2Bridge:
 
 
 _LIVE_BRIDGES: weakref.WeakSet[Pob2Bridge] = weakref.WeakSet()
+_DEFAULT_BRIDGE_LOCK = threading.Lock()
+_DEFAULT_BRIDGE: Pob2Bridge | None = None
+
+
+def get_default_pob2_bridge() -> Pob2Bridge:
+    """Return the process-wide shared Pob2Bridge singleton."""
+    global _DEFAULT_BRIDGE
+    target_sock = os.environ.get(POB_SOCKET_ENV_VAR, "").strip() or None
+    target_pob_dir = str(get_pob2_paths().root_dir)
+    with _DEFAULT_BRIDGE_LOCK:
+        if _DEFAULT_BRIDGE is not None:
+            cur_sock = (
+                str(_DEFAULT_BRIDGE.socket_path)
+                if _DEFAULT_BRIDGE.socket_path is not None
+                else None
+            )
+            cur_dir = str(_DEFAULT_BRIDGE.paths.root_dir)
+            if cur_sock != target_sock or cur_dir != target_pob_dir:
+                _DEFAULT_BRIDGE.close()
+                _DEFAULT_BRIDGE = None
+        if _DEFAULT_BRIDGE is None:
+            _DEFAULT_BRIDGE = Pob2Bridge(request_timeout=120.0)
+        return _DEFAULT_BRIDGE
+
+
+def close_default_pob2_bridge() -> None:
+    """Close and reset the process-wide shared Pob2Bridge singleton."""
+    global _DEFAULT_BRIDGE
+    with _DEFAULT_BRIDGE_LOCK:
+        if _DEFAULT_BRIDGE is not None:
+            try:
+                _DEFAULT_BRIDGE.close()
+            except Exception:
+                pass
+            _DEFAULT_BRIDGE = None
 
 
 def _close_live_bridges() -> None:
+    close_default_pob2_bridge()
     for bridge in list(_LIVE_BRIDGES):
         try:
             bridge.close()

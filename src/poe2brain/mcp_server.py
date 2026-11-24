@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+import base64
 import os
 import re
 import signal
@@ -8,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import zlib
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
@@ -44,6 +46,7 @@ from poe2brain.filters import (
     compose_theme,
     detect_poe2_filter_dir,
     extract_build_filter_context,
+    extract_build_filter_context_from_xml,
     get_visual_theme,
     heal_filter_text,
     install_filter_bundle,
@@ -63,14 +66,16 @@ from poe2brain.models.filters import (
     VisualThemeSpec,
 )
 from poe2brain.models.items import ItemRarity
-from poe2brain.ninja import NinjaBuildsService
+from poe2brain.ninja import NinjaBuildsService, decode_pob2_code_to_xml
 from poe2brain.pob import (
     BuildService,
     LiveSlotUpgradeReport,
     LiveUpgradeCandidate,
-    Pob2Bridge,
     Pob2BridgeError,
+    close_default_pob2_bridge,
+    get_default_pob2_bridge,
 )
+from poe2brain.pob.service import _close_default_build_service
 from poe2brain.trade import (
     ArbitrageScanner,
     EconomyService,
@@ -98,7 +103,7 @@ _BUILD_SVC: BuildService | None = None
 _NINJA_SVC: NinjaBuildsService | None = None
 _FILTER_GEN: FilterGenerator | None = None
 _NEVERSINK_ADAPTER: NeverSinkAdapter | None = None
-_HYDRATED_SLOTS: dict[tuple[int, str], set[str]] = {}
+_HYDRATED_SLOTS: dict[tuple[int, int, str], set[str]] = {}
 
 
 def get_knowledge_service() -> KnowledgeService:
@@ -143,19 +148,14 @@ def get_crafting_planner() -> CraftingPlanner:
 
 def get_build_service() -> BuildService:
     global _BUILD_SVC
-    target_sock = os.environ.get("POE2BRAIN_POB_SOCKET", "").strip() or None
-    if _BUILD_SVC is not None:
-        cur_sock = (
-            str(_BUILD_SVC.bridge.socket_path)
-            if _BUILD_SVC.bridge.socket_path is not None
-            else None
-        )
-        if cur_sock != target_sock:
-            _BUILD_SVC.close()
-            _BUILD_SVC = None
+    bridge = get_default_pob2_bridge()
+    if _BUILD_SVC is not None and _BUILD_SVC.bridge is not bridge:
+        _BUILD_SVC.close()
+        _BUILD_SVC = None
     if _BUILD_SVC is None:
         _BUILD_SVC = BuildService(
-            bridge=Pob2Bridge(request_timeout=120.0),
+            bridge=bridge,
+            owns_bridge=False,
             trade_client=get_trade2_client(),
             economy_service=get_economy_service(),
         )
@@ -235,14 +235,13 @@ def get_pob_slot_snapshot_path(slot: str = "main") -> Path:
 
 
 def _slot_hydration_bucket(svc: BuildService) -> set[str]:
-    key = (id(svc), str(get_cache_dir()))
+    key = (id(svc.bridge), svc.bridge.state_epoch, str(get_cache_dir()))
     return _HYDRATED_SLOTS.setdefault(key, set())
 
 
-def save_pob_slot_snapshot(svc: BuildService, slot: str = "main") -> Path:
+def _write_pob_slot_xml_atomic(xml_text: str, slot: str = "main") -> Path:
     snap_path = get_pob_slot_snapshot_path(slot)
     snap_path.parent.mkdir(parents=True, exist_ok=True)
-    xml_text = svc.export_build(slot=slot, fmt="xml")
     fd, tmp_name = tempfile.mkstemp(dir=snap_path.parent, prefix=".tmp_slot_", suffix=".xml")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -252,15 +251,22 @@ def save_pob_slot_snapshot(svc: BuildService, slot: str = "main") -> Path:
         if os.path.exists(tmp_name):
             os.unlink(tmp_name)
         raise
+    return snap_path
+
+
+def save_pob_slot_snapshot(svc: BuildService, slot: str = "main") -> Path:
+    xml_text = svc.export_build(slot=slot, fmt="xml")
+    snap_path = _write_pob_slot_xml_atomic(xml_text, slot=slot)
     _slot_hydration_bucket(svc).add(slot)
     return snap_path
 
 
-def delete_pob_slot_snapshot(svc: BuildService, slot: str) -> None:
+def delete_pob_slot_snapshot(svc: BuildService | None, slot: str) -> None:
     snap_path = get_pob_slot_snapshot_path(slot)
     if snap_path.is_file():
         snap_path.unlink()
-    _slot_hydration_bucket(svc).discard(slot)
+    for bucket in _HYDRATED_SLOTS.values():
+        bucket.discard(slot)
 
 
 def ensure_pob_slot_loaded(
@@ -1382,6 +1388,15 @@ def export_pob_slot(
     """Export a PoB2 build slot as an eN... share code, raw XML, or GGG .build JSON."""
 
     def _run() -> dict[str, Any]:
+        if fmt in ("xml", "code"):
+            snap_path = get_pob_slot_snapshot_path(slot)
+            if snap_path.is_file():
+                xml_text = snap_path.read_text(encoding="utf-8")
+                if fmt == "xml":
+                    return {"slot": slot, "format": fmt, "exported": xml_text}
+                compressed = zlib.compress(xml_text.encode("utf-8"), 9)
+                code = base64.urlsafe_b64encode(compressed).decode("ascii")
+                return {"slot": slot, "format": fmt, "exported": code}
         svc = get_build_service()
         ensure_pob_slot_loaded(svc, slot=slot, require_existing=True)
         exported = svc.export_build(slot=slot, fmt=fmt)
@@ -1956,6 +1971,60 @@ def _resolve_visual_theme(
     return None
 
 
+def _try_decode_pob_source_to_xml_fast(raw_source: str) -> str | None:
+    """Resolve a PoB2 code, XML string, file path, or remote URL to XML without booting LuaJIT."""
+    trimmed = raw_source.strip()
+    if not trimmed or trimmed.startswith("{"):
+        return None
+    if (
+        len(trimmed) < 512
+        and "\n" not in trimmed
+        and not trimmed.startswith(("<", "http://", "https://"))
+        and Path(trimmed).expanduser().is_file()
+    ):
+        trimmed = Path(trimmed).expanduser().read_text(encoding="utf-8").strip()
+        if trimmed.startswith("{"):
+            return None
+    if trimmed.lower().startswith(("http://", "https://")):
+        ninja_svc = NinjaBuildsService(meta_service=get_meta_service())
+        try:
+            imp = ninja_svc.fetch_character(trimmed, load_into_pob=False)
+            return decode_pob2_code_to_xml(imp.pob_code)
+        except Exception:
+            return None
+        finally:
+            ninja_svc.close()
+    try:
+        return decode_pob2_code_to_xml(trimmed)
+    except ValueError:
+        return None
+
+
+def _extract_slot_filter_context_fast(s_name: str) -> BuildFilterContext:
+    """Extract BuildFilterContext for a persisted slot without booting LuaJIT when possible."""
+    snap_path = get_pob_slot_snapshot_path(s_name)
+    if snap_path.is_file():
+        xml_text = snap_path.read_text(encoding="utf-8")
+        if "<PlayerStat" in xml_text:
+            return extract_build_filter_context_from_xml(xml_text)
+
+    if _BUILD_SVC is not None and (
+        _BUILD_SVC.bridge.is_running or _BUILD_SVC.bridge.is_hibernated
+    ):
+        ensure_pob_slot_loaded(_BUILD_SVC, slot=s_name, require_existing=True)
+        return extract_build_filter_context(_BUILD_SVC, slot=s_name)
+
+    if snap_path.is_file():
+        b_svc = get_build_service()
+        ensure_pob_slot_loaded(b_svc, slot=s_name, require_existing=True)
+        return extract_build_filter_context(b_svc, slot=s_name)
+
+    raise ValueError(
+        f"No PoB2 build loaded in slot {s_name!r}. "
+        f"Load one first via poe2_pob_load / 'poe2 pob load <code_url_or_file> --slot {s_name}'."
+    )
+
+
 def _resolve_build_filter_context(
     *,
     pob: str | None,
@@ -1966,27 +2035,30 @@ def _resolve_build_filter_context(
     extra_slots = _coerce_csv_or_list(slots)
 
     if pob is not None and pob.strip():
-        b_svc = get_build_service()
         target_slot = (
             slot.strip() if (slot and slot.strip() and "," not in slot) else "main"
         )
-        b_svc.load_build(pob.strip(), slot=target_slot)
-        save_pob_slot_snapshot(b_svc, target_slot)
-        contexts.append(extract_build_filter_context(b_svc, slot=target_slot))
+        fast_xml = _try_decode_pob_source_to_xml_fast(pob.strip())
+        if fast_xml is not None and "<PlayerStat" in fast_xml:
+            _write_pob_slot_xml_atomic(fast_xml, slot=target_slot)
+            for bucket in _HYDRATED_SLOTS.values():
+                bucket.discard(target_slot)
+            contexts.append(extract_build_filter_context_from_xml(fast_xml))
+        else:
+            b_svc = get_build_service()
+            b_svc.load_build(pob.strip(), slot=target_slot)
+            save_pob_slot_snapshot(b_svc, target_slot)
+            contexts.append(extract_build_filter_context(b_svc, slot=target_slot))
         for s_name in extra_slots:
             if s_name == target_slot:
                 continue
-            ensure_pob_slot_loaded(b_svc, slot=s_name, require_existing=True)
-            contexts.append(extract_build_filter_context(b_svc, slot=s_name))
+            contexts.append(_extract_slot_filter_context_fast(s_name))
     else:
         combined_slots = list(
             dict.fromkeys([*_coerce_csv_or_list(slot), *extra_slots])
         )
-        if combined_slots:
-            b_svc = get_build_service()
-            for s_name in combined_slots:
-                ensure_pob_slot_loaded(b_svc, slot=s_name, require_existing=True)
-                contexts.append(extract_build_filter_context(b_svc, slot=s_name))
+        for s_name in combined_slots:
+            contexts.append(_extract_slot_filter_context_fast(s_name))
 
     if not contexts:
         return None
@@ -2692,6 +2764,20 @@ def run_sync_gamedata(*, out_path: Path | None = None) -> dict[str, Any]:
     }
 
 
+def close_pob_services() -> None:
+    """Close cached PoB2 build services and the default LuaJIT bridge singleton."""
+    global _BUILD_SVC
+    if _BUILD_SVC is not None:
+        try:
+            _BUILD_SVC.close()
+        except Exception:
+            pass
+        _BUILD_SVC = None
+    _HYDRATED_SLOTS.clear()
+    _close_default_build_service()
+    close_default_pob2_bridge()
+
+
 def close_services() -> None:
     """Close cached singleton services (including the LuaJIT Pob2Bridge) cleanly."""
     global _KNOWLEDGE_SVC, _META_SVC, _ECONOMY_SVC, _TRADE2_CLIENT, _TRADE_ADVISOR
@@ -2733,6 +2819,8 @@ def close_services() -> None:
     _FILTER_GEN = None
     _NEVERSINK_ADAPTER = None
     _HYDRATED_SLOTS.clear()
+    _close_default_build_service()
+    close_default_pob2_bridge()
 
 
 atexit.register(close_services)

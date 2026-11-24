@@ -127,7 +127,7 @@ def _load_catalog(
         if tree_json_path is not None
         else (get_pob2_paths().src_dir / "TreeData" / "0_5" / "tree.json")
     )
-    cache_key = (str(eff_db), str(eff_tree))
+    cache_key = (str(eff_db.resolve()), str(eff_tree.resolve()))
     cached = _CATALOG_CACHE.get(cache_key)
     if cached is not None:
         return cached

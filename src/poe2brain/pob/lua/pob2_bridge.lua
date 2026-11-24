@@ -31,10 +31,24 @@ end
 -- Reserve stdout strictly for newline-delimited JSON-RPC frames.
 _G.print = logStderr
 
+-- Tune LuaJIT GC aggressively BEFORE loading PoB2 TreeData / ModCache so dead startup
+-- parse tables are collected incrementally instead of inflating the OS heap watermark.
+collectgarbage("setpause", 110)
+collectgarbage("setstepmul", 300)
+
 local ffi = require("ffi")
 
 ffi.cdef[[
 int chdir(const char *path);
+int getppid(void);
+
+struct pob2_pollfd {
+	int   fd;
+	short events;
+	short revents;
+};
+int poll(struct pob2_pollfd *fds, unsigned int nfds, int timeout);
+long read(int fd, void *buf, size_t count);
 
 typedef struct pob2_z_stream_s {
 	const uint8_t *next_in;
@@ -61,6 +75,15 @@ int inflate(pob2_z_stream *strm, int flush);
 int inflateEnd(pob2_z_stream *strm);
 const char *zlibVersion(void);
 ]]
+
+local INITIAL_PPID = ffi.C.getppid()
+
+local function checkParentAlive()
+	local curPpid = ffi.C.getppid()
+	if curPpid ~= INITIAL_PPID or curPpid <= 1 then
+		os.exit(0)
+	end
+end
 
 -- Allow passing PoB2 src directory via POB2_SRC_DIR or arg[1] if CWD is elsewhere.
 local pobSrcDir = os.getenv("POB2_SRC_DIR") or (arg and arg[1])
@@ -263,6 +286,7 @@ local bootOk, bootErr = pcall(function()
 		return origRequire(name)
 	end
 
+	checkParentAlive()
 	dofile("Launch.lua")
 	__mainObject__.continuousIntegrationMode = false
 	runCallback("OnInit")
@@ -270,6 +294,7 @@ local bootOk, bootErr = pcall(function()
 	if __mainObject__.promptMsg then
 		error("PoB2 startup promptMsg: " .. tostring(__mainObject__.promptMsg), 0)
 	end
+	checkParentAlive()
 end)
 
 if not bootOk then
@@ -279,6 +304,30 @@ end
 
 local bootSeconds = os.clock() - bootT0
 local mainObj = __mainObject__.main
+mainObj.disableDevAutoSave = true
+
+-- Cancel PoB2's background GUI dropdown coroutine (`LoadItems`) and release unused
+-- Unique/Rare GUI template catalogs so subsequent OnFrame calls never parse ~1,500
+-- Item instances into memory.
+if mainObj.onFrameFuncs then
+	mainObj.onFrameFuncs["LoadItems"] = nil
+	mainObj.onFrameFuncs["FirstFrame"] = nil
+end
+if mainObj.uniqueDB then
+	if mainObj.uniqueDB.list then wipeTable(mainObj.uniqueDB.list) end
+	mainObj.uniqueDB.loading = nil
+end
+if mainObj.rareDB then
+	if mainObj.rareDB.list then wipeTable(mainObj.rareDB.list) end
+	mainObj.rareDB.loading = nil
+end
+if data then
+	data.uniques = {}
+	data.rares = {}
+end
+collectgarbage("collect")
+collectgarbage("collect")
+
 local build = mainObj.modes["BUILD"]
 local base64 = require("base64")
 local BuildExportPoE2 = require("Modules.BuildExportPoE2")
@@ -306,6 +355,7 @@ do
 		end
 	end
 end
+configOptionsList = nil
 
 -- Build lookup of TradeSiteStats id -> text for human-readable stat weight output.
 local tradeStatTextById
@@ -348,7 +398,7 @@ local DEFAULT_SLOT_BASES = {
 }
 
 -- ============================================================================
--- Helper functions for refreshing & loading builds
+-- Helper functions for refreshing & loading builds (strictly 1 active Build!)
 -- ============================================================================
 
 local function closeAllPopups()
@@ -357,8 +407,85 @@ local function closeAllPopups()
 	end
 end
 
+local function packXml(xmlText)
+	local raw = tostring(xmlText or "")
+	if zlib and #raw > 0 then
+		local ok, compressed = pcall(realDeflate, raw, false)
+		if ok and compressed then
+			return { z = compressed, len = #raw }
+		end
+	end
+	return { raw = raw, len = #raw }
+end
+
+local function unpackXml(packed)
+	if type(packed) == "string" then
+		return packed
+	end
+	if type(packed) ~= "table" then
+		return ""
+	end
+	if packed.raw ~= nil then
+		return packed.raw
+	end
+	if packed.z ~= nil then
+		return realInflate(packed.z)
+	end
+	return ""
+end
+
+local function packedXmlBytes(packed)
+	if type(packed) == "table" and type(packed.len) == "number" then
+		return packed.len
+	end
+	if type(packed) == "string" then
+		return #packed
+	end
+	return 0
+end
+
+local function teardownActiveBuild()
+	closeAllPopups()
+	if GlobalCache and GlobalCache.cachedData then
+		wipeGlobalCache()
+	end
+	if mainObj.onFrameFuncs then
+		wipeTable(mainObj.onFrameFuncs)
+	end
+	local b = mainObj.modes["BUILD"]
+	if b then
+		b.unsaved = false
+		b.abortSave = true
+		pcall(function()
+			if b.Shutdown then b:Shutdown() end
+		end)
+		mainObj.mode = nil
+		if b.controls then wipeTable(b.controls) end
+		if b.xmlSectionList then wipeTable(b.xmlSectionList) end
+		b.calcsTab = nil
+		b.itemsTab = nil
+		b.treeTab = nil
+		b.skillsTab = nil
+		b.configTab = nil
+		b.importTab = nil
+		b.partyTab = nil
+		b.compareTab = nil
+		b.notesTab = nil
+		b.spec = nil
+		b.savers = nil
+		b.legacyLoaders = nil
+		b.sidebarBreakdownData = nil
+		b.breakdownInputs = nil
+	end
+	build = nil
+	collectgarbage("collect")
+end
+
 local function refreshBuild()
 	build = mainObj.modes["BUILD"]
+	-- Keep viewMode off "TREE" so OnFrame skips treeTab:Draw and Calcs:getMiscCalculator
+	-- respects useFullDPS == false instead of forcing calcFullDPS on every node pass!
+	build.viewMode = "NOTES"
 	build.modFlag = true
 	build.buildFlag = true
 	runCallback("OnFrame")
@@ -366,23 +493,23 @@ local function refreshBuild()
 end
 
 local function resetEngineToNewBuild(buildName)
-	if GlobalCache and GlobalCache.cachedData then
-		wipeGlobalCache()
-	end
+	teardownActiveBuild()
 	mainObj:SetMode("BUILD", false, buildName or "Unnamed Build")
 	runCallback("OnFrame")
 	closeAllPopups()
 	build = mainObj.modes["BUILD"]
+	build.viewMode = "NOTES"
+	collectgarbage("collect")
 end
 
 local function loadEngineFromXML(xmlText, buildName)
-	if GlobalCache and GlobalCache.cachedData then
-		wipeGlobalCache()
-	end
+	teardownActiveBuild()
 	mainObj:SetMode("BUILD", false, buildName or "Imported Build", xmlText)
 	runCallback("OnFrame")
 	closeAllPopups()
 	build = mainObj.modes["BUILD"]
+	build.viewMode = "NOTES"
+	collectgarbage("collect")
 end
 
 local function saveEngineToXML()
@@ -394,18 +521,26 @@ end
 -- Capability 1: Named Build Slots + Clone / Reset / Undo / Redo
 -- ============================================================================
 
-local MAX_HISTORY = 20
+local MAX_HISTORY = 5
 local slots = {}
 local activeSlot = "main"
 
 resetEngineToNewBuild("main")
 slots["main"] = {
 	name = "main",
-	xml = saveEngineToXML(),
+	packed = packXml(saveEngineToXML()),
 	rev = 1,
 	undoStack = {},
 	redoStack = {},
 }
+
+local function setSlotXml(slotEntry, xmlText)
+	slotEntry.packed = packXml(xmlText)
+end
+
+local function getSlotXml(slotEntry)
+	return unpackXml(slotEntry.packed)
+end
 
 local function normalizeSlotName(params, key)
 	local s = params and params[key or "slot"]
@@ -423,9 +558,9 @@ local function ensureSlot(slotName, createIfMissing)
 	if slotName == activeSlot and slots[slotName] then
 		return slots[slotName]
 	end
-	-- Save outgoing active slot first
+	-- Save outgoing active slot as compact compressed XML before tearing down active Build
 	if activeSlot and slots[activeSlot] then
-		slots[activeSlot].xml = saveEngineToXML()
+		setSlotXml(slots[activeSlot], saveEngineToXML())
 	end
 	if not slots[slotName] then
 		if createIfMissing == false then
@@ -434,7 +569,7 @@ local function ensureSlot(slotName, createIfMissing)
 		resetEngineToNewBuild(slotName)
 		slots[slotName] = {
 			name = slotName,
-			xml = saveEngineToXML(),
+			packed = packXml(saveEngineToXML()),
 			rev = 1,
 			undoStack = {},
 			redoStack = {},
@@ -442,13 +577,16 @@ local function ensureSlot(slotName, createIfMissing)
 		activeSlot = slotName
 		return slots[slotName]
 	end
-	loadEngineFromXML(slots[slotName].xml, slotName)
+	local targetXml = getSlotXml(slots[slotName])
+	loadEngineFromXML(targetXml, slotName)
+	targetXml = nil
 	activeSlot = slotName
+	collectgarbage("collect")
 	return slots[slotName]
 end
 
 local function pushUndoSnapshot(slotEntry)
-	local snap = saveEngineToXML()
+	local snap = packXml(saveEngineToXML())
 	table.insert(slotEntry.undoStack, snap)
 	if #slotEntry.undoStack > MAX_HISTORY then
 		table.remove(slotEntry.undoStack, 1)
@@ -459,7 +597,7 @@ end
 local function finalizeSlotMutation(slotEntry)
 	refreshBuild()
 	slotEntry.rev = (slotEntry.rev or 1) + 1
-	slotEntry.xml = saveEngineToXML()
+	setSlotXml(slotEntry, saveEngineToXML())
 end
 
 -- ============================================================================
@@ -947,6 +1085,10 @@ local function isSuspectConfigEntry(varName, val, rawOut)
 	if varName == "conditionFullLife" and safeNum(rawOut.ChaosResist, 0) >= 100 and safeNum(rawOut.Life, 100) == 1 then
 		return false
 	end
+	local ct = build and build.configTab
+	if ct and ct.defaultState and ct.defaultState[varName] ~= nil and val == ct.defaultState[varName] then
+		return false
+	end
 	if ENEMY_FAVORABLE_OVERRIDE_VARS[varName] then
 		return true
 	end
@@ -958,6 +1100,19 @@ local function isSuspectConfigEntry(varName, val, rawOut)
 		end
 		if meta.defaultIndex ~= nil and meta.list and meta.list[meta.defaultIndex] and val == meta.list[meta.defaultIndex].val then
 			return false
+		end
+		-- Use PoB2's own ConfigTab visibility predicate (`ifNode`/`ifCond`/`ifMult`/`ifSkill`/`ifFlag`/`ifMod`)
+		-- to skip stale/exported config keys that have zero active modifiers on this build!
+		local varCtrl = ct and ct.varControls and ct.varControls[varName]
+		if varCtrl and type(varCtrl.IsShown) == "function" then
+			local showAllCtrl = ct.controls and ct.controls.showAllConfigurations
+			local savedShowAll = showAllCtrl and showAllCtrl.state
+			if showAllCtrl then showAllCtrl.state = false end
+			local okShown, isShown = pcall(varCtrl.IsShown, varCtrl)
+			if showAllCtrl then showAllCtrl.state = savedShowAll end
+			if okShown and not isShown then
+				return false
+			end
 		end
 		if meta.section == "When In Combat" or meta.section == "For Effective DPS" or meta.section == "Skill Options" or meta.section == "General" then
 			return true
@@ -1098,7 +1253,7 @@ end
 
 methods.list_slots = function()
 	if activeSlot and slots[activeSlot] then
-		slots[activeSlot].xml = saveEngineToXML()
+		setSlotXml(slots[activeSlot], saveEngineToXML())
 	end
 	local out = {}
 	for name, entry in pairs(slots) do
@@ -1108,11 +1263,89 @@ methods.list_slots = function()
 			isActive = (name == activeSlot),
 			undoDepth = #(entry.undoStack or {}),
 			redoDepth = #(entry.redoStack or {}),
-			xmlBytes = #(entry.xml or ""),
+			xmlBytes = packedXmlBytes(entry.packed),
 		}
 	end
 	table.sort(out, function(a, b) return a.slot < b.slot end)
 	return { activeSlot = activeSlot, slots = out }
+end
+
+methods.snapshot_all_slots = function()
+	if activeSlot and slots[activeSlot] then
+		setSlotXml(slots[activeSlot], saveEngineToXML())
+	end
+	local snapSlots = {}
+	for name, entry in pairs(slots) do
+		local undoXmls = {}
+		for i, u in ipairs(entry.undoStack or {}) do
+			undoXmls[i] = unpackXml(u)
+		end
+		local redoXmls = {}
+		for i, r in ipairs(entry.redoStack or {}) do
+			redoXmls[i] = unpackXml(r)
+		end
+		snapSlots[name] = {
+			xml = getSlotXml(entry),
+			rev = entry.rev or 1,
+			undoStack = undoXmls,
+			redoStack = redoXmls,
+		}
+	end
+	return {
+		activeSlot = activeSlot,
+		slots = jsonObj(snapSlots),
+	}
+end
+
+methods.restore_all_slots = function(params)
+	if not params or type(params.slots) ~= "table" then
+		error("params.slots (map of slot -> {xml, rev}) is required", 0)
+	end
+	local newSlots = {}
+	for name, rawEntry in pairs(params.slots) do
+		local sName = tostring(name)
+		if type(rawEntry) == "table" and type(rawEntry.xml) == "string" and rawEntry.xml ~= "" then
+			local undoPacked = {}
+			if type(rawEntry.undoStack) == "table" then
+				local startIdx = math.max(1, #rawEntry.undoStack - MAX_HISTORY + 1)
+				for i = startIdx, #rawEntry.undoStack do
+					undoPacked[#undoPacked + 1] = packXml(rawEntry.undoStack[i])
+				end
+			end
+			local redoPacked = {}
+			if type(rawEntry.redoStack) == "table" then
+				local startIdx = math.max(1, #rawEntry.redoStack - MAX_HISTORY + 1)
+				for i = startIdx, #rawEntry.redoStack do
+					redoPacked[#redoPacked + 1] = packXml(rawEntry.redoStack[i])
+				end
+			end
+			newSlots[sName] = {
+				name = sName,
+				packed = packXml(rawEntry.xml),
+				rev = tonumber(rawEntry.rev) or 1,
+				undoStack = undoPacked,
+				redoStack = redoPacked,
+			}
+		end
+	end
+	if not newSlots["main"] then
+		resetEngineToNewBuild("main")
+		newSlots["main"] = {
+			name = "main",
+			packed = packXml(saveEngineToXML()),
+			rev = 1,
+			undoStack = {},
+			redoStack = {},
+		}
+	end
+	slots = newSlots
+	local targetActive = (params.activeSlot and slots[tostring(params.activeSlot)]) and tostring(params.activeSlot) or "main"
+	activeSlot = targetActive
+	local activeXml = getSlotXml(slots[activeSlot])
+	loadEngineFromXML(activeXml, activeSlot)
+	activeXml = nil
+	collectgarbage("collect")
+	return { ok = true, activeSlot = activeSlot }
 end
 
 methods.switch_slot = function(params)
@@ -1139,24 +1372,33 @@ methods.clone_slot = function(params)
 		error("Source slot '" .. srcName .. "' does not exist", 0)
 	end
 	if srcName == activeSlot then
-		slots[srcName].xml = saveEngineToXML()
+		setSlotXml(slots[srcName], saveEngineToXML())
 	end
 	slots[dstName] = {
 		name = dstName,
-		xml = slots[srcName].xml,
+		packed = slots[srcName].packed,
 		rev = 1,
 		undoStack = {},
 		redoStack = {},
 	}
-	if params.activate then
-		ensureSlot(dstName, false)
+	if dstName == activeSlot and srcName ~= dstName then
+		local dstXml = getSlotXml(slots[dstName])
+		loadEngineFromXML(dstXml, dstName)
+		dstXml = nil
+	elseif params.activate then
+		if srcName == activeSlot then
+			activeSlot = dstName
+			if build then build.buildName = dstName end
+		else
+			ensureSlot(dstName, false)
+		end
 	end
 	return {
 		ok = true,
 		source = srcName,
 		target = dstName,
 		activeSlot = activeSlot,
-		xmlBytes = #slots[dstName].xml,
+		xmlBytes = packedXmlBytes(slots[dstName].packed),
 	}
 end
 
@@ -1227,12 +1469,13 @@ end
 methods.reset_slot = function(params)
 	local slotName = normalizeSlotName(params, "slot")
 	if activeSlot ~= slotName and slots[activeSlot] then
-		slots[activeSlot].xml = saveEngineToXML()
+		setSlotXml(slots[activeSlot], saveEngineToXML())
 	end
 	local prevEntry = slots[slotName]
 	local undoStack = prevEntry and prevEntry.undoStack or {}
-	if prevEntry and prevEntry.xml then
-		table.insert(undoStack, prevEntry.xml)
+	if prevEntry and prevEntry.packed then
+		local curPacked = (activeSlot == slotName) and packXml(saveEngineToXML()) or prevEntry.packed
+		table.insert(undoStack, curPacked)
 		if #undoStack > MAX_HISTORY then table.remove(undoStack, 1) end
 	end
 	resetEngineToNewBuild((params and params.name) or slotName)
@@ -1241,11 +1484,12 @@ methods.reset_slot = function(params)
 	refreshBuild()
 	slots[slotName] = {
 		name = slotName,
-		xml = saveEngineToXML(),
+		packed = packXml(saveEngineToXML()),
 		rev = (prevEntry and (prevEntry.rev + 1)) or 1,
 		undoStack = undoStack,
 		redoStack = {},
 	}
+	collectgarbage("collect")
 	return {
 		slot = slotName,
 		rev = slots[slotName].rev,
@@ -1266,11 +1510,14 @@ methods.delete_slot = function(params)
 	if not slots[slotName] then
 		error("Unknown slot '" .. slotName .. "'", 0)
 	end
+	slots[slotName] = nil
 	if activeSlot == slotName then
-		loadEngineFromXML(slots["main"].xml, "main")
+		local mainXml = getSlotXml(slots["main"])
+		loadEngineFromXML(mainXml, "main")
+		mainXml = nil
 		activeSlot = "main"
 	end
-	slots[slotName] = nil
+	collectgarbage("collect")
 	return { ok = true, deleted = slotName, activeSlot = activeSlot }
 end
 
@@ -1280,12 +1527,17 @@ methods.undo = function(params)
 	if #entry.undoStack == 0 then
 		error("Nothing to undo in slot '" .. slotName .. "'", 0)
 	end
-	local currentXml = saveEngineToXML()
-	table.insert(entry.redoStack, currentXml)
-	local prevXml = table.remove(entry.undoStack)
+	table.insert(entry.redoStack, packXml(saveEngineToXML()))
+	if #entry.redoStack > MAX_HISTORY then
+		table.remove(entry.redoStack, 1)
+	end
+	local prevPacked = table.remove(entry.undoStack)
+	local prevXml = unpackXml(prevPacked)
 	loadEngineFromXML(prevXml, slotName)
-	entry.xml = prevXml
+	prevXml = nil
+	entry.packed = prevPacked
 	entry.rev = entry.rev + 1
+	collectgarbage("collect")
 	return {
 		slot = slotName,
 		rev = entry.rev,
@@ -1302,12 +1554,17 @@ methods.redo = function(params)
 	if #entry.redoStack == 0 then
 		error("Nothing to redo in slot '" .. slotName .. "'", 0)
 	end
-	local currentXml = saveEngineToXML()
-	table.insert(entry.undoStack, currentXml)
-	local nextXml = table.remove(entry.redoStack)
+	table.insert(entry.undoStack, packXml(saveEngineToXML()))
+	if #entry.undoStack > MAX_HISTORY then
+		table.remove(entry.undoStack, 1)
+	end
+	local nextPacked = table.remove(entry.redoStack)
+	local nextXml = unpackXml(nextPacked)
 	loadEngineFromXML(nextXml, slotName)
-	entry.xml = nextXml
+	nextXml = nil
+	entry.packed = nextPacked
 	entry.rev = entry.rev + 1
+	collectgarbage("collect")
 	return {
 		slot = slotName,
 		rev = entry.rev,
@@ -1328,11 +1585,34 @@ methods.load_build_xml = function(params)
 		error("Invalid PoB2 XML: missing <PathOfBuilding> root element", 0)
 	end
 	local slotName = normalizeSlotName(params, "slot")
-	local entry = ensureSlot(slotName, true)
-	pushUndoSnapshot(entry)
+	if activeSlot ~= slotName and slots[activeSlot] then
+		setSlotXml(slots[activeSlot], saveEngineToXML())
+	end
+	local entry = slots[slotName]
+	if entry then
+		local prevPacked = (activeSlot == slotName) and packXml(saveEngineToXML()) or entry.packed
+		if prevPacked then
+			table.insert(entry.undoStack, prevPacked)
+			if #entry.undoStack > MAX_HISTORY then
+				table.remove(entry.undoStack, 1)
+			end
+		end
+		entry.redoStack = {}
+		entry.rev = (entry.rev or 1) + 1
+	else
+		entry = {
+			name = slotName,
+			packed = nil,
+			rev = 1,
+			undoStack = {},
+			redoStack = {},
+		}
+		slots[slotName] = entry
+	end
 	loadEngineFromXML(params.xml, params.name or slotName)
-	entry.rev = entry.rev + 1
-	entry.xml = saveEngineToXML()
+	activeSlot = slotName
+	setSlotXml(entry, saveEngineToXML())
+	collectgarbage("collect")
 	return {
 		slot = slotName,
 		rev = entry.rev,
@@ -1867,7 +2147,8 @@ methods.list_valid_supports = function(params)
 		local savedDisplayGemList = group.displayGemList
 		local appendIdx = #gemList + 1
 
-		for _, entry in ipairs(supports) do
+		for idxSup, entry in ipairs(supports) do
+			if idxSup % 16 == 0 then checkParentAlive() end
 			local gd = entry._gemData
 			entry._gemData = nil
 			if entry.alreadySocketed then
@@ -1918,6 +2199,8 @@ methods.list_valid_supports = function(params)
 				end
 			end
 		end
+		calcFunc, calcBase = nil, nil
+		collectgarbage("collect")
 		table.sort(supports, function(a, b)
 			if math.abs((a.dpsDelta or 0) - (b.dpsDelta or 0)) > 1e-4 then
 				return (a.dpsDelta or 0) > (b.dpsDelta or 0)
@@ -1940,6 +2223,21 @@ end
 
 -- ---- Capability 4: Dewatering / PoB-Warrior Audit ----
 
+local function evalCalculatorBuildStats()
+	checkParentAlive()
+	local env = build.calcsTab.calcs.buildOutput(build, "CALCULATOR")
+	local out = env.player.output
+	out.EnergyShieldProtectsMana = env.modDB:Flag(nil, "EnergyShieldProtectsMana")
+	local manaCost = safeNum(out.ManaCost, 0)
+	if manaCost > 0 then
+		local pool = safeNum(out.ManaUnreserved, 0) + (out.EnergyShieldProtectsMana and safeNum(out.EnergyShield, 0) or 0)
+		if pool < manaCost then
+			out.ManaCostWarning = true
+		end
+	end
+	return extractStatsTable(out)
+end
+
 methods.audit_build = function(params)
 	local slotName = normalizeSlotName(params, "slot")
 	local slotEntry = ensureSlot(slotName, false)
@@ -1950,7 +2248,7 @@ methods.audit_build = function(params)
 		keepSet[tostring(k)] = true
 	end
 	local enforcePinnacle = (params == nil or params.pinnacleBoss ~= false)
-	local origXml = applyDewater and saveEngineToXML() or nil
+	local origPacked = applyDewater and packXml(saveEngineToXML()) or nil
 
 	-- 1. Snapshot original state
 	local origInput = copyTable(build.configTab.input)
@@ -1964,7 +2262,7 @@ methods.audit_build = function(params)
 		origSlotActive[sName] = sCtrl.active
 	end
 
-	local function restoreOriginalState()
+	local function resetStateTablesOnly()
 		wipeTable(build.configTab.input)
 		for k, v in pairs(origInput) do build.configTab.input[k] = v end
 		wipeTable(build.configTab.placeholder)
@@ -1980,8 +2278,14 @@ methods.audit_build = function(params)
 				build.itemsTab.slots[sName].active = wasActive
 			end
 		end
+	end
+
+	local function restoreOriginalState(fullRefresh)
+		resetStateTablesOnly()
 		build.configTab:BuildModList()
-		refreshBuild()
+		if fullRefresh then
+			refreshBuild()
+		end
 	end
 
 	local rawStats = extractStatsTable()
@@ -1989,7 +2293,7 @@ methods.audit_build = function(params)
 	local rawEhp = rawStats.TotalEHP
 
 	local auditOk, auditResult = pcall(function()
-		-- Gather candidate unsustainable levers
+		-- Gather candidate unsustainable levers (filtered to active/non-default options on this build)
 		local actions = {}
 
 		-- A. Non-Pinnacle boss setting
@@ -2040,7 +2344,7 @@ methods.audit_build = function(params)
 			}
 		end
 
-		-- D. Suspect ConfigOptions flags / overrides
+		-- D. Suspect ConfigOptions flags / overrides (only active/shown on this build!)
 		for k, v in pairs(origInput) do
 			if k ~= "customMods" and not keepSet[k] and isSuspectConfigEntry(k, v, rawStats) then
 				local meta = configMetaByVar[k]
@@ -2083,14 +2387,14 @@ methods.audit_build = function(params)
 			end
 		end
 
-		-- Evaluate marginal impact of each culprit one-by-one
+		-- Evaluate marginal impact of each active culprit via single CALCULATOR pass (no OnFrame!)
 		local culprits = {}
 		for _, act in ipairs(actions) do
-			restoreOriginalState()
+			checkParentAlive()
+			resetStateTablesOnly()
 			act.apply()
 			build.configTab:BuildModList()
-			refreshBuild()
-			local stepStats = extractStatsTable()
+			local stepStats = evalCalculatorBuildStats()
 			local stepDps = stepStats.EffectiveDPS
 			local stepEhp = stepStats.TotalEHP
 			local dpsDropPct = rawEffDps > 0 and ((rawEffDps - stepDps) / rawEffDps * 100.0) or 0.0
@@ -2123,13 +2427,19 @@ methods.audit_build = function(params)
 		end)
 
 		-- Apply ALL dewatering actions together for true sustainable Pinnacle Boss stats
-		restoreOriginalState()
+		checkParentAlive()
+		resetStateTablesOnly()
 		for _, act in ipairs(actions) do
 			act.apply()
 		end
 		build.configTab:BuildModList()
-		refreshBuild()
-		local sustainableStats = extractStatsTable()
+		local sustainableStats
+		if applyDewater then
+			refreshBuild()
+			sustainableStats = extractStatsTable()
+		else
+			sustainableStats = evalCalculatorBuildStats()
+		end
 
 		return {
 			sustainableStats = sustainableStats,
@@ -2139,27 +2449,29 @@ methods.audit_build = function(params)
 	end)
 
 	if not auditOk then
-		restoreOriginalState()
+		restoreOriginalState(false)
+		collectgarbage("collect")
 		error("audit_build failed: " .. tostring(auditResult), 0)
 	end
 
 	local restoredVerified = true
 	if applyDewater then
-		if origXml then
-			table.insert(slotEntry.undoStack, origXml)
+		if origPacked then
+			table.insert(slotEntry.undoStack, origPacked)
 			if #slotEntry.undoStack > MAX_HISTORY then
 				table.remove(slotEntry.undoStack, 1)
 			end
 			slotEntry.redoStack = {}
 		end
 		slotEntry.rev = (slotEntry.rev or 1) + 1
-		slotEntry.xml = saveEngineToXML()
+		setSlotXml(slotEntry, saveEngineToXML())
 	else
-		restoreOriginalState()
+		restoreOriginalState(false)
 		local restoredStats = extractStatsTable()
 		restoredVerified = (math.abs(restoredStats.EffectiveDPS - rawStats.EffectiveDPS) < 1e-3)
 			and (math.abs(restoredStats.TotalEHP - rawStats.TotalEHP) < 1e-3)
 	end
+	collectgarbage("collect")
 
 	local sustDps = auditResult.sustainableStats.EffectiveDPS
 	local sustEhp = auditResult.sustainableStats.TotalEHP
@@ -2172,6 +2484,7 @@ methods.audit_build = function(params)
 		character = extractCharacterInfo(),
 		skills = extractSkillsInfo(),
 		tree = extractTreeInfo(),
+		items = extractItemsInfo(false),
 		rawStats = rawStats,
 		sustainableStats = auditResult.sustainableStats,
 		totalDpsInflationPct = totalDpsInflationPct,
@@ -2255,8 +2568,10 @@ methods.diff_item = function(params)
 	end
 	local slotName = normalizeSlotName(params, "slot")
 	ensureSlot(slotName, false)
+	checkParentAlive()
 	local calcFunc, baseOut = build.calcsTab:GetMiscCalculator()
 	local res = evalSingleCandidateItem(calcFunc, baseOut, params, 1)
+	calcFunc, baseOut = nil, nil
 	if not res.ok then
 		error(res.error, 0)
 	end
@@ -2277,6 +2592,7 @@ methods.diff_items_batch = function(params)
 	local sortMetric = (params.sortBy and tostring(params.sortBy)) or "EffectiveDPS"
 
 	for i, entry in ipairs(params.items) do
+		checkParentAlive()
 		local r = evalSingleCandidateItem(calcFunc, baseOut, entry, i)
 		results[#results + 1] = r
 		if r.ok then
@@ -2294,6 +2610,8 @@ methods.diff_items_batch = function(params)
 			}
 		end
 	end
+	calcFunc, baseOut = nil, nil
+	collectgarbage("collect")
 
 	table.sort(validRanked, function(a, b) return a.score > b.score end)
 	local elapsedMs = (os.clock() - t0) * 1000.0
@@ -2401,14 +2719,45 @@ methods.rank_passive_notables = function(params)
 	local fastAnointPrepass = (sortBy == "anoint" and useFullDPS)
 	local prepassStat = fastAnointPrepass and "CombinedDPS" or statName
 	local basePrepassVal = safeNum(baseStats[prepassStat], baseVal)
+	local isOffenceOnly = (
+		statName == "FullDPS"
+		or statName == "EffectiveDPS"
+		or statName == "CombinedDPS"
+		or statName == "TotalDPS"
+	)
+	local fastNodeFastSkillsOpts = {
+		requirementsItems = true,
+		requirementsGems = true,
+		skills = true,
+		skipEHP = isOffenceOnly,
+	}
+	local fastNodeRebuildSkillsOpts = {
+		requirementsItems = true,
+		requirementsGems = true,
+		skipEHP = isOffenceOnly,
+	}
+	local fastFullDpsOnlyOpts = {
+		requirementsItems = true,
+		requirementsGems = true,
+		skills = true,
+		skipEHP = true,
+		fullDPSOnly = true,
+	}
+	local grantedPassives = (build.calcsTab and build.calcsTab.mainEnv and build.calcsTab.mainEnv.grantedPassives) or {}
+	local loopCounter = 0
 
 	for nodeId, node in pairs(build.spec.nodes or {}) do
+		loopCounter = loopCounter + 1
+		if loopCounter % 32 == 0 then checkParentAlive() end
 		local isTargetType = (node.type == "Notable") or (includeKeystones and node.type == "Keystone")
-		if isTargetType and not node.ascendancyName and not node.alloc and node.modKey and node.modKey ~= "" then
+		local canAnoint = (sortBy ~= "anoint") or (type(node.recipe) == "table" and #node.recipe > 0 and not grantedPassives[nodeId])
+		if isTargetType and canAnoint and not node.ascendancyName and not node.alloc and node.modKey and node.modKey ~= "" then
 			local dist = tonumber(node.pathDist) or 1000
 			if sortBy == "anoint" or dist <= maxPathDist then
 				if not singleCache[node.modKey] then
-					singleCache[node.modKey] = extractStatsTable(calcFunc({ addNodes = { [node] = true } }, not fastAnointPrepass and useFullDPS))
+					checkParentAlive()
+					local nOpts = node.grantedSkills and fastNodeRebuildSkillsOpts or fastNodeFastSkillsOpts
+					singleCache[node.modKey] = extractStatsTable(calcFunc({ addNodes = { [node] = true } }, not fastAnointPrepass and useFullDPS, nOpts))
 				end
 				local singleStats = singleCache[node.modKey]
 				local singleVal = safeNum(singleStats[prepassStat], singleStats.EffectiveDPS)
@@ -2418,14 +2767,18 @@ methods.rank_passive_notables = function(params)
 				local pathIds = {}
 				if singleDelta > 0.001 and sortBy ~= "anoint" and dist <= maxPathDist and node.path and #node.path > 0 then
 					local pathSet = {}
+					local pathHasGrantedSkill = false
 					for _, pNode in ipairs(node.path) do
 						if not pNode.alloc then
 							pathSet[pNode] = true
 							pathIds[#pathIds + 1] = pNode.id
+							if pNode.grantedSkills then pathHasGrantedSkill = true end
 						end
 					end
 					if dist > 1 and next(pathSet) ~= nil then
-						local pathStats = extractStatsTable(calcFunc({ addNodes = pathSet }, useFullDPS))
+						checkParentAlive()
+						local pOpts = pathHasGrantedSkill and fastNodeRebuildSkillsOpts or fastNodeFastSkillsOpts
+						local pathStats = extractStatsTable(calcFunc({ addNodes = pathSet }, useFullDPS, pOpts))
 						fullPathDelta = safeNum(pathStats[statName], pathStats.EffectiveDPS) - baseVal
 					end
 				end
@@ -2459,14 +2812,16 @@ methods.rank_passive_notables = function(params)
 	-- Refine top anoint candidates with exact FullDPS multi-skill pass
 	if fastAnointPrepass and #candidates > 0 then
 		table.sort(candidates, function(a, b) return a.singleNodeDelta > b.singleNodeDelta end)
-		local refineLimit = math.min(#candidates, math.max(topN * 3, 25))
+		local refineLimit = math.min(#candidates, math.max(topN * 2, 16))
 		local refined = {}
 		local exactCache = {}
 		for i = 1, refineLimit do
+			checkParentAlive()
 			local c = candidates[i]
 			local nd = c._nodeRef
 			if not exactCache[nd.modKey] then
-				exactCache[nd.modKey] = extractStatsTable(calcFunc({ addNodes = { [nd] = true } }, true))
+				local rOpts = nd.grantedSkills and fastNodeRebuildSkillsOpts or fastFullDpsOnlyOpts
+				exactCache[nd.modKey] = extractStatsTable(calcFunc({ addNodes = { [nd] = true } }, true, rOpts))
 			end
 			local exVal = safeNum(exactCache[nd.modKey][statName], exactCache[nd.modKey].EffectiveDPS)
 			local exDelta = exVal - baseVal
@@ -2483,6 +2838,8 @@ methods.rank_passive_notables = function(params)
 	else
 		for _, c in ipairs(candidates) do c._nodeRef = nil end
 	end
+	singleCache, calcFunc, baseOut = nil, nil, nil
+	collectgarbage("collect")
 
 	table.sort(candidates, function(a, b)
 		if sortBy == "anoint" then
@@ -2697,7 +3054,27 @@ methods.slot_stat_weights = function(params)
 			maxPriceType = (type(params.maxPriceType) == "string" and params.maxPriceType ~= "") and params.maxPriceType or nil,
 		}
 		qg:StartQuery(slotCtrl, options)
+		if qg.calcContext and type(qg.calcContext.calcFunc) == "function" then
+			local rawCalcFunc = qg.calcContext.calcFunc
+			local fastAmuletNodeOpts = { requirementsItems = true, requirementsGems = true, skills = true }
+			qg.calcContext.calcFunc = function(override, useFullDPS, fastOpts)
+				if fastOpts == nil and type(override) == "table" and override.addNodes and not override.repSlotName then
+					local anyGrantedSkill = false
+					for nd, _ in pairs(override.addNodes) do
+						if type(nd) == "table" and nd.grantedSkills then
+							anyGrantedSkill = true
+							break
+						end
+					end
+					if not anyGrantedSkill then
+						return rawCalcFunc(override, useFullDPS, fastAmuletNodeOpts)
+					end
+				end
+				return rawCalcFunc(override, useFullDPS, fastOpts)
+			end
+		end
 		while qg.calcContext and qg.calcContext.co do
+			checkParentAlive()
 			qg:OnFrame()
 		end
 		closeAllPopups()
@@ -2711,6 +3088,8 @@ methods.slot_stat_weights = function(params)
 	end
 
 	if not okRun then
+		qg = nil
+		collectgarbage("collect")
 		error("TradeQueryGenerator failed: " .. tostring(runErr), 0)
 	end
 
@@ -2718,7 +3097,9 @@ methods.slot_stat_weights = function(params)
 	local topN = tonumber(params.topN) or 35
 	local weightsOut = {}
 	local rawWeights = (qg and qg.modWeights) or {}
-	for i = 1, math.min(topN, #rawWeights) do
+	local totalWeightedMods = #rawWeights
+	local itemCategoryStr = qg and qg.calcContext and qg.calcContext.itemCategoryQueryStr or dkjson.null
+	for i = 1, math.min(topN, totalWeightedMods) do
 		local w = rawWeights[i]
 		local signedWeight = (w.invert == true) and (-1 * w.weight) or w.weight
 		weightsOut[#weightsOut + 1] = {
@@ -2729,6 +3110,8 @@ methods.slot_stat_weights = function(params)
 			meanStatDiff = w.meanStatDiff,
 		}
 	end
+	qg, rawWeights = nil, nil
+	collectgarbage("collect")
 
 	local tradePayload = capturedQuery and {
 		query = capturedQuery,
@@ -2738,8 +3121,8 @@ methods.slot_stat_weights = function(params)
 	return {
 		slot = slotName,
 		targetSlot = targetSlot,
-		itemCategory = qg and qg.calcContext and qg.calcContext.itemCategoryQueryStr or dkjson.null,
-		totalWeightedMods = #rawWeights,
+		itemCategory = itemCategoryStr,
+		totalWeightedMods = totalWeightedMods,
 		elapsedMs = (os.clock() - t0) * 1000.0,
 		warning = capturedErr or dkjson.null,
 		weights = weightsOut,
@@ -2755,12 +3138,14 @@ methods.call_batch = function(params)
 	end
 	local out = {}
 	for i, call in ipairs(params.calls) do
+		checkParentAlive()
 		local mName = call and call.method
 		local fn = mName and methods[mName]
 		if not fn or mName == "call_batch" then
 			out[i] = { ok = false, method = mName or dkjson.null, error = "Unknown or disallowed batch method: " .. tostring(mName) }
 		else
 			local okC, resOrErr = pcall(fn, call.params or {})
+			checkParentAlive()
 			if okC then
 				out[i] = { ok = true, method = mName, result = resOrErr }
 			else
@@ -2787,14 +3172,73 @@ if os.getenv("POB2_READY_BANNER") == "1" then
 end
 
 -- ============================================================================
--- Main JSON-RPC 2.0 stdin/stdout Loop
+-- Main JSON-RPC 2.0 stdin/stdout Loop (with POSIX poll + getppid orphan guard)
 -- ============================================================================
 
-while not shouldExit do
-	local line = io.stdin:read("*l")
-	if line == nil then
-		break
+local stdinPendingBuf = ""
+local stdinEof = false
+local stdinPollFd = (ffi.os ~= "Windows") and ffi.new("struct pob2_pollfd[1]") or nil
+local stdinReadBuf = (ffi.os ~= "Windows") and ffi.new("uint8_t[65536]") or nil
+
+local function readStdinLine()
+	if ffi.os == "Windows" then
+		return io.read("*l")
 	end
+	while true do
+		local nlPos = stdinPendingBuf:find("\n", 1, true)
+		if nlPos then
+			local line = stdinPendingBuf:sub(1, nlPos - 1)
+			if line:sub(-1) == "\r" then
+				line = line:sub(1, -2)
+			end
+			stdinPendingBuf = stdinPendingBuf:sub(nlPos + 1)
+			return line
+		end
+		if stdinEof then
+			if stdinPendingBuf ~= "" then
+				local tail = stdinPendingBuf
+				stdinPendingBuf = ""
+				return tail
+			end
+			return nil
+		end
+
+		checkParentAlive()
+		stdinPollFd[0].fd = 0
+		stdinPollFd[0].events = 1 -- POLLIN
+		stdinPollFd[0].revents = 0
+		local rc = ffi.C.poll(stdinPollFd, 1, 250)
+		checkParentAlive()
+
+		if rc > 0 then
+			local n = tonumber(ffi.C.read(0, stdinReadBuf, 65536)) or -1
+			if n == 0 then
+				stdinEof = true
+			elseif n > 0 then
+				stdinPendingBuf = stdinPendingBuf .. ffi.string(stdinReadBuf, n)
+			else
+				local errNo = ffi.errno()
+				if errNo ~= 4 and errNo ~= 11 and errNo ~= 35 then
+					stdinEof = true
+				end
+			end
+		elseif rc < 0 then
+			if ffi.errno() ~= 4 then
+				stdinEof = true
+			end
+		end
+	end
+end
+
+while not shouldExit do
+	checkParentAlive()
+	local line = readStdinLine()
+	if line == nil then
+		stdout:flush()
+		stderr:flush()
+		os.exit(0)
+	end
+	checkParentAlive()
 	local trimmed = line:match("^%s*(.-)%s*$")
 	if trimmed ~= "" then
 		local req, _, decErr = dkjson.decode(trimmed)
@@ -2817,6 +3261,7 @@ while not shouldExit do
 				})
 			else
 				local okCall, resOrErr = pcall(fn, req.params or {})
+				checkParentAlive()
 				if okCall then
 					writeFrame({
 						jsonrpc = "2.0",

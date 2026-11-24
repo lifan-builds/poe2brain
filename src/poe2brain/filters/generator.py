@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from poe2brain.config import DEFAULT_LEAGUE, POE2_PATCH, get_gamedata_db_path
+from poe2brain.config import DEFAULT_LEAGUE, POE2_PATCH, get_cache_dir, get_gamedata_db_path
 from poe2brain.filters.grammar import (
     FilterGamedataIndex,
     get_filter_gamedata_index,
@@ -23,6 +24,7 @@ from poe2brain.models.filters import (
     TierVisualStyle,
     VisualThemeSpec,
 )
+from poe2brain.ninja.xml_inspector import decode_pob2_code_to_xml, inspect_pob2_xml_or_code
 
 if TYPE_CHECKING:
     from poe2brain.pob.service import BuildService
@@ -391,19 +393,25 @@ def _infer_class_armour_tags(hint: str) -> list[str]:
     return ["int_armour", "dex_armour", "str_armour"]
 
 
-def extract_build_filter_context(
-    build_service: BuildService,
-    *,
-    pob_code: str | None = None,
-    slot: str = "main",
-    index: FilterGamedataIndex | None = None,
-) -> BuildFilterContext:
-    idx = index or get_filter_gamedata_index()
-    if pob_code:
-        build_service.load_build(pob_code, slot=slot)
-    summary = build_service.inspect_build(slot=slot, include_item_raw=False)
-    stats = summary["stats"]
+_SAFE_SLOT_FILENAME_RE = re.compile(r"[^a-zA-Z0-9._-]+")
 
+
+def _build_filter_context_from_parts(
+    *,
+    class_name: str | None,
+    ascendancy_name: str | None,
+    level: int,
+    main_skill: str | None,
+    raw_base_names: Sequence[str],
+    armour: float,
+    evasion: float,
+    energy_shield: float,
+    fire_resist: float,
+    cold_resist: float,
+    lightning_resist: float,
+    chaos_resist: float,
+    idx: FilterGamedataIndex,
+) -> BuildFilterContext:
     equipped_bases: list[str] = []
     weapon_classes: list[str] = []
     offhand_classes: list[str] = []
@@ -419,10 +427,8 @@ def extract_build_filter_context(
     finally:
         con.close()
 
-    for entry in summary.get("items") or []:
-        if not isinstance(entry, Mapping):
-            continue
-        bname = str(entry.get("baseName") or "").strip()
+    for raw_bname in raw_base_names:
+        bname = str(raw_bname or "").strip()
         if not bname:
             continue
         if bname not in equipped_bases:
@@ -435,7 +441,7 @@ def extract_build_filter_context(
         elif fc in OFFHAND_FILTER_CLASSES and fc not in offhand_classes:
             offhand_classes.append(fc)
 
-    hint = f"{stats.class_name or ''} {stats.ascendancy_name or ''} {stats.main_skill or ''}"
+    hint = f"{class_name or ''} {ascendancy_name or ''} {main_skill or ''}"
 
     # Infer archetype weapon/offhand classes when naked starter build or 1H weapon lacks offhand
     if not weapon_classes:
@@ -462,9 +468,9 @@ def extract_build_filter_context(
             offhand_classes.append("Shields")
 
     # Infer armour defense tags from BuildStats (falling back to class identity on naked slots)
-    ar_v = float(stats.armour or 0.0)
-    ev_v = float(stats.evasion or 0.0)
-    es_v = float(stats.energy_shield or 0.0)
+    ar_v = float(armour or 0.0)
+    ev_v = float(evasion or 0.0)
+    es_v = float(energy_shield or 0.0)
     preferred_tags: list[str] = []
     if es_v >= 400 and ev_v >= 600:
         preferred_tags.extend(["dex_int_armour", "int_armour", "dex_armour"])
@@ -482,29 +488,140 @@ def extract_build_filter_context(
         preferred_tags.extend(_infer_class_armour_tags(hint))
 
     uncapped: list[str] = []
-    if float(stats.fire_resist) < 75.0:
+    if float(fire_resist) < 75.0:
         uncapped.append("fire")
-    if float(stats.cold_resist) < 75.0:
+    if float(cold_resist) < 75.0:
         uncapped.append("cold")
-    if float(stats.lightning_resist) < 75.0:
+    if float(lightning_resist) < 75.0:
         uncapped.append("lightning")
-    if float(stats.chaos_resist) < 40.0:
+    if float(chaos_resist) < 40.0:
         uncapped.append("chaos")
 
-    ident = stats.ascendancy_name or stats.class_name
-    party_lbl = [f"{ident} ({stats.main_skill})" if stats.main_skill else ident] if ident else []
+    ident = ascendancy_name or class_name
+    party_lbl = [f"{ident} ({main_skill})" if main_skill else ident] if ident else []
 
     return BuildFilterContext(
-        class_name=stats.class_name,
-        ascendancy_name=stats.ascendancy_name,
-        level=stats.level,
-        main_skill=stats.main_skill,
+        class_name=class_name,
+        ascendancy_name=ascendancy_name,
+        level=level,
+        main_skill=main_skill,
         weapon_filter_classes=weapon_classes,
         offhand_filter_classes=offhand_classes,
         preferred_armour_tags=preferred_tags,
         uncapped_resists=uncapped,
         equipped_bases=equipped_bases,
         party_members=party_lbl,
+    )
+
+
+def extract_build_filter_context_from_xml(
+    code_or_xml: str | Path,
+    *,
+    index: FilterGamedataIndex | None = None,
+) -> BuildFilterContext:
+    """Extract BuildFilterContext in <2ms via pure-Python XML inspection (0 MB LuaJIT RSS)."""
+    idx = index or get_filter_gamedata_index()
+    raw_input = (
+        code_or_xml.read_text(encoding="utf-8")
+        if isinstance(code_or_xml, Path)
+        else str(code_or_xml)
+    )
+    ins = inspect_pob2_xml_or_code(raw_input)
+    xs = ins.xml_stats
+    base_names = [
+        it.base_type
+        for it in ins.equipped_items
+        if it.base_type and it.base_type != "Unknown"
+    ]
+    return _build_filter_context_from_parts(
+        class_name=ins.class_name if ins.class_name != "Unknown" else None,
+        ascendancy_name=ins.ascendancy_name,
+        level=ins.level,
+        main_skill=ins.main_skill,
+        raw_base_names=base_names,
+        armour=float(xs.get("Armour", 0.0)),
+        evasion=float(xs.get("Evasion", 0.0)),
+        energy_shield=float(xs.get("EnergyShield", ins.energy_shield)),
+        fire_resist=float(xs.get("FireResist", 0.0)),
+        cold_resist=float(xs.get("ColdResist", 0.0)),
+        lightning_resist=float(xs.get("LightningResist", 0.0)),
+        chaos_resist=float(xs.get("ChaosResist", 0.0)),
+        idx=idx,
+    )
+
+
+def extract_build_filter_context(
+    build_service: BuildService | None = None,
+    *,
+    pob_code: str | Path | None = None,
+    slot: str = "main",
+    index: FilterGamedataIndex | None = None,
+) -> BuildFilterContext:
+    idx = index or get_filter_gamedata_index()
+    bridge_idle = build_service is None or (
+        not build_service.bridge.is_running and not build_service.bridge.is_hibernated
+    )
+
+    if pob_code is not None:
+        raw_pob = (
+            pob_code.read_text(encoding="utf-8")
+            if isinstance(pob_code, Path)
+            else str(pob_code).strip()
+        )
+        if (
+            not isinstance(pob_code, Path)
+            and len(raw_pob) < 512
+            and "\n" not in raw_pob
+            and not raw_pob.startswith(("<", "{", "http://", "https://"))
+            and Path(raw_pob).expanduser().is_file()
+        ):
+            raw_pob = Path(raw_pob).expanduser().read_text(encoding="utf-8")
+
+        if not raw_pob.startswith(("{", "http://", "https://")):
+            try:
+                xml_text = decode_pob2_code_to_xml(raw_pob)
+            except ValueError:
+                xml_text = ""
+            if xml_text and (build_service is None or (bridge_idle and "<PlayerStat" in xml_text)):
+                return extract_build_filter_context_from_xml(xml_text, index=idx)
+
+        if build_service is None:
+            raise ValueError(
+                "build_service is required to evaluate non-XML or remote PoB2 inputs."
+            )
+        build_service.load_build(pob_code, slot=slot)
+    elif bridge_idle:
+        safe_slot = _SAFE_SLOT_FILENAME_RE.sub("_", slot.strip()) or "main"
+        snap_path = get_cache_dir() / "pob_slots" / f"{safe_slot}.xml"
+        if snap_path.is_file():
+            snap_xml = snap_path.read_text(encoding="utf-8")
+            if build_service is None or "<PlayerStat" in snap_xml:
+                return extract_build_filter_context_from_xml(snap_xml, index=idx)
+        if build_service is None:
+            raise ValueError(f"No persisted PoB2 XML snapshot found for slot {slot!r}.")
+
+    assert build_service is not None
+    summary = build_service.inspect_build(slot=slot, include_item_raw=False)
+    stats = summary["stats"]
+    raw_bases = [
+        str(entry.get("baseName") or "").strip()
+        for entry in (summary.get("items") or [])
+        if isinstance(entry, Mapping)
+    ]
+    return _build_filter_context_from_parts(
+        class_name=stats.class_name,
+        ascendancy_name=stats.ascendancy_name,
+        level=stats.level,
+        main_skill=stats.main_skill,
+        raw_base_names=raw_bases,
+        armour=float(stats.armour or 0.0),
+        evasion=float(stats.evasion or 0.0),
+        energy_shield=float(stats.energy_shield or 0.0),
+        fire_resist=float(stats.fire_resist),
+        cold_resist=float(stats.cold_resist),
+        lightning_resist=float(stats.lightning_resist),
+        chaos_resist=float(stats.chaos_resist),
+        idx=idx,
     )
 
 

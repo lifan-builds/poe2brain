@@ -57,7 +57,7 @@ Implicits: 0
 
 @pytest.fixture(scope="module")
 def build_service() -> Iterator[BuildService]:
-    svc = BuildService(bridge=Pob2Bridge(use_daemon=False))
+    svc = BuildService(bridge=Pob2Bridge(use_daemon=False), owns_bridge=True)
     try:
         svc.create_character(
             "Sorceress",

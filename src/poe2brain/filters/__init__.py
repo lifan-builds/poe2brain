@@ -5,6 +5,7 @@ from poe2brain.filters.generator import (
     STRICTNESS_POLICIES,
     FilterGenerator,
     extract_build_filter_context,
+    extract_build_filter_context_from_xml,
     merge_build_filter_contexts,
 )
 from poe2brain.filters.grammar import (
@@ -92,6 +93,7 @@ __all__ = [
     "detect_rhythmic_pulses",
     "ensure_wcag_contrast",
     "extract_build_filter_context",
+    "extract_build_filter_context_from_xml",
     "get_filter_gamedata_index",
     "get_visual_theme",
     "heal_filter_text",

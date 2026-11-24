@@ -32,7 +32,12 @@ from poe2brain.models.builds import (
 )
 from poe2brain.models.common import Poe2Model, SaleType
 from poe2brain.models.trade import TradeListing
-from poe2brain.pob.bridge import Pob2Bridge, Pob2BridgeError
+from poe2brain.pob.bridge import (
+    Pob2Bridge,
+    Pob2BridgeError,
+    close_default_pob2_bridge,
+    get_default_pob2_bridge,
+)
 
 _POBBIN_URL_RE = re.compile(
     r"^https?://(?:www\.)?pobb\.in/(?:u/[^/]+/)?([A-Za-z0-9_-]+)(?:/raw)?/?$"
@@ -846,12 +851,13 @@ class BuildService:
         self,
         *,
         bridge: Pob2Bridge | None = None,
+        owns_bridge: bool | None = None,
         http_client: Poe2HttpClient | None = None,
         trade_client: Any = None,
         economy_service: Any = None,
     ) -> None:
-        self._owns_bridge = bridge is None
-        self.bridge = bridge or Pob2Bridge()
+        self._owns_bridge = False if owns_bridge is None else bool(owns_bridge)
+        self.bridge = bridge if bridge is not None else get_default_pob2_bridge()
         self._owns_http = http_client is None
         self.http_client = http_client or Poe2HttpClient()
         self._trade_client = trade_client
@@ -2340,6 +2346,7 @@ def _close_default_build_service() -> None:
         except Exception:
             pass
         _DEFAULT_SERVICE = None
+    close_default_pob2_bridge()
 
 
 atexit.register(_close_default_build_service)
