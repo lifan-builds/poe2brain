@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+import re
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -8,19 +9,34 @@ from urllib.parse import quote
 from poe2brain.config import DEFAULT_LEAGUE, POE2_PATCH
 from poe2brain.filters.generator import FilterGenerator
 from poe2brain.filters.grammar import (
+    NUMERIC_OPERATORS,
+    POE1_BLOCKED_CONDITIONS,
+    POE2_VALID_ACTIONS,
+    POE2_VALID_CONDITIONS,
+    RARITY_ORDINAL,
+    VALID_COLOR_SET,
+    VALID_NAMED_SOUND_SET,
+    VALID_SHAPE_SET,
     FilterGamedataIndex,
     ParsedFilter,
     ParsedFilterBlock,
     ParsedStatement,
     get_filter_gamedata_index,
     parse_filter_text,
+    split_code_and_comment,
 )
 from poe2brain.filters.themes import BUILTIN_THEME_PRESETS, compose_theme, get_visual_theme
-from poe2brain.filters.validator import FilterValidator
+from poe2brain.filters.validator import (
+    FilterValidator,
+    _intervals_disjoint,
+    _is_windows_or_unix_abs_path,
+    _numeric_interval,
+)
 from poe2brain.http import Poe2HttpClient
 from poe2brain.models.filters import (
     BuildFilterContext,
     FilterCompileResult,
+    FilterHealReport,
     SoundPackManifest,
     StrictnessTier,
     TierVisualStyle,
@@ -225,6 +241,616 @@ def _apply_style_to_neversink_block(
             )
 
 
+_STALE_01_PREFIX_RE = re.compile(r"^(?:expert|advanced)\s*(.+)$", re.IGNORECASE)
+
+_POE1_CLASS_ALIASES: dict[str, str] = {
+    "map": "Waystones",
+    "maps": "Waystones",
+    "utility flask": "Charms",
+    "utility flasks": "Charms",
+    "utilityflask": "Charms",
+    "warstaff": "Quarterstaves",
+    "warstaves": "Quarterstaves",
+    "active skill gem": "Skill Gems",
+    "active skill gems": "Skill Gems",
+    "support skill gem": "Support Gems",
+    "support skill gems": "Support Gems",
+    "thrusting one hand swords": "One Hand Swords",
+    "thrusting one hand sword": "One Hand Swords",
+    "rune daggers": "Daggers",
+    "rune dagger": "Daggers",
+    "scepter": "Sceptres",
+    "scepters": "Sceptres",
+    "body armor": "Body Armours",
+    "body armors": "Body Armours",
+}
+
+_RENAMED_01_BASETYPES: dict[str, str] = {
+    "dualstring bow": "Gemini Bow",
+}
+
+
+def _repair_raw_syntax_lines(raw_text: str, fixes: list[str]) -> str:
+    repaired_lines: list[str] = []
+    for line_no, raw_line in enumerate(raw_text.splitlines(), 1):
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            repaired_lines.append(raw_line)
+            continue
+        code, cmt = split_code_and_comment(raw_line)
+        if code.count('"') % 2 != 0:
+            code = f'{code}"'
+            fixes.append(f"L{line_no}: Closed unterminated double-quoted string literal.")
+            repaired_lines.append(f"{code} # {cmt}" if cmt else code)
+        else:
+            repaired_lines.append(raw_line)
+    return "\n".join(repaired_lines) + ("\n" if raw_text.endswith("\n") else "")
+
+
+def _heal_single_class(
+    val: str,
+    *,
+    is_exact: bool,
+    index: FilterGamedataIndex,
+    internal_ci: dict[str, str],
+    valid_fc_ci: dict[str, str],
+) -> tuple[str | None, str | None]:
+    low = val.strip().lower()
+    if not low:
+        return None, 'Removed empty Class literal ""'
+    if val in index.internal_only_class_ids:
+        target = index.internal_only_class_ids[val]
+        return target, f'Healed singular/internal Class "{val}" -> "{target}"'
+    if low in _POE1_CLASS_ALIASES:
+        target = _POE1_CLASS_ALIASES[low]
+        return target, f'Migrated PoE1 Class "{val}" -> "{target}"'
+    if low in internal_ci:
+        target = internal_ci[low]
+        return target, f'Healed singular/internal Class "{val}" -> "{target}"'
+    if is_exact:
+        if val in index.valid_filter_classes:
+            return val, None
+        if low in valid_fc_ci:
+            target = valid_fc_ci[low]
+            return target, f'Normalized Class casing "{val}" -> "{target}"'
+        return None, f'Pruned unsupported PoE1/unknown Class "{val}"'
+    if any(val in fc for fc in index.valid_filter_classes):
+        return val, None
+    if low in valid_fc_ci:
+        target = valid_fc_ci[low]
+        return target, f'Normalized Class casing "{val}" -> "{target}"'
+    if any(low in fc.lower() for fc in index.valid_filter_classes):
+        matched_sub = next(fc for fc in sorted(index.valid_filter_classes) if low in fc.lower())
+        return matched_sub, f'Normalized Class "{val}" -> "{matched_sub}"'
+    return None, f'Pruned unsupported PoE1/unknown Class "{val}"'
+
+
+def _heal_single_basetype(
+    val: str,
+    *,
+    is_exact: bool,
+    index: FilterGamedataIndex,
+    live_ci: dict[str, str],
+    dormant_ci: frozenset[str],
+) -> tuple[str | None, str | None]:
+    clean = val.strip()
+    low = clean.lower()
+    if not clean:
+        return None, 'Removed empty BaseType literal ""'
+
+    if clean in index.dormant_or_removed_basetypes or low in dormant_ci:
+        return None, f'Pruned dormant/removed BaseType "{val}"'
+
+    if is_exact and clean in index.basetype_to_classes:
+        return clean, None
+    if not is_exact and any(clean in bt for bt in index.basetype_to_classes):
+        return clean, None
+
+    if low in _RENAMED_01_BASETYPES:
+        renamed = _RENAMED_01_BASETYPES[low]
+        if renamed in index.basetype_to_classes:
+            return renamed, f'Migrated Patch 0.1 BaseType "{val}" -> "{renamed}"'
+
+    if low in live_ci:
+        canon = live_ci[low]
+        return canon, f'Normalized BaseType "{val}" -> "{canon}"'
+
+    m_stale = _STALE_01_PREFIX_RE.match(clean)
+    if m_stale:
+        stripped = m_stale.group(1).strip()
+        cand = _RENAMED_01_BASETYPES.get(stripped.lower(), stripped)
+        if cand.lower() in dormant_ci:
+            return None, f'Pruned dormant/removed BaseType "{val}"'
+        if cand.lower() in live_ci:
+            canon = live_ci[cand.lower()]
+            return canon, f'Stripped stale 0.1 prefix "{val}" -> "{canon}"'
+        if not is_exact and any(cand.lower() in bt.lower() for bt in live_ci.values()):
+            return cand, f'Stripped stale 0.1 prefix "{val}" -> "{cand}"'
+
+    return None, f'Pruned unknown/PoE1 BaseType "{val}"'
+
+
+def _heal_parsed_filter_detailed(
+    parsed: ParsedFilter,
+    index: FilterGamedataIndex,
+    *,
+    filter_dir: Path | None = None,
+    initial_fixes: list[str] | None = None,
+) -> tuple[list[str], list[str], int]:
+    """Repair PoE1 / Patch 0.1 filter migrations in-place; returns `(fixes, bases, pruned)`."""
+    fixes: list[str] = list(initial_fixes or ())
+    healed_items: list[str] = []
+    pruned_blocks = 0
+
+    if parsed.syntax_errors:
+        for err_ln, err_msg in parsed.syntax_errors:
+            fixes.append(f"L{err_ln}: Dropped malformed statement ({err_msg})")
+        parsed.syntax_errors.clear()
+
+    for imp in parsed.imports:
+        if not imp.optional and (filter_dir is None or not (filter_dir / imp.path).is_file()):
+            imp.optional = True
+            fixes.append(f'L{imp.line}: Marked missing Import "{imp.path}" Optional.')
+
+    live_ci = {
+        bt.lower(): bt
+        for bt in index.basetype_to_classes
+        if bt not in index.dormant_or_removed_basetypes
+    }
+    dormant_ci = frozenset(bt.lower() for bt in index.dormant_or_removed_basetypes)
+    internal_ci = {k.lower(): v for k, v in index.internal_only_class_ids.items()}
+    valid_fc_ci = {fc.lower(): fc for fc in index.valid_filter_classes}
+
+    kept_blocks: list[ParsedFilterBlock] = []
+
+    for blk in parsed.blocks:
+        drop_entire_block = False
+        had_conditions_before = False
+        removed_poe1_condition = False
+
+        # Separate `Continue` statements so actions placed after `Continue` are kept & hoisted
+        first_continue_idx: int | None = None
+        continue_stmt: ParsedStatement | None = None
+        continue_count = 0
+        non_continue_stmts: list[ParsedStatement] = []
+        had_stmt_after_continue = False
+
+        for idx_s, st in enumerate(blk.statements):
+            if st.keyword == "Continue":
+                continue_count += 1
+                if first_continue_idx is None:
+                    first_continue_idx = idx_s
+                    continue_stmt = st
+            else:
+                if first_continue_idx is not None:
+                    had_stmt_after_continue = True
+                non_continue_stmts.append(st)
+                if st.keyword in POE2_VALID_CONDITIONS or st.keyword in POE1_BLOCKED_CONDITIONS:
+                    had_conditions_before = True
+
+        new_stmts: list[ParsedStatement] = []
+        numeric_bounds: dict[str, tuple[float, bool, float, bool]] = {}
+        bool_states: dict[str, bool] = {}
+
+        for st in non_continue_stmts:
+            kw = st.keyword
+
+            # 1. Legacy PoE1 `MapTier` -> `WaystoneTier`
+            if kw == "MapTier":
+                old_raw = st.values[0] if st.values else "1"
+                st.keyword = "WaystoneTier"
+                kw = "WaystoneTier"
+                if st.values and st.values[0].lstrip("-").isdigit():
+                    clamped_tier = max(1, min(16, int(st.values[0])))
+                    st.values[0] = str(clamped_tier)
+                fixes.append(
+                    f"L{st.line}: Migrated PoE1 `MapTier {st.operator or ''}{old_raw}` -> "
+                    f"`WaystoneTier {st.operator or ''}{st.values[0] if st.values else '1'}`."
+                )
+
+            # 2. Other unsupported PoE1 conditions (`SocketGroup`, `LinkedSockets`, `ShaperItem`)
+            if kw in POE1_BLOCKED_CONDITIONS:
+                removed_poe1_condition = True
+                fixes.append(f"L{st.line}: Removed unsupported PoE1 condition `{kw}`.")
+                continue
+
+            # 3. `Class` migration & singular `.datc64` -> plural `.filter` healing
+            if kw == "Class":
+                if st.operator not in (None, "==", "="):
+                    st.operator = "=="
+                    fixes.append(f"L{st.line}: Normalized invalid `Class` operator to `==`.")
+                is_exact = st.operator in ("==", "=")
+                valid_c: list[str] = []
+                valid_cq: list[bool] = []
+                for val, qf in zip(st.values, st.quoted_flags, strict=False):
+                    healed_c, fix_msg = _heal_single_class(
+                        val,
+                        is_exact=is_exact,
+                        index=index,
+                        internal_ci=internal_ci,
+                        valid_fc_ci=valid_fc_ci,
+                    )
+                    if fix_msg:
+                        fixes.append(f"L{st.line}: {fix_msg}.")
+                        if healed_c != val and val not in healed_items:
+                            healed_items.append(val)
+                    if healed_c is not None and healed_c not in valid_c:
+                        valid_c.append(healed_c)
+                        valid_cq.append(True if " " in healed_c else qf)
+                if not valid_c:
+                    drop_entire_block = True
+                    fixes.append(
+                        f"L{blk.line}: Pruned block #{blk.block_index} (no valid PoE2 Class left)."
+                    )
+                    break
+                st.values = valid_c
+                st.quoted_flags = valid_cq
+                new_stmts.append(st)
+                continue
+
+            # 4. `BaseType` 0.1 prefix stripping (`Expert ` / `Advanced `) + dead PoE1/0.4 pruning
+            if kw == "BaseType":
+                if st.operator not in (None, "==", "="):
+                    st.operator = "=="
+                    fixes.append(f"L{st.line}: Normalized invalid `BaseType` operator to `==`.")
+                is_exact = st.operator in ("==", "=")
+                valid_vals: list[str] = []
+                valid_qflags: list[bool] = []
+                for val, qf in zip(st.values, st.quoted_flags, strict=False):
+                    healed_bt, fix_msg = _heal_single_basetype(
+                        val,
+                        is_exact=is_exact,
+                        index=index,
+                        live_ci=live_ci,
+                        dormant_ci=dormant_ci,
+                    )
+                    if fix_msg:
+                        fixes.append(f"L{st.line}: {fix_msg}.")
+                        if healed_bt != val and val not in healed_items:
+                            healed_items.append(val)
+                    if healed_bt is not None and healed_bt not in valid_vals:
+                        valid_vals.append(healed_bt)
+                        valid_qflags.append(True if " " in healed_bt else qf)
+                if not valid_vals:
+                    drop_entire_block = True
+                    fixes.append(
+                        f"L{blk.line}: Pruned dead block #{blk.block_index} "
+                        "(all BaseTypes removed or obsolete in 0.5.5)."
+                    )
+                    break
+                st.values = valid_vals
+                st.quoted_flags = valid_qflags
+                new_stmts.append(st)
+                continue
+
+            # 5. `HasExplicitMod >= 2` whitespace glue
+            if kw == "HasExplicitMod":
+                if not st.values:
+                    fixes.append(f"L{st.line}: Removed empty `HasExplicitMod` condition.")
+                    continue
+                if st.operator and st.values[0].isdigit():
+                    if (
+                        st.operator_end_col is not None
+                        and st.first_value_col is not None
+                        and st.first_value_col > st.operator_end_col
+                    ):
+                        fixes.append(
+                            f"L{st.line}: Glued `HasExplicitMod {st.operator}{st.values[0]}` "
+                            "(removed illegal space after operator)."
+                        )
+                    st.first_value_col = st.operator_end_col
+                new_stmts.append(st)
+                continue
+
+            # 6. Numeric & boolean condition clamping + contradiction detection
+            if kw in POE2_VALID_CONDITIONS:
+                spec = POE2_VALID_CONDITIONS[kw]
+                if spec.kind == "number":
+                    if st.operator is not None and st.operator not in NUMERIC_OPERATORS:
+                        st.operator = ">="
+                        fixes.append(f"L{st.line}: Normalized `{kw}` operator to `>=`.")
+                    if not st.values or not st.values[0].lstrip("-").isdigit():
+                        fixes.append(f"L{st.line}: Removed malformed numeric condition `{kw}`.")
+                        continue
+                    raw_n = int(st.values[0])
+                    clamped_n = raw_n
+                    if spec.min_val is not None and clamped_n < spec.min_val:
+                        clamped_n = spec.min_val
+                    if spec.max_val is not None and clamped_n > spec.max_val:
+                        clamped_n = spec.max_val
+                    if clamped_n != raw_n:
+                        st.values[0] = str(clamped_n)
+                        fixes.append(f"L{st.line}: Clamped `{kw} {raw_n}` -> `{clamped_n}`.")
+                    iv = _numeric_interval(st.operator, float(clamped_n))
+                    if kw in numeric_bounds and _intervals_disjoint(numeric_bounds[kw], iv):
+                        drop_entire_block = True
+                        fixes.append(
+                            f"L{blk.line}: Pruned contradictory `{kw}` range "
+                            f"in block #{blk.block_index}."
+                        )
+                        break
+                    numeric_bounds[kw] = iv
+                elif spec.kind == "boolean":
+                    if st.operator not in (None, "=", "=="):
+                        st.operator = None
+                    b_tok = (st.values[0] if st.values else "True").capitalize()
+                    if b_tok not in ("True", "False"):
+                        b_tok = "True"
+                    st.values = [b_tok]
+                    st.quoted_flags = [False]
+                    bval = b_tok == "True"
+                    if kw in bool_states and bool_states[kw] != bval:
+                        drop_entire_block = True
+                        fixes.append(
+                            f"L{blk.line}: Pruned contradictory `{kw}` boolean "
+                            f"in block #{blk.block_index}."
+                        )
+                        break
+                    bool_states[kw] = bval
+                elif spec.kind == "rarity":
+                    valid_r = [
+                        rv.capitalize() for rv in st.values if rv.capitalize() in RARITY_ORDINAL
+                    ]
+                    if not valid_r:
+                        fixes.append(f"L{st.line}: Removed invalid `Rarity` condition.")
+                        continue
+                    st.values = valid_r
+                    st.quoted_flags = [False] * len(valid_r)
+                new_stmts.append(st)
+                continue
+
+            # 7. Action clamping & path normalization
+            if kw in POE2_VALID_ACTIONS:
+                if kw == "SetFontSize":
+                    if st.values and st.values[0].lstrip("-").isdigit():
+                        raw_sz = int(st.values[0])
+                        clamped_sz = max(18, min(45, raw_sz))
+                        if clamped_sz != raw_sz:
+                            st.values = [str(clamped_sz)]
+                            fixes.append(
+                                f"L{st.line}: Clamped `SetFontSize {raw_sz}` -> "
+                                f"`SetFontSize {clamped_sz}`."
+                            )
+                    else:
+                        st.values = ["32"]
+                        fixes.append(f"L{st.line}: Reset invalid `SetFontSize` to `32`.")
+                    new_stmts.append(st)
+                    continue
+
+                if kw in ("SetTextColor", "SetBorderColor", "SetBackgroundColor"):
+                    if len(st.values) in (3, 4) and all(v.lstrip("-").isdigit() for v in st.values):
+                        clamped_rgba = [str(max(0, min(255, int(v)))) for v in st.values]
+                        if clamped_rgba != st.values:
+                            fixes.append(f"L{st.line}: Clamped `{kw}` RGBA channels to `0..255`.")
+                            st.values = clamped_rgba
+                        new_stmts.append(st)
+                    else:
+                        fixes.append(f"L{st.line}: Removed malformed `{kw}` action.")
+                    continue
+
+                if kw in ("PlayAlertSound", "PlayAlertSoundPositional"):
+                    if not st.values:
+                        fixes.append(f"L{st.line}: Removed empty `{kw}` action.")
+                        continue
+                    sid = st.values[0]
+                    if sid != "None":
+                        if sid.lstrip("-").isdigit():
+                            clamped_sid = max(1, min(16, int(sid)))
+                            if str(clamped_sid) != sid:
+                                st.values[0] = str(clamped_sid)
+                                fixes.append(
+                                    f"L{st.line}: Clamped `{kw}` ID `{sid}` -> `{clamped_sid}`."
+                                )
+                        elif sid not in VALID_NAMED_SOUND_SET:
+                            st.values[0] = "1"
+                            fixes.append(f"L{st.line}: Replaced unknown sound `{sid}` with `1`.")
+                        if len(st.values) >= 2 and st.values[1].lstrip("-").isdigit():
+                            vol = max(0, min(300, int(st.values[1])))
+                            if str(vol) != st.values[1]:
+                                st.values[1] = str(vol)
+                                fixes.append(f"L{st.line}: Clamped `{kw}` volume to `{vol}`.")
+                    new_stmts.append(st)
+                    continue
+
+                if kw in ("CustomAlertSound", "CustomAlertSoundOptional"):
+                    if not st.values:
+                        fixes.append(f"L{st.line}: Removed empty `{kw}` action.")
+                        continue
+                    if st.values[0] != "None":
+                        raw_parts = [p.strip() for p in st.values[0].split(";") if p.strip()]
+                        rel_parts: list[str] = []
+                        rewrote_abs = False
+                        for sp in raw_parts:
+                            if _is_windows_or_unix_abs_path(sp):
+                                rel_parts.append(Path(sp.replace("\\", "/")).name)
+                                rewrote_abs = True
+                            else:
+                                rel_parts.append(sp)
+                        new_snd = ";".join(rel_parts)
+                        if rewrote_abs:
+                            st.values[0] = new_snd
+                            st.quoted_flags[0] = True
+                            fixes.append(
+                                f"L{st.line}: Converted absolute `{kw}` path "
+                                f'to relative "{new_snd}".'
+                            )
+                        if kw == "CustomAlertSound" and (
+                            rewrote_abs
+                            or (
+                                filter_dir is not None
+                                and any(not (filter_dir / rp).is_file() for rp in rel_parts)
+                            )
+                        ):
+                            st.keyword = "CustomAlertSoundOptional"
+                            fixes.append(
+                                f"L{st.line}: Upgraded `CustomAlertSound` -> "
+                                "`CustomAlertSoundOptional` for missing-audio safety."
+                            )
+                        if len(st.values) >= 2 and st.values[1].lstrip("-").isdigit():
+                            vol = max(0, min(300, int(st.values[1])))
+                            st.values[1] = str(vol)
+                    new_stmts.append(st)
+                    continue
+
+                if kw == "PlayEffect":
+                    if st.values and (st.values[0] == "None" or st.values[0] in VALID_COLOR_SET):
+                        if len(st.values) >= 2 and st.values[1] != "Temp":
+                            st.values = [st.values[0]]
+                        new_stmts.append(st)
+                    else:
+                        fixes.append(f"L{st.line}: Removed invalid `PlayEffect` action.")
+                    continue
+
+                if kw == "MinimapIcon":
+                    if st.values and st.values[0].lstrip("-").isdigit():
+                        sz = int(st.values[0])
+                        if sz == -1:
+                            st.values = ["-1"]
+                            new_stmts.append(st)
+                        elif (
+                            sz in (0, 1, 2)
+                            and len(st.values) >= 3
+                            and st.values[1] in VALID_COLOR_SET
+                            and st.values[2] in VALID_SHAPE_SET
+                        ):
+                            new_stmts.append(st)
+                        else:
+                            fixes.append(f"L{st.line}: Removed invalid `MinimapIcon` action.")
+                    else:
+                        fixes.append(f"L{st.line}: Removed invalid `MinimapIcon` action.")
+                    continue
+
+                new_stmts.append(st)
+                continue
+
+            # 8. Unknown keyword -> drop with fix note
+            fixes.append(f"L{st.line}: Removed unknown filter keyword `{kw}`.")
+
+        if drop_entire_block:
+            pruned_blocks += 1
+            continue
+
+        remaining_conds = {st.keyword for st in new_stmts if st.keyword in POE2_VALID_CONDITIONS}
+        if had_conditions_before and not remaining_conds:
+            pruned_blocks += 1
+            fixes.append(
+                f"L{blk.line}: Pruned block #{blk.block_index} "
+                "(only unsupported PoE1 conditions were present)."
+            )
+            continue
+
+        if (
+            removed_poe1_condition
+            and remaining_conds
+            and remaining_conds
+            <= {
+                "Class",
+                "Rarity",
+                "Width",
+                "Height",
+            }
+        ):
+            pruned_blocks += 1
+            fixes.append(
+                f"L{blk.line}: Pruned pure PoE1 link/socket-group block #{blk.block_index} "
+                "to prevent broad catch-all shadowing."
+            )
+            continue
+
+        # Reconcile Class + BaseType mismatch if both exist in the same healed block
+        cls_stmts = [s for s in new_stmts if s.keyword == "Class"]
+        bt_stmts = [s for s in new_stmts if s.keyword == "BaseType"]
+        if cls_stmts and bt_stmts:
+            cs = cls_stmts[0]
+            bs = bt_stmts[0]
+            c_exact = cs.operator in ("==", "=")
+            b_exact = bs.operator in ("==", "=")
+            allowed_fc = {
+                fc
+                for cv in cs.values
+                for fc in index.valid_filter_classes
+                if (fc == cv if c_exact else cv in fc)
+            }
+            needed_fc: list[str] = []
+            for bv in bs.values:
+                cand_fc = (
+                    set(index.basetype_to_classes.get(bv, ()))
+                    if b_exact
+                    else {
+                        fc
+                        for bt_nm, fc_s in index.basetype_to_classes.items()
+                        if bv in bt_nm
+                        for fc in fc_s
+                    }
+                )
+                if cand_fc and not (cand_fc & allowed_fc):
+                    for extra_c in sorted(cand_fc):
+                        if extra_c not in cs.values and extra_c not in needed_fc:
+                            needed_fc.append(extra_c)
+            if needed_fc:
+                if not c_exact:
+                    cs.operator = "=="
+                    cs.quoted_flags = [True] * len(cs.values)
+                for extra_c in needed_fc:
+                    cs.values.append(extra_c)
+                    cs.quoted_flags.append(True)
+                fixes.append(
+                    f"L{cs.line}: Aligned `Class` with healed `BaseType` classes {needed_fc}."
+                )
+
+        # Hoist `Continue` to the very end of the block
+        if continue_stmt is not None:
+            if had_stmt_after_continue or continue_count > 1:
+                fixes.append(
+                    f"L{continue_stmt.line}: Hoisted `Continue` to the end "
+                    f"of block #{blk.block_index}."
+                )
+            new_stmts.append(continue_stmt)
+
+        blk.statements = new_stmts
+        blk.block_index = len(kept_blocks)
+        kept_blocks.append(blk)
+
+    parsed.blocks = kept_blocks
+    return fixes, healed_items, pruned_blocks
+
+
+def heal_filter_text(
+    raw_text: str,
+    *,
+    filter_dir: Path | None = None,
+    index: FilterGamedataIndex | None = None,
+) -> FilterHealReport:
+    """Doctor and auto-heal broken PoE1 / PoE2 0.1 `.filter` text into valid Patch 0.5.5 syntax."""
+    idx = index or get_filter_gamedata_index()
+    validator = FilterValidator(idx)
+    pre_report = validator.validate_text(raw_text, filter_dir=filter_dir)
+
+    initial_fixes: list[str] = []
+    syntax_repaired_text = _repair_raw_syntax_lines(raw_text, initial_fixes)
+    parsed = parse_filter_text(syntax_repaired_text)
+
+    fixes_applied, healed_bases, pruned_blocks = _heal_parsed_filter_detailed(
+        parsed,
+        idx,
+        filter_dir=filter_dir,
+        initial_fixes=initial_fixes,
+    )
+    healed_text = parsed.render()
+    post_report = validator.validate_text(healed_text, filter_dir=filter_dir)
+
+    return FilterHealReport(
+        valid=post_report.valid,
+        patch=POE2_PATCH,
+        healed_text=healed_text,
+        fixes_applied=fixes_applied,
+        healed_basetypes=healed_bases,
+        pruned_blocks=pruned_blocks,
+        original_error_count=pre_report.error_count,
+        validation=post_report,
+    )
+
+
 class NeverSinkAdapter:
     """Heals, enriches, and restyles MIT `NeverSink-Filter-for-PoE2` filters for Patch 0.5.5."""
 
@@ -253,96 +879,7 @@ class NeverSinkAdapter:
 
     def heal_parsed_filter(self, parsed: ParsedFilter) -> list[str]:
         """Prunes removed/dormant BaseTypes & Classes and fixes PoE2 0.5.5 syntax traps in-place."""
-        healed: list[str] = []
-        kept_blocks: list[ParsedFilterBlock] = []
-
-        for blk in parsed.blocks:
-            drop_entire_block = False
-            new_stmts: list[ParsedStatement] = []
-            seen_continue = False
-
-            for st in blk.statements:
-                if seen_continue:
-                    continue
-                if st.keyword == "Continue":
-                    seen_continue = True
-                    new_stmts.append(st)
-                    continue
-
-                if st.keyword == "BaseType":
-                    is_exact = st.operator in ("==", "=")
-                    valid_vals: list[str] = []
-                    valid_qflags: list[bool] = []
-                    for val, qf in zip(st.values, st.quoted_flags, strict=False):
-                        if val in self.index.dormant_or_removed_basetypes:
-                            if val not in healed:
-                                healed.append(val)
-                            continue
-                        ok = (
-                            val in self.index.basetype_to_classes
-                            if is_exact
-                            else any(val in bt for bt in self.index.basetype_to_classes)
-                        )
-                        if ok:
-                            valid_vals.append(val)
-                            valid_qflags.append(qf)
-                        else:
-                            if val not in healed:
-                                healed.append(val)
-                    if not valid_vals:
-                        drop_entire_block = True
-                        break
-                    st.values = valid_vals
-                    st.quoted_flags = valid_qflags
-                    new_stmts.append(st)
-                    continue
-
-                if st.keyword == "Class":
-                    is_exact = st.operator in ("==", "=")
-                    valid_c: list[str] = []
-                    valid_cq: list[bool] = []
-                    for val, qf in zip(st.values, st.quoted_flags, strict=False):
-                        mapped = (
-                            self.index.internal_only_class_ids.get(val, val) if is_exact else val
-                        )
-                        ok = (
-                            mapped in self.index.valid_filter_classes
-                            if is_exact
-                            else any(mapped in fc for fc in self.index.valid_filter_classes)
-                        )
-                        if ok:
-                            valid_c.append(mapped)
-                            valid_cq.append(qf)
-                        else:
-                            if val not in healed:
-                                healed.append(val)
-                    if not valid_c:
-                        drop_entire_block = True
-                        break
-                    st.values = valid_c
-                    st.quoted_flags = valid_cq
-                    new_stmts.append(st)
-                    continue
-
-                if st.keyword == "SetFontSize" and st.values and st.values[0].lstrip("-").isdigit():
-                    st.values = [str(max(18, min(45, int(st.values[0]))))]
-
-                if (
-                    st.keyword == "HasExplicitMod"
-                    and st.operator
-                    and st.values
-                    and st.values[0].isdigit()
-                ):
-                    st.first_value_col = st.operator_end_col
-
-                new_stmts.append(st)
-
-            if not drop_entire_block:
-                blk.statements = new_stmts
-                blk.block_index = len(kept_blocks)
-                kept_blocks.append(blk)
-
-        parsed.blocks = kept_blocks
+        _fixes, healed, _pruned = _heal_parsed_filter_detailed(parsed, self.index)
         return healed
 
     def restyle_and_heal(
@@ -359,7 +896,12 @@ class NeverSinkAdapter:
         inject_055_overrides: bool = True,
         league: str = DEFAULT_LEAGUE,
         use_live_economy: bool = False,
+        pob_code: str | None = None,
+        pob_codes: Sequence[str] | None = None,
+        pob_slot: str | None = None,
+        pob_slots: Sequence[str] | None = None,
         build_context: BuildFilterContext | None = None,
+        build_contexts: Sequence[BuildFilterContext] | None = None,
         filter_name: str = "poe2brain_neversink_healed",
         output_path: Path | None = None,
     ) -> FilterCompileResult:
@@ -383,7 +925,17 @@ class NeverSinkAdapter:
         else:
             resolved_theme = None
 
-        parsed = parse_filter_text(raw_text)
+        resolved_build_ctx = self.generator._resolve_combined_build_context(
+            build_context=build_context,
+            build_contexts=build_contexts,
+            pob_code=pob_code,
+            pob_codes=pob_codes,
+            pob_slot=pob_slot,
+            pob_slots=pob_slots,
+        )
+
+        syntax_clean = _repair_raw_syntax_lines(raw_text, [])
+        parsed = parse_filter_text(syntax_clean)
         healed_items = self.heal_parsed_filter(parsed)
 
         if resolved_theme is not None:
@@ -407,7 +959,7 @@ class NeverSinkAdapter:
             ov_text_blocks = self.generator.build_poe2_override_blocks(
                 active_theme,
                 strictness=strict_tier,
-                build_context=build_context,
+                build_context=resolved_build_ctx,
                 sound_pack=sound_pack,
                 require_custom_sounds=require_custom_sounds,
                 prices_ex=prices_ex,
@@ -434,6 +986,8 @@ class NeverSinkAdapter:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(compiled_text, encoding="utf-8")
             out_dir = output_path.parent
+            if sound_pack is not None and not (out_dir / sound_pack.pack_id).is_dir():
+                out_dir = Path(sound_pack.pack_dir).parent
             written_path_str = str(output_path)
         elif sound_pack is not None:
             out_dir = Path(sound_pack.pack_dir).parent
@@ -450,7 +1004,7 @@ class NeverSinkAdapter:
             filter_text=compiled_text,
             filter_path=written_path_str,
             validation=report,
-            build_context=build_context,
+            build_context=resolved_build_ctx,
             healed_basetypes=healed_items,
             injected_override_blocks=injected_count,
         )

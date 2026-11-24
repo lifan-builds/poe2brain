@@ -5,6 +5,7 @@ from poe2brain.filters.generator import (
     STRICTNESS_POLICIES,
     FilterGenerator,
     extract_build_filter_context,
+    merge_build_filter_contexts,
 )
 from poe2brain.filters.grammar import (
     POE1_BLOCKED_CONDITIONS,
@@ -21,27 +22,52 @@ from poe2brain.filters.grammar import (
     parse_filter_text,
     to_filter_class,
 )
-from poe2brain.filters.neversink import NeverSinkAdapter, map_neversink_meta_to_semantic_tier
+from poe2brain.filters.neversink import (
+    NeverSinkAdapter,
+    heal_filter_text,
+    map_neversink_meta_to_semantic_tier,
+)
 from poe2brain.filters.preview import (
     detect_poe2_filter_dir,
     install_filter_bundle,
     render_filter_preview_html,
 )
-from poe2brain.filters.soundpacks import SoundPackGenerator, synthesize_tier_waveform
+from poe2brain.filters.soundpacks import (
+    WARM_NIGHT_DEFAULT_LOWPASS_HZ,
+    SoundPackGenerator,
+    apply_lowpass_filter,
+    detect_rhythmic_pulses,
+    measure_high_frequency_energy_ratio,
+    synthesize_tier_waveform,
+)
 from poe2brain.filters.themes import (
     BUILTIN_THEME_PRESETS,
+    audit_theme_cvd,
     compose_theme,
+    compute_cie_delta_e,
     compute_wcag_contrast,
     ensure_wcag_contrast,
     get_visual_theme,
     list_visual_themes,
+    rgb_to_cielab,
+    simulate_cvd_color,
 )
 from poe2brain.filters.validator import FilterValidator
+from poe2brain.models.filters import (
+    ColorVisionDeficiency,
+    CvdPairSeparation,
+    CvdThemeAuditReport,
+    FilterHealReport,
+)
 
 __all__ = [
     "BUILTIN_THEME_PRESETS",
+    "ColorVisionDeficiency",
+    "CvdPairSeparation",
+    "CvdThemeAuditReport",
     "FilterGamedataIndex",
     "FilterGenerator",
+    "FilterHealReport",
     "FilterValidator",
     "NeverSinkAdapter",
     "OFFLINE_BASELINE_EXALTED",
@@ -56,18 +82,28 @@ __all__ = [
     "VALID_COLORS",
     "VALID_NAMED_SOUNDS",
     "VALID_SHAPES",
+    "WARM_NIGHT_DEFAULT_LOWPASS_HZ",
+    "apply_lowpass_filter",
+    "audit_theme_cvd",
     "compose_theme",
+    "compute_cie_delta_e",
     "compute_wcag_contrast",
     "detect_poe2_filter_dir",
+    "detect_rhythmic_pulses",
     "ensure_wcag_contrast",
     "extract_build_filter_context",
     "get_filter_gamedata_index",
     "get_visual_theme",
+    "heal_filter_text",
     "install_filter_bundle",
     "list_visual_themes",
     "map_neversink_meta_to_semantic_tier",
+    "measure_high_frequency_energy_ratio",
+    "merge_build_filter_contexts",
     "parse_filter_text",
     "render_filter_preview_html",
+    "rgb_to_cielab",
+    "simulate_cvd_color",
     "synthesize_tier_waveform",
     "to_filter_class",
 ]

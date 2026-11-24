@@ -9,7 +9,11 @@ from typing import Any
 from poe2brain.models.builds import SlotStatWeights
 from poe2brain.models.items import ItemRarity, ModDomain, ParsedItem
 from poe2brain.trade.ee2_bundle import EE2Bundle, get_default_bundle
-from poe2brain.trade.item_parser import resolve_slot_or_category, resolve_trade_category
+from poe2brain.trade.item_parser import (
+    extract_unrevealed_desecrated_sides,
+    resolve_slot_or_category,
+    resolve_trade_category,
+)
 
 PLACEHOLDER_MAP: tuple[tuple[tuple[int, ...], ...], ...] = (
     ((),),
@@ -41,6 +45,63 @@ WORD_TOKEN_RE = re.compile(r"[a-z0-9+]+")
 STAT_ID_RE = re.compile(
     r"^(?:explicit|implicit|fractured|desecrated|rune|enchant|crafted|sanctum|skill|pseudo)\."
 )
+DISCRETE_EXACT_MIN_RE = re.compile(
+    r"(?:\bLevel of all\b|\badditional Arrows?\b|\badditional Projectiles?\b"
+    r"|\bCharm Slots?\b|\bSpirit per Socket\b|\badditional Modifiers?\b)",
+    re.I,
+)
+TRAILING_PAREN_TAG_RE = re.compile(r"\s*\([^)]+\)\s*$")
+
+_CASEFOLD_BUNDLE_CACHE: dict[
+    int,
+    tuple[
+        dict[str, list[tuple[dict[str, Any], dict[str, Any]]]],
+        dict[str, dict[str, list[str]]],
+    ],
+] = {}
+
+
+def _get_casefold_indexes(
+    bundle: EE2Bundle,
+) -> tuple[
+    dict[str, list[tuple[dict[str, Any], dict[str, Any]]]],
+    dict[str, dict[str, list[str]]],
+]:
+    bid = id(bundle)
+    cached = _CASEFOLD_BUNDLE_CACHE.get(bid)
+    if cached is not None:
+        return cached
+
+    ee2_cf: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
+    for m_str, pairs in bundle.stat_by_match_str.items():
+        low = m_str.strip().lower()
+        ee2_cf.setdefault(low, []).extend(pairs)
+        stripped = TRAILING_PAREN_TAG_RE.sub("", m_str).strip().lower()
+        if stripped and stripped != low:
+            ee2_cf.setdefault(stripped, []).extend(pairs)
+
+    for ref_str, st_obj in bundle.stat_by_ref.items():
+        ref_low = ref_str.strip().lower()
+        matchers = st_obj.get("matchers") or [{}]
+        ee2_cf.setdefault(ref_low, []).append((st_obj, matchers[0] if matchers else {}))
+
+    off_cf: dict[str, dict[str, list[str]]] = {}
+    for dom, dom_map in bundle.official_stats_by_domain.items():
+        d_cf: dict[str, list[str]] = {}
+        for txt, ids in dom_map.items():
+            low_t = txt.strip().lower()
+            d_cf.setdefault(low_t, []).extend(i for i in ids if i not in d_cf.get(low_t, ()))
+            stripped_t = TRAILING_PAREN_TAG_RE.sub("", txt).strip().lower()
+            if stripped_t and stripped_t != low_t:
+                d_cf.setdefault(stripped_t, []).extend(
+                    i for i in ids if i not in d_cf.get(stripped_t, ())
+                )
+        off_cf[dom] = d_cf
+
+    res = (ee2_cf, off_cf)
+    _CASEFOLD_BUNDLE_CACHE[bid] = res
+    return res
+
 
 BUILTIN_IGNORED_SKILLS = frozenset(
     {
@@ -134,6 +195,7 @@ class MatchedStat:
     better: int = 1
     ambiguous_local_global: bool = False
     matched_template: str = ""
+    discrete_exact: bool = False
 
     def to_trade_stat_group(
         self,
@@ -145,10 +207,11 @@ class MatchedStat:
         """Convert to a `trade2` filter or `count min:1` group when local/global collide."""
         f_min = min_override
         f_max = max_override
+        eff_fuzzy = 0.0 if self.discrete_exact else fuzzy_pct
         if f_min is None and f_max is None and self.value is not None and self.option_value is None:
             raw_v = self.value
-            if fuzzy_pct > 0:
-                delta = abs(raw_v) * (fuzzy_pct / 100.0)
+            if eff_fuzzy > 0:
+                delta = abs(raw_v) * (eff_fuzzy / 100.0)
                 lo = raw_v - delta
                 hi = raw_v + delta
                 f_min = round(lo, 2) if self.is_decimal else math.floor(lo)
@@ -158,7 +221,7 @@ class MatchedStat:
 
             if self.better == -1 and min_override is None:
                 f_max = (
-                    math.ceil(raw_v + (abs(raw_v) * fuzzy_pct / 100.0))
+                    math.ceil(raw_v + (abs(raw_v) * eff_fuzzy / 100.0))
                     if not self.is_decimal
                     else round(raw_v, 2)
                 )
@@ -305,8 +368,10 @@ def match_mod_line(
     if clean in BUILTIN_IGNORED_SKILLS:
         return None
 
+    ee2_cf, off_cf = _get_casefold_indexes(bundle)
+
     for cand_str, active_vals in _generate_placeholder_candidates(clean):
-        ee2_hits = bundle.stat_by_match_str.get(cand_str)
+        ee2_hits = bundle.stat_by_match_str.get(cand_str) or ee2_cf.get(cand_str.lower())
         if ee2_hits:
             for stat_obj, matcher in ee2_hits:
                 trade_meta = stat_obj.get("trade") or {}
@@ -357,6 +422,7 @@ def match_mod_line(
                     better=int(stat_obj.get("better", 1)),
                     ambiguous_local_global=len(final_ids) > 1,
                     matched_template=cand_str,
+                    discrete_exact=bool(DISCRETE_EXACT_MIN_RE.search(stat_obj["ref"])),
                 )
 
         # Secondary fallback in official GGG `/api/trade2/data/stats`
@@ -378,9 +444,10 @@ def match_mod_line(
         ]
         for sdom in search_doms:
             dom_dict = bundle.official_stats_by_domain.get(sdom)
-            if not dom_dict:
-                continue
-            off_ids = dom_dict.get(cand_str)
+            cf_dict = off_cf.get(sdom)
+            off_ids = (dom_dict.get(cand_str) if dom_dict else None) or (
+                cf_dict.get(cand_str.lower()) if cf_dict else None
+            )
             if off_ids:
                 val = _avg_roll_values([v for v, _ in active_vals]) if active_vals else None
                 is_dp = any(dec for _, dec in active_vals)
@@ -392,6 +459,7 @@ def match_mod_line(
                     is_decimal=is_dp,
                     ambiguous_local_global=len(off_ids) > 1,
                     matched_template=cand_str,
+                    discrete_exact=bool(DISCRETE_EXACT_MIN_RE.search(cand_str)),
                 )
 
     return None
@@ -664,6 +732,15 @@ def resolve_natural_stat(
     return combined[:limit]
 
 
+def _normalize_trade2_base_type(base_type: str, trade_category: str | None) -> str:
+    clean = base_type.strip()
+    if trade_category == "map.tablet" or clean.endswith("Precursor Tablet"):
+        if clean.lower() == "precursor tablet":
+            return "Irradiated Tablet"
+        return re.sub(r"\s+Precursor\s+Tablet$", " Tablet", clean, flags=re.I)
+    return clean
+
+
 def build_item_trade_query(
     item: ParsedItem,
     *,
@@ -695,34 +772,84 @@ def build_item_trade_query(
         "stats": [{"type": "and", "filters": and_filters}],
     }
 
+    explicit_like_count = sum(
+        1
+        for m in item.mods
+        if m.domain
+        in (ModDomain.EXPLICIT, ModDomain.FRACTURED, ModDomain.DESECRATED, ModDomain.CRAFTED)
+    )
+
     if item.rarity == ItemRarity.UNIQUE and item.identified and item.name:
         query["name"] = item.name
         if item.base_type and item.base_type != item.name:
             query["type"] = item.base_type
         is_foil = "Foil Unique" in item.raw_text
         _set_filter("type_filters", "rarity", {"option": "uniquefoil" if is_foil else "unique"})
+        if item.twice_corrupted:
+            _set_filter("misc_filters", "twice_corrupted", {"option": "true"})
+        elif item.corrupted:
+            _set_filter("misc_filters", "corrupted", {"option": "true"})
+        else:
+            _set_filter("misc_filters", "corrupted", {"option": "false"})
     elif item.rarity == ItemRarity.GEM:
-        if item.name:
-            query["type"] = item.name
+        if item.name or item.base_type:
+            query["type"] = item.name or item.base_type
         if trade_category:
             _set_filter("type_filters", "category", {"option": trade_category})
         if item.gem_level:
             _set_filter("misc_filters", "gem_level", {"min": item.gem_level})
         if item.quality >= 10:
             _set_filter("type_filters", "quality", {"min": item.quality})
-        if item.gem_sockets and item.gem_sockets >= 4:
+        if item.gem_sockets is not None and item.gem_sockets >= 2:
             _set_filter("misc_filters", "gem_sockets", {"min": item.gem_sockets})
+        if item.twice_corrupted:
+            _set_filter("misc_filters", "twice_corrupted", {"option": "true"})
+        else:
+            _set_filter(
+                "misc_filters", "corrupted", {"option": "true" if item.corrupted else "false"}
+            )
+    elif item.rarity == ItemRarity.CURRENCY:
+        if item.base_type:
+            query["type"] = item.base_type
+        if item.area_level:
+            if trade_category:
+                _set_filter("type_filters", "category", {"option": trade_category})
+            _set_filter("misc_filters", "area_level", {"min": item.area_level})
+        elif item.gem_level and item.item_class and item.item_class.startswith("Uncut "):
+            _set_filter("misc_filters", "gem_level", {"min": item.gem_level})
     else:
         if trade_category:
             _set_filter("type_filters", "category", {"option": trade_category})
-        elif item.base_type:
-            query["type"] = item.base_type
-        if item.rarity in (ItemRarity.NORMAL, ItemRarity.MAGIC, ItemRarity.RARE):
+        if (
+            not trade_category
+            or not item.identified
+            or trade_category in ("map.tablet", "map.barya", "map.ultimatum", "map.bosskey")
+        ) and item.base_type:
+            query["type"] = _normalize_trade2_base_type(item.base_type, trade_category)
+
+        if not item.identified:
+            if item.rarity in (
+                ItemRarity.NORMAL,
+                ItemRarity.MAGIC,
+                ItemRarity.RARE,
+                ItemRarity.UNIQUE,
+            ):
+                _set_filter("type_filters", "rarity", {"option": item.rarity.value})
+            if item.item_level:
+                _set_filter("type_filters", "ilvl", {"min": item.item_level})
+        elif item.rarity in (ItemRarity.NORMAL, ItemRarity.MAGIC, ItemRarity.RARE):
             _set_filter("type_filters", "rarity", {"option": "nonunique"})
+
         if item.waystone_tier:
             _set_filter("map_filters", "map_tier", {"min": item.waystone_tier})
         if item.waystone_revives is not None:
             _set_filter("map_filters", "map_revives", {"min": item.waystone_revives})
+        if item.waystone_drop_chance_pct is not None and item.waystone_drop_chance_pct > 0:
+            _set_filter(
+                "map_filters",
+                "map_bonus",
+                {"min": max(0, int(math.floor(item.waystone_drop_chance_pct * roll_tolerance)))},
+            )
         if item.area_level:
             _set_filter("misc_filters", "area_level", {"min": item.area_level})
 
@@ -730,24 +857,56 @@ def build_item_trade_query(
         _set_filter("misc_filters", "identified", {"option": "false"})
         if item.unidentified_tier:
             _set_filter("misc_filters", "unidentified_tier", {"min": item.unidentified_tier})
-    if not item.corrupted and item.rarity in (ItemRarity.NORMAL, ItemRarity.MAGIC, ItemRarity.RARE):
-        _set_filter("misc_filters", "corrupted", {"option": "false"})
-    if not item.mirrored and item.rarity in (ItemRarity.NORMAL, ItemRarity.MAGIC, ItemRarity.RARE):
-        _set_filter("misc_filters", "mirrored", {"option": "false"})
+    if item.rarity in (ItemRarity.NORMAL, ItemRarity.MAGIC, ItemRarity.RARE):
+        if item.twice_corrupted:
+            _set_filter("misc_filters", "twice_corrupted", {"option": "true"})
+        elif item.corrupted:
+            _set_filter("misc_filters", "corrupted", {"option": "true"})
+        else:
+            _set_filter("misc_filters", "corrupted", {"option": "false"})
+        if not item.mirrored:
+            _set_filter("misc_filters", "mirrored", {"option": "false"})
     if item.sanctified:
         _set_filter("misc_filters", "sanctified", {"option": "true"})
+    if item.fractured and (not collapse_to_explicit or explicit_like_count <= 4):
+        _set_filter("misc_filters", "fractured_item", {"option": "true"})
+    if item.veiled_desecrated:
+        _set_filter("misc_filters", "veiled", {"option": "true"})
+        desec_p, desec_s = extract_unrevealed_desecrated_sides(item.raw_text)
+        if desec_p > 0:
+            and_filters.append(
+                {
+                    "id": "pseudo.pseudo_number_of_desecrated_prefix_mods",
+                    "value": {"min": desec_p},
+                }
+            )
+        if desec_s > 0:
+            and_filters.append(
+                {
+                    "id": "pseudo.pseudo_number_of_desecrated_suffix_mods",
+                    "value": {"min": desec_s},
+                }
+            )
     if max_price_exalted is not None:
         _set_filter("trade_filters", "price", {"max": max_price_exalted})
 
     for mod in item.mods:
         if mod.domain == ModDomain.RUNE and item.rarity != ItemRarity.UNIQUE:
             continue
+        # Non-unique Waystones are valued by map_tier / map_bonus / Delirious enchants rather
+        # than requiring the exact random combination of 6 monster/curse affixes.
+        if (
+            trade_category == "map.waystone"
+            and item.rarity != ItemRarity.UNIQUE
+            and mod.domain == ModDomain.EXPLICIT
+        ):
+            continue
         # On Uniques, skip fixed non-variable mods unless roll_ranges indicate variability
         if (
             item.rarity == ItemRarity.UNIQUE
             and mod.roll_ranges
             and all(r.min == r.max for r in mod.roll_ranges)
-            and mod.domain != ModDomain.ENCHANT
+            and mod.domain not in (ModDomain.ENCHANT, ModDomain.CORRUPTED)
         ):
             continue
 
@@ -756,11 +915,20 @@ def build_item_trade_query(
             if (trade_category == "sanctum.relic" and mod.domain == ModDomain.EXPLICIT)
             else mod.domain.value
         )
+        preserve_fractured_stat = mod.domain == ModDomain.FRACTURED and (
+            not collapse_to_explicit
+            or explicit_like_count <= 2
+            or bool(DISCRETE_EXACT_MIN_RE.search(mod.raw_text))
+        )
         matched = match_mod_line(
             mod.raw_text,
             domain=match_dom,
             bundle=bundle,
-            collapse_to_explicit=collapse_to_explicit and item.rarity != ItemRarity.UNIQUE,
+            collapse_to_explicit=(
+                collapse_to_explicit
+                and item.rarity != ItemRarity.UNIQUE
+                and not preserve_fractured_stat
+            ),
         )
         if not matched:
             continue
@@ -790,9 +958,7 @@ def cap_unauth_stat_groups(
 
     Preserves index 0 (fracture-capable opener) and index -1 (Desecrated finisher) first.
     """
-    seen_and_ids = {
-        str(f.get("id")) for f in and_filters if isinstance(f, Mapping) and f.get("id")
-    }
+    seen_and_ids = {str(f.get("id")) for f in and_filters if isinstance(f, Mapping) and f.get("id")}
     while (1 if and_filters else 0) + len(extra_groups) + reserved_groups > max_non_empty_groups:
         if not extra_groups:
             break

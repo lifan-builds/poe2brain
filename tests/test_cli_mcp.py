@@ -74,7 +74,7 @@ def test_skill_readme_mcp_and_cli_1_to_1_parity() -> None:
 
     skill_tools = set(re.findall(r"\|\s*`?(poe2_[a-z0-9_]+)`?\s*\|", skill_text))
     readme_tools = set(re.findall(r"\|\s*`?(poe2_[a-z0-9_]+)`?\s*\|", readme_text))
-    assert len(skill_tools) == 31
+    assert len(skill_tools) == 36
     assert skill_tools == readme_tools
 
     registered_tools = {t.name for t in mcp_mod.mcp._tool_manager.list_tools()}
@@ -96,6 +96,10 @@ def test_skill_readme_mcp_and_cli_1_to_1_parity() -> None:
         assert res.exit_code == 0, f"Failed --help for group {group}: {res.stdout}"
 
     for sub_args in (
+        ["wiki", "regex", "--help"],
+        ["pob", "compare", "--help"],
+        ["pob", "hc-audit", "--help"],
+        ["trade", "triage", "--help"],
         ["ninja", "snapshots", "--help"],
         ["ninja", "search", "--help"],
         ["ninja", "character", "--help"],
@@ -103,6 +107,7 @@ def test_skill_readme_mcp_and_cli_1_to_1_parity() -> None:
         ["filter", "generate", "--help"],
         ["filter", "restyle", "--help"],
         ["filter", "validate", "--help"],
+        ["filter", "heal", "--help"],
     ):
         sub_res = runner.invoke(app, sub_args)
         assert sub_res.exit_code == 0, f"Failed --help for {sub_args}: {sub_res.stdout}"
@@ -179,6 +184,63 @@ def test_cli_wiki_and_trade_parse(isolated_cli_env: dict[str, str]) -> None:
     assert necro_err["ok"] is False
     assert necro_err["error_type"] == "LookupError"
     assert "Necromancer" in necro_err["error"]
+
+    # Waystone & Precursor Tablet <=50-char stash regex compiler + clipboard check
+    sample_ws = (
+        "Item Class: Waystones\nRarity: Rare\nDoomed Trail\nWaystone (Tier 15)\n--------\n"
+        "Waystone Tier: 15\nRevives Available: 0 (augmented)\n"
+        "Waystone Drop Chance: +185% (augmented)\n--------\n"
+        "Players have 36% less Recovery Rate of Life and Energy Shield\n"
+        "Area has patches of Mana Siphoning Ground\n"
+    )
+    rx_res = runner.invoke(
+        app,
+        [
+            "wiki",
+            "regex",
+            "--archetype",
+            "ci,archmage_mom,crit",
+            "--min-waystone-drop",
+            "150",
+            "--min-pack-size",
+            "20",
+            "--item-text",
+            sample_ws,
+            "--json",
+        ],
+    )
+    assert rx_res.exit_code == 0, rx_res.stdout
+    rx_data = json.loads(rx_res.stdout)
+    for rx_key in ("brick_regex", "safe_runnable_regex", "juicing_regex", "tablet_regex"):
+        assert rx_data[rx_key]["char_length"] <= 50
+        assert rx_data[rx_key]["within_client_limit"] is True
+    assert rx_data["item_check"]["is_brick"] is True
+    assert rx_data["item_check"]["matches_juicing_regex"] is True
+    assert runner.invoke(app, ["wiki", "regex", "--archetype", "ci"]).exit_code == 0
+
+    # Multi-item dump triage (both blank-line & zero-blank-line header boundaries)
+    multi_dump = (
+        f"{SAMPLE_RARE_WAND_CTRL_C.strip()}\n"
+        "Item Class: Body Armours\nRarity: Rare\nHexer's Robe\n--------\n"
+        "Item Level: 82\n--------\nUnidentified (Tier 4)\n\n"
+        "Rarity: Gem\nCast on Shock\n--------\nLevel: 20 (Max)\n--------\nSockets: G G G G G\n"
+        "Item Class: Socketable\nRarity: Currency\nSoul Core of Azcapa\n--------\nStack Size: 3/10"
+    )
+    triage_res = runner.invoke(
+        app,
+        ["trade", "triage", "--text", multi_dump, "--no-live-trade", "--json"],
+    )
+    assert triage_res.exit_code == 0, triage_res.stdout
+    triage_data = json.loads(triage_res.stdout)
+    assert triage_data["total_items"] == 4
+    buckets = {e["bucket"] for e in triage_data["entries"]}
+    assert "craft_finish_ev" in buckets
+    assert "high_variance_id_or_unveil" in buckets
+    assert triage_data["entries"][3]["stack_size"] == 3
+    assert (
+        runner.invoke(app, ["trade", "triage", "--text", multi_dump, "--no-live-trade"]).exit_code
+        == 0
+    )
 
 
 def test_cli_craft_odds_plan_and_removed_lever_structured_error(
@@ -282,6 +344,36 @@ def test_cli_craft_odds_plan_and_removed_lever_structured_error(
     assert prof_data["profitable_count"] >= 1
     assert prof_data["top_overall"][0]["expected_roi_pct"] > 0.0
     assert len(prof_data["top_overall"][0]["execution_steps"]) >= 3
+
+    # 5. Mid-craft collateral protection (`--protect-existing`) on half-finished Rare
+    half_finished = (
+        "Item Class: Body Armours\nRarity: Rare\nVortex Mantle\nHexer's Robe\n--------\n"
+        "Item Level: 82\n--------\n"
+        "+49 to Spirit\n108% increased Energy Shield\n+9 to maximum Life\n"
+        "+45% to Cold Resistance\n"
+    )
+    prot_res = runner.invoke(
+        app,
+        [
+            "craft",
+            "odds",
+            "--base",
+            "Hexer's Robe",
+            "--ilvl",
+            "82",
+            "--target",
+            "IncreasedLife9",
+            "--item-text",
+            half_finished,
+            "--protect-existing",
+            "--offline-prices",
+            "--json",
+        ],
+    )
+    assert prot_res.exit_code == 0, prot_res.stdout
+    prot_data = json.loads(prot_res.stdout)
+    assert prot_data["protect_existing_targets"] is True
+    assert len(prot_data["evaluations"]) >= 1
 
 
 def test_cli_meta_and_arbitrage_commands_mocked(
@@ -464,6 +556,61 @@ def test_cli_meta_and_arbitrage_commands_mocked(
     )
     assert arb_human.exit_code == 0, arb_human.stdout
 
+    # Capital ceiling + compounding ladder mode (`--ladder-start-exalted`, `--gold-budget`)
+    cap_res = runner.invoke(
+        app,
+        [
+            "econ",
+            "arbitrage",
+            "--no-live-books",
+            "--max-investment-divine",
+            "10.0",
+            "--max-gold",
+            "15000",
+            "--json",
+        ],
+    )
+    assert cap_res.exit_code == 0, cap_res.stdout
+    cap_data = json.loads(cap_res.stdout)
+    assert cap_data["max_investment_divine"] == 10.0
+    assert cap_data["max_gold_per_cycle"] == 15000
+
+    ladder_res = runner.invoke(
+        app,
+        [
+            "econ",
+            "arbitrage",
+            "--ladder-start-exalted",
+            "4000",
+            "--gold-budget",
+            "80000",
+            "--ladder-target-divine",
+            "15",
+            "--json",
+        ],
+    )
+    assert ladder_res.exit_code == 0, ladder_res.stdout
+    ladder_data = json.loads(ladder_res.stdout)
+    assert ladder_data["starting_exalted"] == 4000.0
+    assert ladder_data["final_bankroll_exalted"] > 4000.0
+    assert len(ladder_data["rungs"]) >= 1
+    assert (
+        runner.invoke(
+            app,
+            [
+                "econ",
+                "arbitrage",
+                "--ladder-start-exalted",
+                "4000",
+                "--gold-budget",
+                "80000",
+                "--ladder-target-divine",
+                "15",
+            ],
+        ).exit_code
+        == 0
+    )
+
 
 def test_cross_process_cli_pob_slot_persistence(isolated_cli_env: dict[str, str]) -> None:
     def _run_poe2(*args: str) -> dict[str, object]:
@@ -531,6 +678,35 @@ def test_cross_process_cli_pob_slot_persistence(isolated_cli_env: dict[str, str]
     )
     assert float(diff["full_dps_delta"]) > 0.0  # type: ignore[arg-type]
     assert float(diff["dps_per_exalted"]) > 0.0  # type: ignore[arg-type]
+
+    # Process 4: Equip wand into 'main', then compare 'ref' vs 'main', run hc-audit, & wiki regex
+    _run_poe2(
+        "pob",
+        "equip",
+        "--equip-slot",
+        "Weapon 1",
+        "--item-text",
+        SAMPLE_RARE_WAND_CTRL_C,
+        "--slot",
+        "main",
+    )
+    compared = _run_poe2("pob", "compare", "--slot-a", "ref", "--slot-b", "main", "--dewater")
+    assert compared["slot_a"] == "ref"
+    assert compared["slot_b"] == "main"
+    assert compared["dewatered"] is True
+    assert float(compared["effective_dps_delta"]) > 0.0  # type: ignore[arg-type]
+    assert int(compared["respec_estimate"]["gold_per_passive_point"]) > 0  # type: ignore[index]
+
+    hc_audit = _run_poe2("pob", "hc-audit", "--slot", "main", "--top-nodes", "3")
+    assert hc_audit["slot_name"] == "main"
+    assert "physical" in hc_audit["max_hits"]  # type: ignore[operator]
+    assert isinstance(hc_audit["rip_risks"], list)
+
+    ws_rx = _run_poe2("wiki", "regex", "--slot", "main")
+    assert ws_rx["slot"] == "main"
+    assert "archmage_mom" in ws_rx["detected_archetypes"]  # type: ignore[operator]
+    assert int(ws_rx["brick_regex"]["char_length"]) <= 50  # type: ignore[index]
+    assert int(ws_rx["safe_runnable_regex"]["char_length"]) <= 50  # type: ignore[index]
 
 
 def test_cli_ninja_and_filter_commands_and_structured_errors(
@@ -624,6 +800,55 @@ def test_cli_ninja_and_filter_commands_and_structured_errors(
     assert (
         runner.invoke(app, ["ninja", "search", "--ascendancy", "Martial Artist", "--limit", "3"])
         .exit_code
+        == 0
+    )
+
+    ssf_res = runner.invoke(
+        app,
+        [
+            "ninja",
+            "search",
+            "--unique",
+            "Svalinn",
+            "--exclude-unique",
+            "Temporalis,Mageblood",
+            "--max-uniques",
+            "5",
+            "--ssf-viable",
+            "--limit",
+            "5",
+            "--json",
+        ],
+    )
+    assert ssf_res.exit_code == 0, ssf_res.stdout
+    ssf_data = json.loads(ssf_res.stdout)
+    assert ssf_data["matched_builds"] >= 1
+    for row in ssf_data["builds"]:
+        assert "Temporalis" not in row["unique_items"]
+        assert "Mageblood" not in row["unique_items"]
+        assert len(row["unique_items"]) <= 5
+
+    tl_res = runner.invoke(
+        app,
+        [
+            "ninja",
+            "character",
+            "nobody-0000",
+            "--name",
+            "GhostChar999",
+            "--probe-timeline",
+            "--json",
+        ],
+    )
+    assert tl_res.exit_code == 0, tl_res.stdout
+    tl_data = json.loads(tl_res.stdout)
+    assert tl_data["account"] == "nobody-0000"
+    assert len(tl_data["probed_points"]) >= 2
+    assert (
+        runner.invoke(
+            app,
+            ["ninja", "character", "nobody-0000", "--name", "GhostChar999", "--probe-timeline"],
+        ).exit_code
         == 0
     )
 
@@ -807,6 +1032,56 @@ def test_cli_ninja_and_filter_commands_and_structured_errors(
     assert bad_report["valid"] is False
     assert bad_report["error_count"] >= 2
 
+    # 5. Filter Doctor (`poe2 filter heal`) + CVD / Warm-Night / Callout flags
+    broken_poe1_filter = (
+        'Show\n\tClass == "Body Armour"\n\tBaseType "Expert Hexer\'s Robe" "Orb of Alteration"\n'
+        '\tHasExplicitMod >= 2 "Merciless"\n\tSetFontSize 55\n\tContinue\n'
+        "\tSetTextColor 255 255 255 255\n"
+        'Show\n\tMapTier >= 15\n\tClass "Map"\n\tSetFontSize 40\n'
+        'Show\n\tSocketGroup "RGB"\n\tLinkedSockets >= 5\n\tSetFontSize 42\n'
+    )
+    doctor_out = out_dir / "doctored.filter"
+    heal_res = runner.invoke(
+        app,
+        ["filter", "heal", broken_poe1_filter, "--out", str(doctor_out), "--json"],
+    )
+    assert heal_res.exit_code == 0, heal_res.stdout
+    heal_data = json.loads(heal_res.stdout)
+    assert heal_data["valid"] is True
+    assert heal_data["validation"]["error_count"] == 0
+    assert heal_data["original_error_count"] >= 4
+    assert heal_data["pruned_blocks"] >= 1
+    assert doctor_out.is_file()
+    assert runner.invoke(app, ["filter", "heal", broken_poe1_filter]).exit_code == 0
+
+    cvd_warm_res = runner.invoke(
+        app,
+        [
+            "filter",
+            "generate",
+            "--strictness",
+            "strict",
+            "--cvd-safe",
+            "deuteranopia",
+            "--warm-night",
+            "--callout",
+            "s_plus=Divine drop!",
+            "--sound-dir",
+            str(out_dir / "warm_snd"),
+            "--offline",
+            "--json",
+        ],
+    )
+    assert cvd_warm_res.exit_code == 0, cvd_warm_res.stdout
+    cvd_warm_data = json.loads(cvd_warm_res.stdout)
+    assert cvd_warm_data["validation"]["valid"] is True
+    assert cvd_warm_data["validation"]["error_count"] == 0
+    assert cvd_warm_data["cvd_audit"]["cvd_safe"] is True
+    assert cvd_warm_data["sound_pack"]["params"]["warm_night_mode"] is True
+    assert (
+        cvd_warm_data["sound_pack"]["clips"]["s_plus"]["hf_energy_ratio_above_2500hz"] < 0.015
+    )
+
 
 def test_cross_process_ninja_character_to_pob_and_filter_generate(
     isolated_cli_env: dict[str, str],
@@ -962,11 +1237,15 @@ async def test_mcp_server_stdio_roundtrip(
             await session.initialize()
             tools_resp = await session.list_tools()
             names = {t.name for t in tools_resp.tools}
-            assert len(names) == 31
+            assert len(names) == 36
             assert {
                 "poe2_status",
                 "poe2_inspect_ascendancy",
                 "poe2_meta_ladder",
+                "poe2_waystone_regex",
+                "poe2_pob_compare",
+                "poe2_pob_hc_audit",
+                "poe2_triage_dump",
                 "poe2_scan_craft_profit",
                 "poe2_scan_arbitrage",
                 "poe2_craft_plan",
@@ -977,6 +1256,7 @@ async def test_mcp_server_stdio_roundtrip(
                 "poe2_filter_generate",
                 "poe2_filter_restyle",
                 "poe2_filter_validate",
+                "poe2_filter_heal",
             }.issubset(names)
 
             st_res = await session.call_tool("poe2_status", {})
@@ -1040,6 +1320,99 @@ async def test_mcp_server_stdio_roundtrip(
             assert fv_json["valid"] is True
             assert fv_json["error_count"] == 0
 
+            # Exercise all 5 new Wave 9 MCP tools + enriched Journey flags over stdio
+            wr_res = await session.call_tool(
+                "poe2_waystone_regex",
+                {
+                    "archetypes": ["ci", "archmage_mom"],
+                    "min_waystone_drop_pct": 120,
+                    "min_pack_size_pct": 20,
+                },
+            )
+            wr_json = json.loads(wr_res.content[0].text)  # type: ignore[union-attr]
+            assert wr_json["brick_regex"]["char_length"] <= 50
+            assert wr_json["safe_runnable_regex"]["char_length"] <= 50
+            assert wr_json["juicing_regex"]["char_length"] <= 50
+            assert wr_json["tablet_regex"]["char_length"] <= 50
+
+            td_res = await session.call_tool(
+                "poe2_triage_dump",
+                {
+                    "items": (
+                        f"{SAMPLE_RARE_WAND_CTRL_C.strip()}\n\n"
+                        "Item Class: Socketable\nRarity: Currency\nSoul Core of Azcapa\n"
+                        "--------\nStack Size: 2/10"
+                    ),
+                    "live_trade": False,
+                },
+            )
+            td_json = json.loads(td_res.content[0].text)  # type: ignore[union-attr]
+            assert td_json["total_items"] == 2
+            assert td_json["entries"][1]["stack_size"] == 2
+
+            fh_res = await session.call_tool(
+                "poe2_filter_heal",
+                {
+                    "filter_file_or_text": (
+                        'Show\n\tClass == "Body Armour"\n'
+                        '\tBaseType "Expert Hexer\'s Robe" "Orb of Alteration"\n'
+                        '\tMapTier >= 15\n\tSetFontSize 50'
+                    )
+                },
+            )
+            fh_json = json.loads(fh_res.content[0].text)  # type: ignore[union-attr]
+            assert fh_json["valid"] is True
+            assert fh_json["validation"]["error_count"] == 0
+
+            from poe2brain.ninja import NinjaBuildsService
+
+            _, c_rows = NinjaBuildsService()._ensure_corpus_loaded()
+            monk_row = next(r for r in c_rows if r.get("ascendancy_name") == "Martial Artist")
+            lich_row = next(r for r in c_rows if r.get("ascendancy_name") == "Lich")
+
+            await session.call_tool(
+                "poe2_pob_load", {"source": monk_row["pob_code"], "slot": "mcp_p1"}
+            )
+            await session.call_tool(
+                "poe2_pob_load", {"source": lich_row["pob_code"], "slot": "mcp_p2"}
+            )
+
+            cmp_res = await session.call_tool(
+                "poe2_pob_compare",
+                {"slot_a": "mcp_p1", "slot_b": "mcp_p2", "dewater": False},
+            )
+            cmp_json = json.loads(cmp_res.content[0].text)  # type: ignore[union-attr]
+            assert cmp_json["slot_a"] == "mcp_p1"
+            assert cmp_json["slot_b"] == "mcp_p2"
+            assert "respec_estimate" in cmp_json
+
+            hca_res = await session.call_tool(
+                "poe2_pob_hc_audit",
+                {"slot": "mcp_p2", "top_nodes": 3},
+            )
+            hca_json = json.loads(hca_res.content[0].text)  # type: ignore[union-attr]
+            assert hca_json["slot_name"] == "mcp_p2"
+            assert hca_json["max_hits"]["physical"] > 0
+
+            coop_res = await session.call_tool(
+                "poe2_filter_generate",
+                {
+                    "strictness": "very_strict",
+                    "cvd_safe": "deuteranopia",
+                    "warm_night_mode": True,
+                    "custom_callouts": {"s_plus": "Split this Divine!"},
+                    "slots": ["mcp_p1", "mcp_p2"],
+                    "sound_dir": str(tmp_path / "mcp_coop_snd"),
+                    "offline": True,
+                },
+            )
+            coop_json = json.loads(coop_res.content[0].text)  # type: ignore[union-attr]
+            assert coop_json["validation"]["valid"] is True
+            assert coop_json["validation"]["error_count"] == 0
+            assert len(coop_json["build_context"]["party_members"]) == 2
+            assert coop_json["cvd_audit"]["cvd_safe"] is True
+            assert coop_json["sound_pack"]["params"]["warm_night_mode"] is True
+
             if os.environ.get("POE2_LIVE_TESTS") == "1":
                 meta_res = await session.call_tool(
                     "poe2_meta_ladder", {"league": "Forbidden Rites"}
@@ -1054,13 +1427,42 @@ async def test_mcp_server_stdio_roundtrip(
                 arb_json = json.loads(arb_res.content[0].text)  # type: ignore[union-attr]
                 assert len(arb_json["opportunities"]) >= 1
 
+                lad_res = await session.call_tool(
+                    "poe2_scan_arbitrage",
+                    {
+                        "league": "Forbidden Rites",
+                        "starting_exalted": 250.0,
+                        "gold_budget": 80000,
+                        "target_divine": 50.0,
+                    },
+                )
+                lad_json = json.loads(lad_res.content[0].text)  # type: ignore[union-attr]
+                assert lad_json["final_bankroll_divine"] >= 1.0
+                assert len(lad_json["rungs"]) >= 1
+
                 ns_res = await session.call_tool(
                     "poe2_ninja_search",
-                    {"ascendancy": "Martial Artist", "limit": 3},
+                    {
+                        "ascendancy": "Martial Artist",
+                        "ssf_viable_first": True,
+                        "exclude_uniques": ["Temporalis"],
+                        "limit": 3,
+                    },
                 )
                 ns_json = json.loads(ns_res.content[0].text)  # type: ignore[union-attr]
-                assert ns_json["matched_builds"] >= 3
+                assert ns_json["matched_builds"] >= 1
                 top_char = ns_json["builds"][0]
+
+                tl_mcp_res = await session.call_tool(
+                    "poe2_ninja_character",
+                    {
+                        "account_or_url": top_char["account"],
+                        "character": top_char["character"],
+                        "probe_timeline": True,
+                    },
+                )
+                tl_mcp_json = json.loads(tl_mcp_res.content[0].text)  # type: ignore[union-attr]
+                assert len(tl_mcp_json["probed_points"]) >= 2
 
                 nc_res = await session.call_tool(
                     "poe2_ninja_character",

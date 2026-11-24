@@ -153,6 +153,9 @@ class SoundSynthesisParams(Poe2Model):
     punch: float = Field(default=1.0, ge=0.25, le=2.5)
     reverb_tail: float = Field(default=1.0, ge=0.25, le=2.5)
     tempo_scale: float = Field(default=1.0, ge=0.4, le=2.5)
+    warm_night_mode: bool = False
+    lowpass_hz: float | None = Field(default=None, ge=400.0, le=18000.0)
+    peak_ceiling: float = Field(default=0.89, ge=0.15, le=0.98)
     voice_name: str | None = None
     prefer_local_ai_tts: bool = True
     export_mp3: bool = True
@@ -172,6 +175,8 @@ class GeneratedSoundClip(Poe2Model):
     bits: int = 16
     backend_used: str
     callout_text: str | None = None
+    lowpass_hz_applied: float | None = None
+    hf_energy_ratio_above_2500hz: float | None = None
 
 
 class SoundPackManifest(Poe2Model):
@@ -202,6 +207,36 @@ class FilterValidationReport(Poe2Model):
     diagnostics: list[FilterDiagnostic] = Field(default_factory=list)
 
 
+class ColorVisionDeficiency(StrEnum):
+    DEUTERANOPIA = "deuteranopia"
+    PROTANOPIA = "protanopia"
+    TRITANOPIA = "tritanopia"
+
+
+class CvdPairSeparation(Poe2Model):
+    tier_a: str
+    tier_b: str
+    deficiency: ColorVisionDeficiency
+    normal_rms_delta_e: float
+    cvd_rms_delta_e: float
+    cvd_max_channel_delta_e: float
+    luminance_delta: float
+    distinct_minimap_shapes: bool
+    relies_on_red_green_hue_alone: bool = False
+
+
+class CvdThemeAuditReport(Poe2Model):
+    theme_id: str
+    cvd_safe: bool
+    min_deuteranopia_delta_e: float
+    min_protanopia_delta_e: float
+    min_tritanopia_delta_e: float
+    distinct_minimap_shape_count: int
+    duplicate_minimap_shapes: list[str] = Field(default_factory=list)
+    red_green_conflicts: list[str] = Field(default_factory=list)
+    worst_pairs: list[CvdPairSeparation] = Field(default_factory=list)
+
+
 class BuildFilterContext(Poe2Model):
     class_name: str | None = None
     ascendancy_name: str | None = None
@@ -212,6 +247,18 @@ class BuildFilterContext(Poe2Model):
     preferred_armour_tags: list[str] = Field(default_factory=list)
     uncapped_resists: list[str] = Field(default_factory=list)
     equipped_bases: list[str] = Field(default_factory=list)
+    party_members: list[str] = Field(default_factory=list)
+
+
+class FilterHealReport(Poe2Model):
+    valid: bool
+    patch: str = POE2_PATCH
+    healed_text: str
+    fixes_applied: list[str] = Field(default_factory=list)
+    healed_basetypes: list[str] = Field(default_factory=list)
+    pruned_blocks: int = 0
+    original_error_count: int = 0
+    validation: FilterValidationReport
 
 
 class FilterCompileResult(Poe2Model):

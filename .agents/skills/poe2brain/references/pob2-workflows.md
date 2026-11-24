@@ -18,9 +18,13 @@
    - `ref`: Frozen baseline snapshot (clone `main -> ref` before mutating passives/gems, or load a build-guide reference PoB here to diff against `main`).
    - `candidate`: Scratch slot for testing multi-piece swaps, keystone pivots (`CI`, `MoM`, `Giant's Blood`), or weapon-set split trees without polluting `main` (each slot also maintains a 20-step XML `undo`/`redo` stack).
 4. **Passive Notables & Amulet Anoints (`poe2_pob_suggest_nodes`)**:
-   - `--mode perPoint`: Highest `+FullDPS` / `+TotalEHP` per passive point within `max_path_dist=8`.
+   - `--mode perPoint`: Highest `+FullDPS` / `+TotalEHP` per passive point within `max_path_dist=8` (auto-falls back to `EffectiveDPS` / `CombinedDPS` when `poe.ninja` imports leave `includeInFullDPS="false"`).
    - `--mode total`: Highest raw cluster payoff within reach.
-   - `--mode anoint`: Scans the **entire `0_5` passive tree** (ignoring pathing distance) to find the #1 Distilled Liquid Emotion Amulet anoint for the build!
+   - `--mode anoint`: Scans the **entire `0_5` passive tree** (ignoring pathing distance) to find the #1 Distilled Liquid Emotion Amulet anoint, returning exact `0.5.5` 3-Emotion recipes (`anoint_emotions`) and SSF farmability tier (`ssf_anoint_tier`).
+5. **Progression Diff & Gold Respec Calculator (`poe2_pob_compare`)**:
+   - Load early-league vs endgame snapshots into two slots (`early` & `main`) and run `poe2 pob compare --slot-a early --slot-b main --dewater --json` (`BuildSlotComparison`) to diff DPS/EHP, added/removed Uniques, skill/support links, keystones, and exact PoE2 `0.5.5` Gold respec cost (`GoldRespecPrices.dat`: `1x` per passive refund, `5x` per Ascendancy refund, `0 Gold` to allocate unspent points — Orbs of Regret do NOT exist).
+6. **Hardcore Pinnacle Boss One-Shot & ES-Bypass Audit (`poe2_pob_hc_audit`)**:
+   - Run `poe2 pob hc-audit [<code_url_or_file>] --slot main --top-nodes 5 --json` (`HcRipAuditReport`) to inspect sustainable Pinnacle Phys/Ele/Chaos Max Hits, catch lethal **non-CI Low-Life ES Bleed/Poison bypass** (`bleed_poison_es_bypass`) and **Chaos `2x` ES damage** (`chaos_2x_es_vulnerability`), check Belt Charms, and rank top reachable defensive EHP passive respec clusters with exact Gold cost.
 
 ---
 

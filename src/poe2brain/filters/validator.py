@@ -565,9 +565,7 @@ class FilterValidator:
                     continue
 
                 if st.keyword == "Class":
-                    if val in self.index.internal_only_class_ids and (
-                        is_exact or not any(val in fc for fc in self.index.valid_filter_classes)
-                    ):
+                    if val in self.index.internal_only_class_ids:
                         correct = self.index.internal_only_class_ids[val]
                         diags.append(
                             FilterDiagnostic(

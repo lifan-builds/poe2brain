@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 import re
 import sqlite3
@@ -285,8 +286,26 @@ def _extract_primary_roll_bounds(stat_text: str) -> tuple[float, float] | None:
     return None
 
 
+_RANGE_OR_NUM_TOKEN_RE = re.compile(
+    r"\((?P<lo>[+-]?\d+(?:\.\d+)?)\s*-\s*(?P<hi>[+-]?\d+(?:\.\d+)?)\)"
+    r"|(?P<num>[+-]?\d+(?:\.\d+)?)"
+)
+
+
+def _extract_all_roll_bounds(stat_text: str) -> list[tuple[float, float]]:
+    bounds: list[tuple[float, float]] = []
+    for m in _RANGE_OR_NUM_TOKEN_RE.finditer(stat_text):
+        if m.group("lo") is not None and m.group("hi") is not None:
+            a, b = abs(float(m.group("lo"))), abs(float(m.group("hi")))
+            bounds.append((min(a, b), max(a, b)))
+        elif m.group("num") is not None:
+            v = abs(float(m.group("num")))
+            bounds.append((v, v))
+    return bounds
+
+
 def _strip_numbers_to_pattern(text: str) -> str:
-    s = re.sub(r"\([^)]*\)", "#", text)
+    s = re.sub(r"[+-]?\([^)]*\)", "#", text)
     s = re.sub(r"[+-]?\d+(?:\.\d+)?", "#", s)
     return re.sub(r"\s+", " ", s).strip().lower()
 
@@ -352,6 +371,12 @@ class ModPoolEngine:
 
     def close(self) -> None:
         self._conn.close()
+
+    def __enter__(self) -> ModPoolEngine:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
 
     def _load_levers(self) -> None:
         rows = self._conn.execute("SELECT * FROM crafting_levers ORDER BY name").fetchall()
@@ -837,25 +862,191 @@ class ModPoolEngine:
 
         pattern_map: dict[str, list[ModEntry]] = {}
         for entry in all_tiers:
-            if entry.affix_side in (AffixSide.PREFIX, AffixSide.SUFFIX):
+            if entry.affix_side in (
+                AffixSide.PREFIX,
+                AffixSide.SUFFIX,
+            ) and entry.source_pool not in (
+                "corrupted",
+                "corruption_upgrade",
+            ):
                 pat = _strip_numbers_to_pattern(entry.stat_text)
                 pattern_map.setdefault(pat, []).append(entry)
 
+        catalyst_scalar = (
+            1.0 + (item.quality / 100.0) if (item.catalyst_type and item.quality > 0) else 1.0
+        )
+
+        def _pick_best_entry(
+            candidates: list[ModEntry],
+            pmod_side: AffixSide | None,
+            pmod_name: str | None,
+            pmod_tier: int | None,
+            pmod_req_lvl: int | None,
+            pmod_domain: ModDomain,
+            pmod_vals: list[float],
+            pmod_ranges: list[tuple[float, float]],
+        ) -> ModEntry | None:
+            filtered = [
+                m
+                for m in candidates
+                if pmod_side not in (AffixSide.PREFIX, AffixSide.SUFFIX)
+                or m.affix_side == pmod_side
+            ] or list(candidates)
+            if not filtered:
+                return None
+
+            best_entry: ModEntry | None = None
+            best_key: tuple[float, float, int] | None = None
+            abs_vals = [abs(v) for v in pmod_vals]
+
+            for m in filtered:
+                score = 0.0
+                # 1. Source pool preference
+                if pmod_domain == ModDomain.DESECRATED:
+                    score += 120.0 if m.source_pool == "desecrated" else 40.0
+                else:
+                    if m.source_pool == "normal":
+                        score += 100.0
+                    elif m.source_pool in ("perfect_essence", "alloy", "essence"):
+                        score += 35.0
+                    elif m.source_pool == "desecrated":
+                        score += 10.0
+
+                # 2. Item level feasibility (soft bonus so sanctified/drop anomalies still resolve)
+                if m.required_level <= ilvl:
+                    score += 30.0
+                else:
+                    score -= 200.0
+
+                # 3. Ctrl+Alt+C affix name & required_level & display_tier
+                if pmod_name and m.affix_name and m.affix_name.lower() == pmod_name.lower():
+                    score += 500.0
+                if pmod_req_lvl is not None and m.required_level == pmod_req_lvl:
+                    score += 450.0
+                if pmod_tier is not None:
+                    if m.display_tier == pmod_tier:
+                        score += 400.0 if m.source_pool == "normal" else 220.0
+                    else:
+                        score -= 150.0 * abs(m.display_tier - pmod_tier)
+
+                # 4. Ctrl+Alt+C inline roll ranges `(min-max)` vs SQLite bounds
+                entry_bounds = _extract_all_roll_bounds(m.stat_text)
+                if pmod_ranges and entry_bounds and len(pmod_ranges) == len(entry_bounds):
+                    exact_raw = all(
+                        abs(r[0] - b[0]) <= 0.05 and abs(r[1] - b[1]) <= 0.05
+                        for r, b in zip(pmod_ranges, entry_bounds, strict=False)
+                    )
+                    exact_cat = catalyst_scalar > 1.0 and all(
+                        abs(r[0] - math.floor(b[0] * catalyst_scalar)) <= 1.0
+                        and abs(r[1] - math.floor(b[1] * catalyst_scalar)) <= 1.0
+                        for r, b in zip(pmod_ranges, entry_bounds, strict=False)
+                    )
+                    if exact_raw or exact_cat:
+                        score += 1000.0
+
+                # 5. Numeric value fit (resolves exact tier & required_level on plain Ctrl+C!)
+                dist_penalty = 0.0
+                if abs_vals and entry_bounds:
+                    n_cmp = min(len(abs_vals), len(entry_bounds))
+                    all_in = True
+                    for idx_v in range(n_cmp):
+                        v = abs_vals[idx_v]
+                        lo, hi = entry_bounds[idx_v]
+                        d_raw = 0.0 if lo <= v <= hi else min(abs(v - lo), abs(v - hi))
+                        if catalyst_scalar > 1.0:
+                            v_unscaled = v / catalyst_scalar
+                            d_cat = (
+                                0.0
+                                if lo <= v_unscaled <= hi
+                                else min(abs(v_unscaled - lo), abs(v_unscaled - hi))
+                            )
+                            d_best = min(d_raw, d_cat)
+                        else:
+                            d_best = d_raw
+                        if d_best > 0.0:
+                            all_in = False
+                            dist_penalty += d_best
+                    if all_in:
+                        score += 320.0
+                    else:
+                        score -= min(600.0, dist_penalty * 8.0)
+
+                cand_key = (score, -dist_penalty, -m.display_tier)
+                if best_key is None or cand_key > best_key:
+                    best_key = cand_key
+                    best_entry = m
+
+            return best_entry
+
         craft_mods: list[CraftingMod] = []
-        for pmod in item.mods:
-            if pmod.domain not in (ModDomain.EXPLICIT, ModDomain.FRACTURED, ModDomain.DESECRATED):
-                continue
+        eff_pmods = [
+            pm
+            for pm in item.mods
+            if pm.domain in (ModDomain.EXPLICIT, ModDomain.FRACTURED, ModDomain.DESECRATED)
+        ]
+        idx_pm = 0
+        while idx_pm < len(eff_pmods):
+            pmod = eff_pmods[idx_pm]
+            # Check if two consecutive plain Ctrl+C lines form a single 2-line hybrid affix
+            if idx_pm + 1 < len(eff_pmods):
+                nxt_pm = eff_pmods[idx_pm + 1]
+                if (
+                    pmod.domain == nxt_pm.domain
+                    and pmod.affix_name is None
+                    and nxt_pm.affix_name is None
+                ):
+                    combo_text = f"{pmod.raw_text}\n{nxt_pm.raw_text}"
+                    combo_pat = _strip_numbers_to_pattern(combo_text)
+                    combo_matches = pattern_map.get(combo_pat)
+                    if combo_matches:
+                        combo_ranges = [
+                            (abs(r.min), abs(r.max))
+                            for r in (*pmod.roll_ranges, *nxt_pm.roll_ranges)
+                        ]
+                        combo_vals = [*pmod.values, *nxt_pm.values]
+                        chosen_combo = _pick_best_entry(
+                            combo_matches,
+                            pmod.affix_side,
+                            pmod.affix_name,
+                            pmod.display_tier,
+                            pmod.required_level,
+                            pmod.domain,
+                            combo_vals,
+                            combo_ranges,
+                        )
+                        if chosen_combo is not None:
+                            cb_bounds = _extract_all_roll_bounds(chosen_combo.stat_text)
+                            fits_hybrid_bounds = len(combo_vals) == len(cb_bounds) and all(
+                                (lo <= abs(v) <= hi)
+                                or (
+                                    catalyst_scalar > 1.0 and lo <= (abs(v) / catalyst_scalar) <= hi
+                                )
+                                for v, (lo, hi) in zip(combo_vals, cb_bounds, strict=False)
+                            )
+                            if fits_hybrid_bounds:
+                                craft_mods.append(
+                                    CraftingMod.from_entry(
+                                        chosen_combo,
+                                        fractured=(pmod.domain == ModDomain.FRACTURED),
+                                        is_desecrated=(pmod.domain == ModDomain.DESECRATED),
+                                    )
+                                )
+                                idx_pm += 2
+                                continue
+
             pat = _strip_numbers_to_pattern(pmod.raw_text)
             matches = pattern_map.get(pat) or []
-            chosen: ModEntry | None = None
-            if matches:
-                if pmod.display_tier is not None:
-                    tier_hits = [m for m in matches if m.display_tier == pmod.display_tier]
-                    if tier_hits:
-                        chosen = tier_hits[0]
-                if chosen is None:
-                    ilvl_hits = [m for m in matches if m.required_level <= ilvl]
-                    chosen = (ilvl_hits or matches)[0]
+            pm_ranges = [(abs(r.min), abs(r.max)) for r in pmod.roll_ranges]
+            chosen = _pick_best_entry(
+                matches,
+                pmod.affix_side,
+                pmod.affix_name,
+                pmod.display_tier,
+                pmod.required_level,
+                pmod.domain,
+                pmod.values,
+                pm_ranges,
+            )
 
             if chosen is not None:
                 craft_mods.append(
@@ -886,6 +1077,7 @@ class ModPoolEngine:
                         is_desecrated=(pmod.domain == ModDomain.DESECRATED),
                     )
                 )
+            idx_pm += 1
 
         cat_tag = item.catalyst_type.split()[0].lower() if item.catalyst_type else None
         return CraftingState(
@@ -1265,7 +1457,14 @@ class ModPoolEngine:
             note_parts = [f"floor={floor}"]
             if has_whittling:
                 removed_lvls = sorted({state.mods[i].required_level for i in rem})
-                note_parts.append(f"Whittling removes min_ilvl={removed_lvls[0]} ({len(rem)} tied)")
+                sniped_desc = ", ".join(
+                    f"{state.mods[i].stat_text.splitlines()[0]} "
+                    f"(T{state.mods[i].display_tier}, req_lvl={state.mods[i].required_level})"
+                    for i in rem
+                )
+                note_parts.append(
+                    f"Whittling removes min_ilvl={removed_lvls[0]} ({len(rem)} tied: {sniped_desc})"
+                )
             if side_con:
                 note_parts.append(f"Erasure side={side_con.value}")
 

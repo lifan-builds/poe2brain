@@ -18,6 +18,7 @@ from poe2brain.mcp_server import (
     execute_craft_odds,
     execute_craft_plan,
     execute_filter_generate,
+    execute_filter_heal,
     execute_filter_presets,
     execute_filter_restyle,
     execute_filter_validate,
@@ -27,8 +28,12 @@ from poe2brain.mcp_server import (
     execute_ninja_character,
     execute_ninja_search,
     execute_ninja_snapshots,
+    execute_pob_compare,
+    execute_pob_hc_audit,
     execute_scan_arbitrage,
     execute_scan_craft_profit,
+    execute_triage_dump,
+    execute_waystone_regex,
     export_pob_slot,
     format_domain_error,
     get_build_service,
@@ -521,6 +526,95 @@ def wiki_meta_cmd(
     _run_cli(json_output, _compute, _render)
 
 
+@wiki_app.command("regex")
+def wiki_regex_cmd(
+    slot: Annotated[
+        str | None,
+        typer.Option("--slot", help="Optional persisted PoB2 slot to auto-detect build hazards."),
+    ] = None,
+    archetype: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--archetype",
+            help="Explicit archetype CSV/tags (ci, archmage_mom, leech, crit, hybrid_es_life).",
+        ),
+    ] = None,
+    avoid: Annotated[
+        list[str] | None,
+        typer.Option("--avoid", help="Waystone mod keywords to treat as bricks (CSV/repeatable)."),
+    ] = None,
+    want: Annotated[
+        list[str] | None,
+        typer.Option("--want", help="Desired Waystone juicing keywords (CSV/repeatable)."),
+    ] = None,
+    tablet_want: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--tablet-want", help="Desired Precursor Tablet mod keywords (CSV/repeatable)."
+        ),
+    ] = None,
+    min_waystone_drop: Annotated[
+        int, typer.Option("--min-waystone-drop", help="Minimum +Waystone Drop Chance %.")
+    ] = 120,
+    min_pack_size: Annotated[
+        int | None, typer.Option("--min-pack-size", help="Minimum +Pack Size % (or omit).")
+    ] = 20,
+    item_text: Annotated[
+        str | None, typer.Option("--item-text", help="Optional Waystone Ctrl+C text to inspect.")
+    ] = None,
+    file_path: Annotated[
+        Path | None, typer.Option("--file", help="Optional Waystone Ctrl+C file to inspect.")
+    ] = None,
+    include_dangerous: Annotated[
+        bool, typer.Option("--include-dangerous", help="Include dangerous non-brick mods in regex.")
+    ] = False,
+    max_chars: Annotated[
+        int, typer.Option("--max-chars", help="Maximum PoE2 Stash Search regex length (<= 50).")
+    ] = 50,
+    json_output: JsonOpt = False,
+) -> None:
+    """Compile <=50-char PoE2 Waystone brick/safe/juicing & Precursor Tablet stash regexes."""
+
+    def _compute() -> dict[str, Any]:
+        raw_ws = _read_item_input(file_path=file_path, text=item_text, allow_empty=True)
+        return execute_waystone_regex(
+            slot=slot,
+            archetypes=archetype,
+            avoid_keywords=avoid,
+            want_keywords=want,
+            tablet_want_keywords=tablet_want,
+            min_waystone_drop_pct=min_waystone_drop,
+            min_pack_size_pct=min_pack_size,
+            item_text=raw_ws,
+            include_dangerous=include_dangerous,
+            max_chars=max_chars,
+        )
+
+    def _render(data: dict[str, Any]) -> None:
+        arch_s = ", ".join(data.get("detected_archetypes") or []) or "default_mapper"
+        console.print(f"[bold cyan]PoE2 0.5.5 Stash Regex Plan[/bold cyan] (archetypes: {arch_s})")
+        for key, label in (
+            ("brick_regex", "Brick Highlight"),
+            ("safe_runnable_regex", "Safe Runnable"),
+            ("juicing_regex", "Waystone Juicing"),
+            ("tablet_regex", "Tablet Rolling"),
+        ):
+            rx = data[key]
+            console.print(
+                f"  [bold]{label:<17}[/bold]: [green]{rx['regex']}[/green] "
+                f"({rx['char_length']}/{rx['max_chars']} chars)"
+            )
+        if data.get("item_check"):
+            ic = data["item_check"]
+            verdict = "[red]BRICK[/red]" if ic["is_brick"] else "[green]SAFE[/green]"
+            console.print(
+                f"  Item Check       : {ic['waystone_name']} -> {verdict} "
+                f"(revives={ic['revives_available']})"
+            )
+
+    _run_cli(json_output, _compute, _render)
+
+
 # ---------------------------------------------------------------------------
 # Pillar 2: Headless PoB2 (`poe2 pob ...`)
 # ---------------------------------------------------------------------------
@@ -643,6 +737,102 @@ def pob_audit_cmd(
             )
         for w in data.get("warnings", []):
             console.print(f"  [yellow]Warning:[/yellow] {w}")
+
+    _run_cli(json_output, _compute, _render)
+
+
+@pob_app.command("compare")
+def pob_compare_cmd(
+    slot_a: Annotated[
+        str, typer.Option("--slot-a", help="Baseline/earlier persisted PoB2 slot name.")
+    ] = "early",
+    slot_b: Annotated[
+        str, typer.Option("--slot-b", help="Target/current persisted PoB2 slot name.")
+    ] = "main",
+    dewater: Annotated[
+        bool,
+        typer.Option("--dewater", help="Compare sustainable Pinnacle Boss dewatered stats."),
+    ] = False,
+    json_output: JsonOpt = False,
+) -> None:
+    """Compare two persisted PoB2 slots across DPS/EHP, gear, skills, passives, and Gold respec."""
+
+    def _compute() -> dict[str, Any]:
+        return execute_pob_compare(slot_a=slot_a, slot_b=slot_b, dewater=dewater)
+
+    def _render(data: dict[str, Any]) -> None:
+        respec = data["respec_estimate"]
+        console.print(
+            f"[bold cyan]PoB2 Slot Comparison[/bold cyan] [{data['slot_a']} -> {data['slot_b']}] "
+            f"(Lv Δ={data['level_delta']:+d} | dewatered={data['dewatered']})"
+        )
+        console.print(
+            f"  Effective DPS : {data['effective_dps_before']:,.1f} -> "
+            f"[bold green]{data['effective_dps_after']:,.1f}[/bold green] "
+            f"({data['effective_dps_pct']:+.1f}%)"
+        )
+        console.print(
+            f"  Total EHP     : {data['total_ehp_before']:,.1f} -> "
+            f"[bold]{data['total_ehp_after']:,.1f}[/bold] ({data['total_ehp_pct']:+.1f}%)"
+        )
+        if data.get("added_uniques"):
+            console.print(f"  Added Uniques : {', '.join(data['added_uniques'])}")
+        console.print(
+            f"  Gold Respec   : [yellow]{respec['total_gold_cost']:,} Gold[/yellow] "
+            f"({respec['refunded_passive_points']} passives, "
+            f"{respec['refunded_ascendancy_points']} Ascendancy)"
+        )
+
+    _run_cli(json_output, _compute, _render)
+
+
+@pob_app.command("hc-audit")
+def pob_hc_audit_cmd(
+    source: Annotated[
+        str | None, typer.Argument(help="Optional build code/URL/file to load before HC auditing.")
+    ] = None,
+    slot: Annotated[str, typer.Option("--slot", help="Named PoB2 build slot.")] = "main",
+    top_nodes: Annotated[
+        int, typer.Option("--top-nodes", help="Top defensive EHP passive clusters to rank.")
+    ] = 5,
+    apply_dewater: Annotated[
+        bool,
+        typer.Option("--apply", help="Persistently strip inflated PoB-warrior flags on the slot."),
+    ] = False,
+    json_output: JsonOpt = False,
+) -> None:
+    """Audit HC Pinnacle Boss Max Hits, Bleed/Poison ES bypass, Chaos 2x ES, & Gold respecs."""
+
+    def _compute() -> dict[str, Any]:
+        return execute_pob_hc_audit(
+            source=source,
+            slot=slot,
+            top_nodes=top_nodes,
+            apply_dewater=apply_dewater,
+        )
+
+    def _render(data: dict[str, Any]) -> None:
+        mh = data["max_hits"]
+        ready_lbl = (
+            "[bold green]READY[/bold green]"
+            if data["pinnacle_ready"]
+            else "[bold red]AT RISK[/bold red]"
+        )
+        console.print(
+            f"[bold cyan]HC Pinnacle Rip Audit[/bold cyan] [{data['slot_name']}]: {ready_lbl} "
+            f"(Phys={mh.get('physical', 0):,.0f} | Chaos={mh.get('chaos', 0):,.0f} | "
+            f"Light={mh.get('lightning', 0):,.0f})"
+        )
+        for r in data.get("rip_risks", []):
+            col = "red" if r["severity"] in ("critical", "high") else "yellow"
+            console.print(
+                f"  [{col}][{r['severity'].upper()}][/{col}] {r['title']} — {r['summary']}"
+            )
+        for nd in data.get("top_defensive_passives", []):
+            console.print(
+                f"  • Respec -> [bold]{nd['name']}[/bold] ({nd['path_dist']} pts, "
+                f"{nd['ehp_pct']:+.2f}% EHP, {nd['respec_gold_cost']:,} Gold)"
+            )
 
     _run_cli(json_output, _compute, _render)
 
@@ -1138,6 +1328,29 @@ def econ_arbitrage_cmd(
     min_roi_pct: Annotated[
         float, typer.Option("--min-roi-pct", help="Minimum gross ROI percentage.")
     ] = 5.0,
+    max_investment_divine: Annotated[
+        float | None,
+        typer.Option("--max-investment-divine", help="Maximum per-cycle capital in Divines."),
+    ] = None,
+    max_gold: Annotated[
+        int | None,
+        typer.Option("--max-gold", help="Maximum Alva Gold tax per cycle."),
+    ] = None,
+    ladder_start_exalted: Annotated[
+        float | None,
+        typer.Option(
+            "--ladder-start-exalted",
+            help="Build a multi-rung compounding ladder starting from this Exalted bankroll.",
+        ),
+    ] = None,
+    gold_budget: Annotated[
+        int | None,
+        typer.Option("--gold-budget", help="Total Gold budget for compounding ladder mode."),
+    ] = None,
+    ladder_target_divine: Annotated[
+        float | None,
+        typer.Option("--ladder-target-divine", help="Target bankroll in Divines for ladder mode."),
+    ] = None,
     live_books: Annotated[
         bool,
         typer.Option(
@@ -1158,12 +1371,17 @@ def econ_arbitrage_cmd(
     league: Annotated[str, typer.Option("--league", help="PoE2 league name.")] = DEFAULT_LEAGUE,
     json_output: JsonOpt = False,
 ) -> None:
-    """Scan executable PoE2 0.5.5 conversions, Alva spreads, order books, Gold ROI, and traps."""
+    """Scan PoE2 0.5.5 conversions/spreads or build a Gold-disciplined compounding ladder."""
 
     def _compute() -> dict[str, Any]:
         return execute_scan_arbitrage(
             min_volume_divine=min_volume_divine,
             min_roi_pct=min_roi_pct,
+            max_investment_divine=max_investment_divine,
+            max_gold_per_cycle=max_gold,
+            starting_exalted=ladder_start_exalted,
+            gold_budget=gold_budget,
+            target_divine=ladder_target_divine,
             live_books=live_books,
             include_encounter_gated=encounter_gated,
             limit=limit,
@@ -1171,6 +1389,31 @@ def econ_arbitrage_cmd(
         )
 
     def _render(data: dict[str, Any]) -> None:
+        if "rungs" in data:
+            table = Table(
+                title=(
+                    f"PoE2 Compounding Ladder — {data['league']} "
+                    f"({data['starting_exalted']:.0f} Ex -> "
+                    f"{data['final_bankroll_divine']:.2f} Div | "
+                    f"Gold {data['total_gold_spent']:,}/{data['gold_budget']:,})"
+                )
+            )
+            table.add_column("Rung", justify="right", style="cyan")
+            table.add_column("Play", style="bold")
+            table.add_column("Cycles", justify="right")
+            table.add_column("End (Div)", justify="right", style="green")
+            table.add_column("Gold Used", justify="right")
+            for rg in data.get("rungs", []):
+                table.add_row(
+                    str(rg["rung_index"]),
+                    str(rg["title"])[:60],
+                    f"{rg['cycles_executed']}x",
+                    f"{rg['ending_bankroll_divine']:.2f}",
+                    f"{rg['gold_spent_on_rung']:,}",
+                )
+            console.print(table)
+            return
+
         table = Table(
             title=(
                 f"PoE2 Arbitrage Scanner — {data['league']} "
@@ -1396,6 +1639,88 @@ def trade_upgrades_cmd(
     _run_cli(json_output, _compute, _render)
 
 
+@trade_app.command("triage")
+def trade_triage_cmd(
+    positional: Annotated[
+        str | None, typer.Argument(help="Optional path or multi-item Ctrl+C dump text.")
+    ] = None,
+    file_path: Annotated[
+        Path | None, typer.Option("--file", "-f", help="Path to multi-item PoE2 Ctrl+C dump file.")
+    ] = None,
+    text: Annotated[
+        str | None, typer.Option("--text", "-t", help="Multi-item PoE2 Ctrl+C clipboard dump text.")
+    ] = None,
+    min_exalted: Annotated[
+        float,
+        typer.Option("--min-exalted", help="Minimum Exalted threshold before salvage/vendor."),
+    ] = 5.0,
+    securable_only: Annotated[
+        bool,
+        typer.Option("--securable-only", help="Restrict trade2 queries to Instant Buyouts."),
+    ] = False,
+    live_trade: Annotated[
+        bool,
+        typer.Option(
+            "--live-trade/--no-live-trade",
+            help="Query live trade2 for non-currency equipment/gems/tablets.",
+        ),
+    ] = True,
+    roll_tolerance: Annotated[
+        float, typer.Option("--roll-tolerance", help="Minimum affix roll fraction (0.0..1.0).")
+    ] = 0.9,
+    league: Annotated[str, typer.Option("--league", help="PoE2 league name.")] = DEFAULT_LEAGUE,
+    json_output: JsonOpt = False,
+) -> None:
+    """Batch price-check & classify a dump tab of mixed PoE2 Ctrl+C items into 4 action buckets."""
+
+    def _compute() -> dict[str, Any]:
+        raw_dump = _read_item_input(file_path=file_path, text=text, positional=positional)
+        assert raw_dump is not None
+        return execute_triage_dump(
+            items=raw_dump,
+            min_exalted=min_exalted,
+            roll_tolerance=roll_tolerance,
+            securable_only=securable_only,
+            live_trade=live_trade,
+            league=league,
+        )
+
+    def _render(data: dict[str, Any]) -> None:
+        div_lbl = (
+            f" (~{data['total_estimated_divine']:.2f} Div)"
+            if data.get("total_estimated_divine") is not None
+            else ""
+        )
+        table = Table(
+            title=(
+                f"Quad-Tab Dump Triage — {data['league']} "
+                f"({data['total_items']} items | "
+                f"Total Est: {data['total_estimated_exalted']:,.1f} Ex{div_lbl})"
+            )
+        )
+        table.add_column("#", justify="right", style="dim")
+        table.add_column("Bucket", style="cyan")
+        table.add_column("Item", style="bold")
+        table.add_column("Est (Ex)", justify="right", style="green")
+        table.add_column("Next Step")
+        for ent in data.get("entries", []):
+            est_s = (
+                f"{ent['estimated_total_exalted']:,.1f}"
+                if ent.get("estimated_total_exalted") is not None
+                else "-"
+            )
+            table.add_row(
+                str(ent["index"] + 1),
+                str(ent["bucket"]),
+                str(ent["item_label"])[:46],
+                est_s,
+                str(ent["recommended_next_step"])[:72],
+            )
+        console.print(table)
+
+    _run_cli(json_output, _compute, _render)
+
+
 # ---------------------------------------------------------------------------
 # Pillar 4: Crafting (`poe2 craft ...`)
 # ---------------------------------------------------------------------------
@@ -1430,6 +1755,13 @@ def craft_odds_cmd(
     file_path: Annotated[
         Path | None, typer.Option("--file", help="Optional starting item Ctrl+C file.")
     ] = None,
+    protect_existing: Annotated[
+        bool,
+        typer.Option(
+            "--protect-existing/--no-protect-existing",
+            help="Auto-protect existing high-tier mods on --item-text against collateral bricks.",
+        ),
+    ] = True,
     league: Annotated[
         str, typer.Option("--league", help="PoE2 league for live currency quotes.")
     ] = DEFAULT_LEAGUE,
@@ -1450,6 +1782,7 @@ def craft_odds_cmd(
             target=target,
             omen=omen,
             item_text=raw_item,
+            protect_existing_targets=protect_existing,
             league=league,
             offline_prices=offline_prices,
         )
@@ -1710,6 +2043,17 @@ def ninja_search_cmd(
     unique: Annotated[
         str | None, typer.Option("--unique", help="Equipped Unique item filter.")
     ] = None,
+    exclude_unique: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--exclude-unique",
+            help="Exclude builds equipping these Uniques (CSV/repeatable, e.g. Temporalis).",
+        ),
+    ] = None,
+    max_uniques: Annotated[
+        int | None,
+        typer.Option("--max-uniques", help="Maximum total equipped Uniques per build."),
+    ] = None,
     keystone: Annotated[
         str | None, typer.Option("--keystone", help="Allocated Keystone or Ascendancy notable.")
     ] = None,
@@ -1725,6 +2069,10 @@ def ninja_search_cmd(
     sort_by: Annotated[
         str, typer.Option("--sort", help="Sort metric: dps, ehp, level, es, or life.")
     ] = "dps",
+    ssf_viable: Annotated[
+        bool,
+        typer.Option("--ssf-viable", help="Prioritize SSF-achievable low-unique builds first."),
+    ] = False,
     limit: Annotated[int, typer.Option("--limit", "-n", help="Max build rows to return.")] = 15,
     refresh_live: Annotated[
         int,
@@ -1738,7 +2086,7 @@ def ninja_search_cmd(
     ] = False,
     json_output: JsonOpt = False,
 ) -> None:
-    """Search PoE2 Forbidden Rites poe.ninja builds across class/ascendancy/skill/unique/stats."""
+    """Search PoE2 Forbidden Rites poe.ninja builds across class/ascendancy/skill/unique/SSF."""
 
     def _compute() -> dict[str, Any]:
         return execute_ninja_search(
@@ -1748,11 +2096,14 @@ def ninja_search_cmd(
             skill=skill,
             support_gem=support,
             unique_item=unique,
+            exclude_uniques=exclude_unique,
+            max_uniques=max_uniques,
             keystone=keystone,
             weapon_type=weapon,
             min_dps=min_dps,
             min_ehp=min_ehp,
             sort_by=sort_by,
+            ssf_viable_first=ssf_viable,
             limit=limit,
             refresh_live_top=refresh_live,
             include_pob_code=include_pob_code,
@@ -1805,6 +2156,13 @@ def ninja_character_cmd(
         str | None,
         typer.Option("--timemachine", help="Optional time-machine label (e.g. week-3, day-5)."),
     ] = None,
+    probe_timeline: Annotated[
+        bool,
+        typer.Option(
+            "--probe-timeline",
+            help="Binary-search available weekly time-machine snapshots for this character.",
+        ),
+    ] = False,
     load_pob: Annotated[
         bool,
         typer.Option("--load-pob", help="Load imported character into persistent PoB2 --slot."),
@@ -1819,7 +2177,7 @@ def ninja_character_cmd(
     ] = False,
     json_output: JsonOpt = False,
 ) -> None:
-    """Import a live poe.ninja character or PoB2 share URL and optionally load/audit in PoB2."""
+    """Import a live poe.ninja character, probe time-machine timeline, or load/audit in PoB2."""
 
     def _compute() -> dict[str, Any]:
         return execute_ninja_character(
@@ -1827,6 +2185,7 @@ def ninja_character_cmd(
             character=name,
             league=league,
             timemachine=timemachine,
+            probe_timeline=probe_timeline,
             load_into_pob=load_pob,
             slot=slot,
             audit=audit,
@@ -1834,6 +2193,22 @@ def ninja_character_cmd(
         )
 
     def _render(data: dict[str, Any]) -> None:
+        if "probed_points" in data:
+            console.print(
+                f"[bold cyan]poe.ninja Character Timeline[/bold cyan] — "
+                f"{data['character']} ({data['account']}) | "
+                f"earliest={data.get('earliest_available_label')} | "
+                f"latest={data.get('latest_available_label')}"
+            )
+            for pt in data.get("probed_points", []):
+                asc_or_cls = pt.get("ascendancy_name") or pt.get("class_name")
+                status_s = (
+                    f"[green]Lv{pt.get('level')} {asc_or_cls}[/green]"
+                    if pt["available"]
+                    else f"[dim]absent ({pt.get('http_status')})[/dim]"
+                )
+                console.print(f"  • {pt['label']:<10}: {status_s}")
+            return
         cls_lbl = f"{data['class_name']}/{data.get('ascendancy_name') or 'None'}"
         ident = (
             f"{data['character']} ({data['account']})"
@@ -1945,6 +2320,13 @@ def filter_generate_cmd(
         str | None,
         typer.Option("--look", help="Natural-language visual theme customization prompt."),
     ] = None,
+    cvd_safe: Annotated[
+        str | None,
+        typer.Option(
+            "--cvd-safe",
+            help="Colorblind-safe mode: deuteranopia, protanopia, tritanopia, or true.",
+        ),
+    ] = None,
     sound_style: Annotated[
         str | None,
         typer.Option(
@@ -1964,6 +2346,24 @@ def filter_generate_cmd(
             "--scale", help="Musical scale: lydian, major, minor, pentatonic, phrygian, dorian."
         ),
     ] = "lydian",
+    warm_night: Annotated[
+        bool,
+        typer.Option(
+            "--warm-night",
+            help="2 AM tinnitus-safe psychoacoustic low-pass mode (<1.5% energy >2.5kHz).",
+        ),
+    ] = False,
+    lowpass_hz: Annotated[
+        float | None,
+        typer.Option("--lowpass-hz", help="Custom Butterworth low-pass cutoff frequency in Hz."),
+    ] = None,
+    callout: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--callout",
+            help="Custom spoken tier callout as tier=text (repeatable, e.g. s_plus='Divine!').",
+        ),
+    ] = None,
     pob: Annotated[
         str | None,
         typer.Option("--pob", help="Optional PoB2 share code, URL, or XML for build tailoring."),
@@ -1971,6 +2371,10 @@ def filter_generate_cmd(
     slot: Annotated[
         str | None,
         typer.Option("--slot", help="Optional persisted PoB2 slot name (e.g. main) to tailor to."),
+    ] = None,
+    slots: Annotated[
+        str | None,
+        typer.Option("--slots", help="Comma-separated persisted PoB2 slots for co-op party union."),
     ] = None,
     out_path: Annotated[
         Path | None, typer.Option("--out", "-o", help="Output .filter file path.")
@@ -1998,18 +2402,23 @@ def filter_generate_cmd(
     ] = False,
     json_output: JsonOpt = False,
 ) -> None:
-    """Compile a validated PoE2 0.5.5 .filter, custom look, .wav/.mp3 soundpack, & HTML preview."""
+    """Compile a validated PoE2 0.5.5 .filter, CVD/custom look, .wav/.mp3 soundpack, & preview."""
 
     def _compute() -> dict[str, Any]:
         return execute_filter_generate(
             strictness=strictness,
             theme=theme,
             look=look,
+            cvd_safe=cvd_safe,
             sound_style=sound_style,
             musical_key=musical_key,
             scale=scale,
+            warm_night_mode=warm_night,
+            lowpass_hz=lowpass_hz,
+            custom_callouts=callout,
             pob=pob,
             slot=slot,
+            slots=slots,
             out_path=out_path,
             sound_dir=sound_dir,
             preview_html=preview_html,
@@ -2046,6 +2455,13 @@ def filter_restyle_cmd(
         str | None,
         typer.Option("--look", help="Natural-language visual theme customization prompt."),
     ] = None,
+    cvd_safe: Annotated[
+        str | None,
+        typer.Option(
+            "--cvd-safe",
+            help="Colorblind-safe mode: deuteranopia, protanopia, tritanopia, or true.",
+        ),
+    ] = None,
     sound_style: Annotated[
         str | None,
         typer.Option("--sound-style", help="Sound pack style (or 'none')."),
@@ -2056,6 +2472,24 @@ def filter_restyle_cmd(
     scale: Annotated[
         str, typer.Option("--scale", help="Musical scale for synth pack.")
     ] = "lydian",
+    warm_night: Annotated[
+        bool,
+        typer.Option(
+            "--warm-night",
+            help="2 AM tinnitus-safe psychoacoustic low-pass mode (<1.5% energy >2.5kHz).",
+        ),
+    ] = False,
+    lowpass_hz: Annotated[
+        float | None,
+        typer.Option("--lowpass-hz", help="Custom Butterworth low-pass cutoff frequency in Hz."),
+    ] = None,
+    callout: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--callout",
+            help="Custom spoken tier callout as tier=text (repeatable, e.g. s_plus='Divine!').",
+        ),
+    ] = None,
     pob: Annotated[
         str | None,
         typer.Option("--pob", help="Optional PoB2 code/URL/file for build override injection."),
@@ -2063,6 +2497,10 @@ def filter_restyle_cmd(
     slot: Annotated[
         str | None,
         typer.Option("--slot", help="Optional persisted PoB2 slot for build override injection."),
+    ] = None,
+    slots: Annotated[
+        str | None,
+        typer.Option("--slots", help="Comma-separated persisted PoB2 slots for co-op party union."),
     ] = None,
     out_path: Annotated[
         Path | None, typer.Option("--out", "-o", help="Output .filter file path.")
@@ -2090,18 +2528,23 @@ def filter_restyle_cmd(
     ] = False,
     json_output: JsonOpt = False,
 ) -> None:
-    """Auto-heal 0.5.5 stale BaseTypes, inject economy/PoB2 overrides, and restyle a .filter."""
+    """Auto-heal 0.5.5 stale BaseTypes, inject economy/co-op PoB2 overrides, & restyle a .filter."""
 
     def _compute() -> dict[str, Any]:
         return execute_filter_restyle(
             source=source,
             theme=theme,
             look=look,
+            cvd_safe=cvd_safe,
             sound_style=sound_style,
             musical_key=musical_key,
             scale=scale,
+            warm_night_mode=warm_night,
+            lowpass_hz=lowpass_hz,
+            custom_callouts=callout,
             pob=pob,
             slot=slot,
+            slots=slots,
             out_path=out_path,
             sound_dir=sound_dir,
             preview_html=preview_html,
@@ -2153,6 +2596,49 @@ def filter_validate_cmd(
                 f"  [{col}][{diag['severity'].upper()} L{diag['line']} {diag['code']}][/{col}] "
                 f"{diag['message']}"
             )
+
+    _run_cli(json_output, _compute, _render)
+
+
+@filter_app.command("heal")
+def filter_heal_cmd(
+    filter_file_or_text: Annotated[
+        str, typer.Argument(help="Path to broken PoE1/0.1 .filter file or inline .filter text.")
+    ],
+    out_path: Annotated[
+        Path | None, typer.Option("--out", "-o", help="Optional output path for healed .filter.")
+    ] = None,
+    sound_dir: Annotated[
+        Path | None,
+        typer.Option("--sound-dir", help="Optional directory to verify CustomAlertSound files."),
+    ] = None,
+    json_output: JsonOpt = False,
+) -> None:
+    """Filter Doctor: auto-heal broken PoE1 / PoE2 0.1 .filter syntax, classes, & BaseTypes."""
+
+    def _compute() -> dict[str, Any]:
+        return execute_filter_heal(
+            filter_file_or_text=filter_file_or_text,
+            out_path=out_path,
+            sound_dir=sound_dir,
+        )
+
+    def _render(data: dict[str, Any]) -> None:
+        val = data["validation"]
+        badge = (
+            "[bold green]HEALED (0 ERRORS)[/bold green]"
+            if data["valid"]
+            else "[bold red]NEEDS REVIEW[/bold red]"
+        )
+        console.print(
+            f"PoE2 {data['patch']} Filter Doctor: {badge} "
+            f"(errors {data['original_error_count']} -> {val['error_count']} | "
+            f"fixes={len(data.get('fixes_applied') or [])} | pruned={data['pruned_blocks']})"
+        )
+        for fx in (data.get("fixes_applied") or [])[:12]:
+            console.print(f"  • {fx}")
+        if data.get("out_path"):
+            console.print(f"  Wrote healed filter -> {data['out_path']}")
 
     _run_cli(json_output, _compute, _render)
 

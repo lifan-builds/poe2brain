@@ -56,23 +56,40 @@ ITEM_CLASS_TO_CATEGORY: dict[str, tuple[str, str | None]] = {
     "Maps": ("Map", "map"),
     "Tablet": ("Tablet", "map.tablet"),
     "Tablets": ("Tablet", "map.tablet"),
+    "Precursor Tablets": ("Tablet", "map.tablet"),
+    "TowerAugmentation": ("Tablet", "map.tablet"),
     "Map Fragments": ("Map Fragment", "map.fragment"),
     "Breachstones": ("Breachstone", "map.breachstone"),
+    "Breachstone": ("Breachstone", "map.breachstone"),
     "Expedition Logbooks": ("Logbook", "map.logbook"),
     "Trial Coins": ("Trial Coin", "map.barya"),
     "Inscribed Ultimatum": ("Ultimatum", "map.ultimatum"),
+    "Inscribed Ultimatums": ("Ultimatum", "map.ultimatum"),
     "Pinnacle Keys": ("Pinnacle Key", "map.bosskey"),
+    "Vault Keys": ("Reliquary Key", "map.bosskey"),
     "Relics": ("Relic", "sanctum.relic"),
     "Skill Gems": ("Skill Gem", "gem.activegem"),
     "Active Skill Gems": ("Skill Gem", "gem.activegem"),
+    "Active Skill Gem": ("Skill Gem", "gem.activegem"),
+    "Spirit Gems": ("Spirit Gem", "gem.activegem"),
+    "Buff Gems": ("Spirit Gem", "gem.activegem"),
     "Support Gems": ("Support Gem", "gem.supportgem"),
+    "Support Skill Gems": ("Support Gem", "gem.supportgem"),
+    "Support Skill Gem": ("Support Gem", "gem.supportgem"),
     "Meta Skill Gems": ("Meta Gem", "gem.metagem"),
+    "Meta Skill Gem": ("Meta Gem", "gem.metagem"),
     "Uncut Skill Gems": ("Uncut Skill Gem", "currency"),
     "Uncut Spirit Gems": ("Uncut Spirit Gem", "currency"),
     "Uncut Support Gems": ("Uncut Support Gem", "currency"),
     "Socketable": ("Socketable", "currency.socketable"),
+    "Soul Cores": ("Soul Core", "currency.soulcore"),
+    "SoulCore": ("Soul Core", "currency.soulcore"),
+    "Runes": ("Rune", "currency.rune"),
+    "Idols": ("Idol", "currency.idol"),
     "Omen": ("Omen", "currency.omen"),
+    "Omens": ("Omen", "currency.omen"),
     "Stackable Currency": ("Currency", "currency"),
+    "StackableCurrency": ("Currency", "currency"),
     "Currency": ("Currency", "currency"),
     "Divination Cards": ("Divination Card", "card"),
 }
@@ -187,6 +204,11 @@ REQUIRES_RE = re.compile(
 UNIDENTIFIED_RE = re.compile(r"^Unidentified(?:\s*\(Tier\s*(?P<tier>\d+)\))?$")
 UNCUT_LEVEL_RE = re.compile(r"\(Level\s+(?P<lvl>\d+)\)")
 WAYSTONE_TIER_NAME_RE = re.compile(r"Waystone\s*\(Tier\s*(?P<tier>\d+)\)")
+STACK_SIZE_RE = re.compile(r"^Stack Size:\s*(?P<cur>[\d,]+)(?:\s*/\s*(?P<max>[\d,]+))?$", re.I)
+TABLET_IMPLICIT_LINE_RE = re.compile(
+    r"^(?:\d+(?:\(\d+-\d+\))?\s+uses remaining|Adds an? .+ to a Map)$",
+    re.I,
+)
 MOD_HEADER_RE = re.compile(
     r'^(?P<kind>[^"]+)(?:\s+"(?P<name>[^"]*)")?'
     r"(?:\s*\(Tier:\s*(?P<tier>\d+)\))?"
@@ -234,6 +256,30 @@ HELP_TEXT_PREFIXES = (
 def strip_wiki_markup(text: str) -> str:
     """Convert PoE2 trade API '[LinkTarget|Display]' or '[Display]' markup to plain text."""
     return WIKI_MARKUP_RE.sub(lambda m: m.group(2) or m.group(1), text)
+
+
+def extract_stack_size(raw_text: str) -> tuple[int, int | None]:
+    """Extract `(current_stack, max_stack)` from a PoE2 clipboard text (defaults to `(1, None)`)."""
+    for raw_line in raw_text.splitlines():
+        m = STACK_SIZE_RE.match(raw_line.strip())
+        if m:
+            cur = max(1, int(m.group("cur").replace(",", "")))
+            mx = int(m.group("max").replace(",", "")) if m.group("max") else None
+            return cur, mx
+    return 1, None
+
+
+def extract_unrevealed_desecrated_sides(raw_text: str) -> tuple[int, int]:
+    """Return `(desecrated_prefix_count, desecrated_suffix_count)` for unrevealed lines."""
+    p_cnt = 0
+    s_cnt = 0
+    for raw_line in raw_text.splitlines():
+        ln = raw_line.strip()
+        if ln == "Desecrated Prefix":
+            p_cnt += 1
+        elif ln == "Desecrated Suffix":
+            s_cnt += 1
+    return p_cnt, s_cnt
 
 
 def _strip_ggg_condition_markup(text: str) -> str:
@@ -642,6 +688,13 @@ def parse_clipboard_item(raw_text: str, bundle: EE2Bundle | None = None) -> Pars
                 elif line.startswith("Reservation:"):
                     if m_sp := re.search(r"(\d+)\s+Spirit", line):
                         spirit_reservation = int(m_sp.group(1))
+                elif line.startswith("Sockets:"):
+                    gem_sockets = len([tok for tok in line.split(":", 1)[1].split() if tok])
+                elif line == "Corrupted":
+                    corrupted = True
+                elif line == "Twice Corrupted":
+                    corrupted = True
+                    twice_corrupted = True
                 elif qm := QUALITY_HEADER_RE.match(line):
                     quality = int(qm.group("val"))
                     catalyst_type = qm.group("qtype")
@@ -832,10 +885,17 @@ def parse_clipboard_item(raw_text: str, bundle: EE2Bundle | None = None) -> Pars
                     continue
 
                 default_dom = (
-                    ModDomain.SKILL if line.startswith("Grants Skill:") else ModDomain.EXPLICIT
+                    ModDomain.SKILL
+                    if line.startswith("Grants Skill:")
+                    else (
+                        ModDomain.IMPLICIT
+                        if category == "Tablet" and TABLET_IMPLICIT_LINE_RE.match(line)
+                        else ModDomain.EXPLICIT
+                    )
                 )
                 stripped, eff_domain, unscalable = _strip_stat_line_suffix(line, default_dom)
-                _append_mod(stripped, eff_domain, unscalable=unscalable)
+                default_side = AffixSide.IMPLICIT if eff_domain == ModDomain.IMPLICIT else None
+                _append_mod(stripped, eff_domain, side=default_side, unscalable=unscalable)
 
     physical_dps = (
         round(phys_avg_hit * attacks_per_second, 2)

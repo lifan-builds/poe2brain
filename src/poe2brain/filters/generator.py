@@ -254,6 +254,143 @@ def _render_show_block(
     return "\n".join(out)
 
 
+def _dedup_preserve_order(items: Sequence[str]) -> list[str]:
+    return list(dict.fromkeys(x for x in items if x))
+
+
+def merge_build_filter_contexts(contexts: Sequence[BuildFilterContext]) -> BuildFilterContext:
+    """Merge multiple PoB2 BuildFilterContexts into one shared co-op / multi-build party context."""
+    valid_ctxs = [c for c in contexts if c is not None]
+    if not valid_ctxs:
+        raise ValueError("merge_build_filter_contexts requires at least one BuildFilterContext.")
+    if len(valid_ctxs) == 1:
+        single = valid_ctxs[0].model_copy(deep=True)
+        if not single.party_members:
+            ident = single.ascendancy_name or single.class_name
+            if ident:
+                lbl = f"{ident} ({single.main_skill})" if single.main_skill else ident
+                single.party_members = [lbl]
+        return single
+
+    classes = _dedup_preserve_order([c.class_name or "" for c in valid_ctxs])
+    ascendancies = _dedup_preserve_order(
+        [(c.ascendancy_name or c.class_name or "") for c in valid_ctxs]
+    )
+    skills = _dedup_preserve_order([c.main_skill or "" for c in valid_ctxs])
+    weapons = _dedup_preserve_order([w for c in valid_ctxs for w in c.weapon_filter_classes])
+    offhands = _dedup_preserve_order([o for c in valid_ctxs for o in c.offhand_filter_classes])
+    armour_tags = _dedup_preserve_order([t for c in valid_ctxs for t in c.preferred_armour_tags])
+    resists = _dedup_preserve_order([r for c in valid_ctxs for r in c.uncapped_resists])
+    equipped = _dedup_preserve_order([b for c in valid_ctxs for b in c.equipped_bases])
+
+    members: list[str] = []
+    for c in valid_ctxs:
+        if c.party_members:
+            for m in c.party_members:
+                if m not in members:
+                    members.append(m)
+        else:
+            ident = c.ascendancy_name or c.class_name or "Build"
+            lbl = f"{ident} ({c.main_skill})" if c.main_skill else ident
+            if lbl not in members:
+                members.append(lbl)
+
+    return BuildFilterContext(
+        class_name=" + ".join(classes) if classes else None,
+        ascendancy_name=" + ".join(ascendancies) if ascendancies else None,
+        level=max(c.level for c in valid_ctxs),
+        main_skill=" + ".join(skills) if skills else None,
+        weapon_filter_classes=weapons,
+        offhand_filter_classes=offhands,
+        preferred_armour_tags=armour_tags,
+        uncapped_resists=resists,
+        equipped_bases=equipped,
+        party_members=members,
+    )
+
+
+def _infer_class_weapon_and_offhand_defaults(hint: str) -> tuple[list[str], list[str]]:
+    low = hint.lower()
+    if any(k in low for k in ("ranger", "deadeye", "pathfinder", "arrow", "bow")):
+        return (["Bows"], ["Quivers"])
+    if any(
+        k in low
+        for k in (
+            "monk",
+            "martial artist",
+            "invoker",
+            "acolyte",
+            "chayula",
+            "quarterstaff",
+            "flurry",
+            "bell",
+        )
+    ):
+        return (["Quarterstaves"], [])
+    if any(
+        k in low
+        for k in (
+            "mercenary",
+            "witchhunter",
+            "gemling",
+            "tactician",
+            "crossbow",
+            "grenade",
+            "bolt",
+        )
+    ):
+        return (["Crossbows"], [])
+    if any(k in low for k in ("warrior", "titan", "warbringer", "smith", "kitava", "slam", "mace")):
+        return (["Two Hand Maces", "One Hand Maces"], ["Shields"])
+    if any(
+        k in low for k in ("huntress", "amazon", "spirit walker", "ritualist", "spear", "companion")
+    ):
+        return (["Spears"], ["Bucklers"])
+    if any(k in low for k in ("druid", "shaman", "oracle", "talisman")):
+        return (["Talismans", "Staves"], [])
+    return (["Wands", "Sceptres", "Staves"], ["Foci"])
+
+
+def _infer_class_armour_tags(hint: str) -> list[str]:
+    low = hint.lower()
+    if any(
+        k in low
+        for k in (
+            "huntress",
+            "amazon",
+            "spirit walker",
+            "ritualist",
+            "ranger",
+            "deadeye",
+            "pathfinder",
+        )
+    ):
+        return ["dex_armour", "dex_int_armour"]
+    if any(k in low for k in ("monk", "martial artist", "invoker", "acolyte", "chayula")):
+        return ["dex_int_armour", "dex_armour"]
+    if any(k in low for k in ("mercenary", "witchhunter", "gemling", "tactician")):
+        return ["str_dex_armour", "dex_armour", "str_armour"]
+    if any(k in low for k in ("warrior", "titan", "warbringer", "smith", "kitava")):
+        return ["str_armour", "str_dex_armour"]
+    if any(k in low for k in ("druid", "shaman", "oracle")):
+        return ["str_int_armour", "int_armour"]
+    if any(
+        k in low
+        for k in (
+            "witch",
+            "infernalist",
+            "lich",
+            "blood mage",
+            "sorceress",
+            "stormweaver",
+            "chronomancer",
+            "varashta",
+        )
+    ):
+        return ["int_armour"]
+    return ["int_armour", "dex_armour", "str_armour"]
+
+
 def extract_build_filter_context(
     build_service: BuildService,
     *,
@@ -291,40 +428,40 @@ def extract_build_filter_context(
         if bname not in equipped_bases:
             equipped_bases.append(bname)
         fc = to_filter_class(base_to_ic.get(bname, ""), idx)
+        if not fc and bname in idx.basetype_to_classes:
+            fc = next(iter(idx.basetype_to_classes[bname]), None)
         if fc in WEAPON_FILTER_CLASSES and fc not in weapon_classes:
             weapon_classes.append(fc)
         elif fc in OFFHAND_FILTER_CLASSES and fc not in offhand_classes:
             offhand_classes.append(fc)
 
-    # Infer archetype weapon class from class/ascendancy/main_skill when naked starter build
-    if not weapon_classes:
-        hint = (
-            f"{stats.class_name or ''} {stats.ascendancy_name or ''} {stats.main_skill or ''}"
-        ).lower()
-        if any(k in hint for k in ("ranger", "deadeye", "pathfinder", "arrow", "bow")):
-            weapon_classes.append("Bows")
-            offhand_classes.append("Quivers")
-        elif any(
-            k in hint for k in ("monk", "invoker", "acolyte", "quarterstaff", "flurry", "bell")
-        ):
-            weapon_classes.append("Quarterstaves")
-        elif any(
-            k in hint
-            for k in ("mercenary", "witchhunter", "gemling", "crossbow", "grenade", "bolt")
-        ):
-            weapon_classes.append("Crossbows")
-        elif any(k in hint for k in ("warrior", "titan", "warbringer", "smith", "slam", "mace")):
-            weapon_classes.extend(["Two Hand Maces", "One Hand Maces"])
-        elif any(k in hint for k in ("huntress", "amazon", "ritualist", "spear")):
-            weapon_classes.append("Spears")
-            offhand_classes.append("Bucklers")
-        elif any(k in hint for k in ("druid", "shaman", "oracle", "talisman")):
-            weapon_classes.extend(["Talismans", "Staves"])
-        else:
-            weapon_classes.extend(["Wands", "Sceptres", "Staves"])
-            offhand_classes.append("Foci")
+    hint = f"{stats.class_name or ''} {stats.ascendancy_name or ''} {stats.main_skill or ''}"
 
-    # Infer armour defense tags from BuildStats
+    # Infer archetype weapon/offhand classes when naked starter build or 1H weapon lacks offhand
+    if not weapon_classes:
+        def_w, def_o = _infer_class_weapon_and_offhand_defaults(hint)
+        for wc in def_w:
+            if wc not in weapon_classes:
+                weapon_classes.append(wc)
+        for oc in def_o:
+            if oc not in offhand_classes:
+                offhand_classes.append(oc)
+    elif not offhand_classes:
+        if "Spears" in weapon_classes:
+            offhand_classes.append("Bucklers")
+        elif "Bows" in weapon_classes:
+            offhand_classes.append("Quivers")
+        elif any(w in weapon_classes for w in ("Wands", "Sceptres")) and not any(
+            w in weapon_classes
+            for w in ("Spears", "Bows", "Crossbows", "Quarterstaves", "Talismans", "Two Hand Maces")
+        ):
+            offhand_classes.append("Foci")
+        elif any(w in weapon_classes for w in ("One Hand Maces", "Flails")) and (
+            "Two Hand Maces" not in weapon_classes
+        ):
+            offhand_classes.append("Shields")
+
+    # Infer armour defense tags from BuildStats (falling back to class identity on naked slots)
     ar_v = float(stats.armour or 0.0)
     ev_v = float(stats.evasion or 0.0)
     es_v = float(stats.energy_shield or 0.0)
@@ -342,7 +479,7 @@ def extract_build_filter_context(
     elif ar_v >= 150.0:
         preferred_tags.append("str_armour")
     else:
-        preferred_tags.extend(["int_armour", "dex_armour", "str_armour"])
+        preferred_tags.extend(_infer_class_armour_tags(hint))
 
     uncapped: list[str] = []
     if float(stats.fire_resist) < 75.0:
@@ -354,6 +491,9 @@ def extract_build_filter_context(
     if float(stats.chaos_resist) < 40.0:
         uncapped.append("chaos")
 
+    ident = stats.ascendancy_name or stats.class_name
+    party_lbl = [f"{ident} ({stats.main_skill})" if stats.main_skill else ident] if ident else []
+
     return BuildFilterContext(
         class_name=stats.class_name,
         ascendancy_name=stats.ascendancy_name,
@@ -364,44 +504,121 @@ def extract_build_filter_context(
         preferred_armour_tags=preferred_tags,
         uncapped_resists=uncapped,
         equipped_bases=equipped_bases,
+        party_members=party_lbl,
     )
+
+
+_SKILL_IMPLICIT_WEAPON_CLASSES: frozenset[str] = frozenset({"Sceptres", "Wands", "Staves"})
 
 
 def _query_top_bases_for_context(
     ctx: BuildFilterContext,
     index: FilterGamedataIndex,
 ) -> tuple[list[str], list[str]]:
-    """Returns `(top_weapon_offhand_bases, top_armour_bases)` from `poe2_0.5.5.sqlite`."""
-    target_weapon_fcs = set(ctx.weapon_filter_classes) | set(ctx.offhand_filter_classes)
-    want_tags = set(ctx.preferred_armour_tags)
+    """Returns balanced `(top_weapon_offhand_bases, top_armour_bases)` from `poe2_0.5.5.sqlite`."""
+    ordered_weapon_fcs = _dedup_preserve_order(
+        [*ctx.weapon_filter_classes, *ctx.offhand_filter_classes]
+    )
+    target_weapon_fcs = set(ordered_weapon_fcs)
+    ordered_tags = _dedup_preserve_order(ctx.preferred_armour_tags)
+    want_tags = set(ordered_tags)
 
-    weapon_candidates: list[tuple[int, str]] = []
-    armour_candidates: list[tuple[int, str]] = []
+    weapons_by_fc: dict[str, dict[str, int]] = {fc: {} for fc in ordered_weapon_fcs}
+    armours_by_slot_tag: dict[tuple[str, str], dict[str, int]] = {}
 
     con = sqlite3.connect(f"file:{get_gamedata_db_path()}?mode=ro", uri=True)
     try:
         for name, ic_id, drop_lvl, tags_json in con.execute(
             "SELECT name, item_class, drop_level, tags_json FROM base_items WHERE is_live_poe2 = 1"
         ):
-            if not name or name in index.dormant_or_removed_basetypes:
+            if (
+                not name
+                or name in index.dormant_or_removed_basetypes
+                or name.startswith(("Runeforged ", "Runemastered "))
+            ):
                 continue
             fc = to_filter_class(ic_id, index)
             if not fc:
                 continue
             dl = int(drop_lvl or 1)
-            if fc in target_weapon_fcs and dl >= 58:
-                weapon_candidates.append((dl, name))
-            elif fc in ARMOUR_FILTER_CLASSES and dl >= 62:
+            if fc in target_weapon_fcs:
+                prev_dl = weapons_by_fc[fc].get(name, -1)
+                if dl > prev_dl:
+                    weapons_by_fc[fc][name] = dl
+            elif fc in ARMOUR_FILTER_CLASSES and dl >= 60:
                 tags = set(json.loads(tags_json or "[]"))
-                if tags & want_tags:
-                    armour_candidates.append((dl, name))
+                matched_t = [t for t in ordered_tags if t in tags]
+                for mt in matched_t:
+                    slot_bucket = armours_by_slot_tag.setdefault((fc, mt), {})
+                    if dl > slot_bucket.get(name, -1):
+                        slot_bucket[name] = dl
     finally:
         con.close()
 
-    weapon_candidates.sort(key=lambda t: (-t[0], t[1]))
-    armour_candidates.sort(key=lambda t: (-t[0], t[1]))
-    top_weapons = [nm for _, nm in weapon_candidates[:28]]
-    top_armours = [nm for _, nm in armour_candidates[:32]]
+    # Select balanced top bases per weapon/offhand class (preserving skill-implicit Sceptres/Wands)
+    per_fc_lists: list[list[str]] = []
+    for fc in ordered_weapon_fcs:
+        items_map = weapons_by_fc.get(fc) or {}
+        if not items_map:
+            continue
+        sorted_items = sorted(items_map.items(), key=lambda kv: (-kv[1], kv[0]))
+        if fc in _SKILL_IMPLICIT_WEAPON_CLASSES:
+            filtered = [nm for nm, _ in sorted_items[:10]]
+        else:
+            max_dl = sorted_items[0][1]
+            dl_floor = max(1, min(58, max_dl - 16))
+            filtered = [nm for nm, dl in sorted_items if dl >= dl_floor][:10]
+        if filtered:
+            per_fc_lists.append(filtered)
+
+    top_weapons: list[str] = []
+    for eq_b in ctx.equipped_bases:
+        if eq_b in index.live_poe2_basetypes and not eq_b.startswith(
+            ("Runeforged ", "Runemastered ")
+        ):
+            eq_fcs = index.basetype_to_classes.get(eq_b, frozenset())
+            if (eq_fcs & target_weapon_fcs) and eq_b not in top_weapons:
+                top_weapons.append(eq_b)
+
+    max_w_len = max((len(lst) for lst in per_fc_lists), default=0)
+    for idx_i in range(max_w_len):
+        for lst in per_fc_lists:
+            if idx_i < len(lst) and lst[idx_i] not in top_weapons:
+                top_weapons.append(lst[idx_i])
+                if len(top_weapons) >= 36:
+                    break
+        if len(top_weapons) >= 36:
+            break
+
+    # Round-robin across (armour_slot, preferred_tag) so co-op builds share equal armour coverage
+    armour_lists: list[list[str]] = []
+    for mt in ordered_tags:
+        for fc in ARMOUR_FILTER_CLASSES:
+            bucket = armours_by_slot_tag.get((fc, mt))
+            if not bucket:
+                continue
+            sorted_a = sorted(bucket.items(), key=lambda kv: (-kv[1], kv[0]))
+            armour_lists.append([nm for nm, _ in sorted_a[:4]])
+
+    top_armours: list[str] = []
+    for eq_b in ctx.equipped_bases:
+        if eq_b in index.live_poe2_basetypes and not eq_b.startswith(
+            ("Runeforged ", "Runemastered ")
+        ):
+            eq_fcs = index.basetype_to_classes.get(eq_b, frozenset())
+            if (eq_fcs & set(ARMOUR_FILTER_CLASSES)) and eq_b not in top_armours and want_tags:
+                top_armours.append(eq_b)
+
+    max_a_len = max((len(lst) for lst in armour_lists), default=0)
+    for idx_i in range(max_a_len):
+        for lst in armour_lists:
+            if idx_i < len(lst) and lst[idx_i] not in top_armours:
+                top_armours.append(lst[idx_i])
+                if len(top_armours) >= 40:
+                    break
+        if len(top_armours) >= 40:
+            break
+
     return top_weapons, top_armours
 
 
@@ -640,7 +857,90 @@ class FilterGenerator:
                         )
                     )
 
+            asc_hay = (
+                f"{build_context.ascendancy_name or ''} {' '.join(build_context.party_members)}"
+            ).lower()
+            if any(k in asc_hay for k in ("spirit walker", "shaman")):
+                azmeri_idols = sorted(
+                    bt
+                    for bt in self.index.live_poe2_basetypes
+                    if "Idol" in bt
+                    and "Augment" in self.index.basetype_to_classes.get(bt, frozenset())
+                    and bt not in self.index.dormant_or_removed_basetypes
+                )
+                if azmeri_idols:
+                    blocks.append(
+                        _render_show_block(
+                            "build_upgrade",
+                            "pob_azmeri_idols",
+                            [
+                                'Class == "Augment"',
+                                f"BaseType == {_quote_list(azmeri_idols)}",
+                            ],
+                            b_style,
+                            sound_pack=sound_pack,
+                            require_custom_sounds=require_custom_sounds,
+                            section_comment="Azmeri Companion & Bonded Idol Priority",
+                        )
+                    )
+
         return blocks
+
+    def _resolve_combined_build_context(
+        self,
+        *,
+        build_context: BuildFilterContext | None = None,
+        build_contexts: Sequence[BuildFilterContext] | None = None,
+        pob_code: str | None = None,
+        pob_codes: Sequence[str] | None = None,
+        pob_slot: str | None = None,
+        pob_slots: Sequence[str] | None = None,
+    ) -> BuildFilterContext | None:
+        collected: list[BuildFilterContext] = []
+        if build_context is not None:
+            collected.append(build_context)
+        if build_contexts:
+            collected.extend(c for c in build_contexts if c is not None)
+
+        if self.build_service is not None:
+            if pob_code is not None and not collected:
+                collected.append(
+                    extract_build_filter_context(
+                        self.build_service,
+                        pob_code=pob_code,
+                        slot=pob_slot or "main",
+                        index=self.index,
+                    )
+                )
+            elif pob_slot is not None and not collected and not pob_slots and not pob_codes:
+                collected.append(
+                    extract_build_filter_context(
+                        self.build_service,
+                        slot=pob_slot,
+                        index=self.index,
+                    )
+                )
+            for idx_c, code_str in enumerate(pob_codes or ()):
+                collected.append(
+                    extract_build_filter_context(
+                        self.build_service,
+                        pob_code=code_str,
+                        slot=f"_filter_coop_{idx_c}",
+                        index=self.index,
+                    )
+                )
+            for slot_name in pob_slots or ():
+                collected.append(
+                    extract_build_filter_context(
+                        self.build_service,
+                        slot=slot_name,
+                        index=self.index,
+                    )
+                )
+
+        if not collected:
+            return None
+        return merge_build_filter_contexts(collected)
 
     def generate(
         self,
@@ -656,8 +956,11 @@ class FilterGenerator:
         use_live_economy: bool = True,
         price_overrides_exalted: Mapping[str, float] | None = None,
         pob_code: str | None = None,
+        pob_codes: Sequence[str] | None = None,
         pob_slot: str | None = None,
+        pob_slots: Sequence[str] | None = None,
         build_context: BuildFilterContext | None = None,
+        build_contexts: Sequence[BuildFilterContext] | None = None,
         output_path: Path | None = None,
     ) -> FilterCompileResult:
         strict_tier = StrictnessTier(strictness) if isinstance(strictness, str) else strictness
@@ -675,18 +978,14 @@ class FilterGenerator:
         else:
             resolved_theme = get_visual_theme(theme)
 
-        resolved_build_ctx = build_context
-        if (
-            resolved_build_ctx is None
-            and self.build_service is not None
-            and (pob_code is not None or pob_slot is not None)
-        ):
-            resolved_build_ctx = extract_build_filter_context(
-                self.build_service,
-                pob_code=pob_code,
-                slot=pob_slot or "main",
-                index=self.index,
-            )
+        resolved_build_ctx = self._resolve_combined_build_context(
+            build_context=build_context,
+            build_contexts=build_contexts,
+            pob_code=pob_code,
+            pob_codes=pob_codes,
+            pob_slot=pob_slot,
+            pob_slots=pob_slots,
+        )
 
         prices_ex, unique_min_max = self.collect_market_prices(
             league=league,
@@ -719,6 +1018,16 @@ class FilterGenerator:
         }
         economy_count = 0
 
+        is_ssf_league = "ssf" in league.lower()
+        ssf_core_currencies = {
+            "Exalted Orb",
+            "Regal Orb",
+            "Orb of Alchemy",
+            "Vaal Orb",
+            "Artificer's Orb",
+            "Lesser Jeweller's Orb",
+        }
+
         for bt_name in sorted(self.index.live_poe2_basetypes):
             if bt_name in self.index.dormant_or_removed_basetypes or bt_name == "Gold":
                 continue
@@ -747,7 +1056,9 @@ class FilterGenerator:
                 tier_buckets["a"].append(bt_name)
             elif ex_val >= 2.0:
                 tier_buckets["b"].append(bt_name)
-            elif ex_val >= max(0.35, policy.min_currency_ex):
+            elif ex_val >= max(0.35, policy.min_currency_ex) or (
+                is_ssf_league and bt_name in ssf_core_currencies
+            ):
                 tier_buckets["c"].append(bt_name)
             elif ex_val >= policy.min_currency_ex:
                 tier_buckets["d"].append(bt_name)
@@ -1129,6 +1440,8 @@ class FilterGenerator:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(filter_text, encoding="utf-8")
             out_dir = output_path.parent
+            if sound_pack is not None and not (out_dir / sound_pack.pack_id).is_dir():
+                out_dir = Path(sound_pack.pack_dir).parent
             written_path_str = str(output_path)
         elif sound_pack is not None:
             out_dir = Path(sound_pack.pack_dir).parent

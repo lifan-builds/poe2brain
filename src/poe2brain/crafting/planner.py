@@ -369,6 +369,7 @@ class CraftingPlanner:
         currency_prices_ex: dict[str, float] | None = None,
         use_fallback_prices: bool = True,
         max_collateral_prob: float = 1.0,
+        protect_existing_targets: bool = True,
     ) -> list[CraftActionEval]:
         state = self._coerce_state(base, ilvl, starting_state)
         specs = [
@@ -382,9 +383,17 @@ class CraftingPlanner:
             target_ids.update(sp.matching_mod_ids)
 
         protected_ids: set[str] = set()
-        for sp in specs:
-            if sp.is_satisfied_by(state):
-                protected_ids.update(sp.matching_mod_ids)
+        if protect_existing_targets:
+            for sp in specs:
+                if sp.is_satisfied_by(state):
+                    protected_ids.update(sp.matching_mod_ids)
+            # When evaluating next clicks on a half-finished item and caller passed only the
+            # *missing* target(s), automatically protect existing high-tier non-fractured mods.
+            if starting_state is not None and not protected_ids and state.mods:
+                non_frac = [m for m in state.mods if not m.fractured]
+                high_tier = [m for m in non_frac if m.display_tier <= 3 or m.is_desecrated]
+                if high_tier:
+                    protected_ids.update(m.mod_id for m in high_tier)
 
         price_book = PriceBook.build(currency_prices_ex, use_fallback_prices=use_fallback_prices)
 
@@ -393,7 +402,7 @@ class CraftingPlanner:
         else:
             pairs = self._candidate_action_pairs(state, target_ids)
 
-        evals: list[CraftActionEval] = []
+        scored_evals: list[tuple[float, CraftActionEval]] = []
         for lv_name, om_list in pairs:
             res: PoolEvalResult = self.engine.evaluate_action(
                 state,
@@ -424,38 +433,46 @@ class CraftingPlanner:
             if res.collateral_remove_probability > 0:
                 col_str = f"collateral_risk={res.collateral_remove_probability:.1%}"
                 note = f"{note}; {col_str}" if note else col_str
+            elif protect_existing_targets and protected_ids:
+                safe_str = "collateral_risk=0.0%"
+                note = f"{note}; {safe_str}" if note else safe_str
 
             lever_id_full = res.lever.lever_id
             if res.omens:
                 lever_id_full = "+".join([res.lever.lever_id, *(o.lever_id for o in res.omens)])
 
-            evals.append(
-                CraftActionEval(
-                    lever_id=lever_id_full,
-                    action_label=self._format_action_label(
-                        res.lever.name, [o.name for o in res.omens]
+            scored_evals.append(
+                (
+                    res.collateral_remove_probability,
+                    CraftActionEval(
+                        lever_id=lever_id_full,
+                        action_label=self._format_action_label(
+                            res.lever.name, [o.name for o in res.omens]
+                        ),
+                        step_cost_exalted=round(step_cost, 4),
+                        hit_probability=round(res.hit_probability, 6),
+                        expected_attempts_to_hit=round(exp_att, 3) if exp_att is not None else None,
+                        expected_cost_to_hit_exalted=round(exp_cost, 3)
+                        if exp_cost is not None
+                        else None,
+                        eligible_pool_weight=res.eligible_pool_weight,
+                        target_weight=res.target_weight,
+                        notes=note or None,
                     ),
-                    step_cost_exalted=round(step_cost, 4),
-                    hit_probability=round(res.hit_probability, 6),
-                    expected_attempts_to_hit=round(exp_att, 3) if exp_att is not None else None,
-                    expected_cost_to_hit_exalted=round(exp_cost, 3)
-                    if exp_cost is not None
-                    else None,
-                    eligible_pool_weight=res.eligible_pool_weight,
-                    target_weight=res.target_weight,
-                    notes=note or None,
                 )
             )
 
-        evals.sort(
-            key=lambda e: (
-                e.expected_cost_to_hit_exalted
-                if e.expected_cost_to_hit_exalted is not None
+        scored_evals.sort(
+            key=lambda item: (
+                (0 if item[0] == 0.0 else 1) if (protect_existing_targets and protected_ids) else 0,
+                round(item[0], 6) if (protect_existing_targets and protected_ids) else 0.0,
+                item[1].expected_cost_to_hit_exalted
+                if item[1].expected_cost_to_hit_exalted is not None
                 else float("inf"),
-                -e.hit_probability,
+                -item[1].hit_probability,
             )
         )
-        return evals
+        return [ev for _, ev in scored_evals]
 
     def _estimate_spec_normal_acq_costs(
         self,
@@ -663,6 +680,11 @@ class CraftingPlanner:
         for sp in specs:
             if sp.is_satisfied_by(state):
                 protected_ids.update(sp.matching_mod_ids)
+        if not can_restart and not protected_ids and state.mods:
+            non_frac = [m for m in state.mods if not m.fractured]
+            high_tier = [m for m in non_frac if m.display_tier <= 3 or m.is_desecrated]
+            if high_tier:
+                protected_ids.update(m.mod_id for m in high_tier)
 
         has_locked_target = any(m.fractured and m.mod_id in protected_ids for m in state.mods)
         eff_can_restart = can_restart and not has_locked_target
@@ -803,6 +825,8 @@ class CraftingPlanner:
         if cryst_setup is not None:
             best_score, best = cryst_setup
 
+        eval_cache: list[tuple[str, list[str], PoolEvalResult]] = []
+        has_zero_collateral_option = cryst_setup is not None
         for lv_name, om_list in candidates:
             if lv_name == "Fracturing Orb":
                 continue
@@ -815,8 +839,17 @@ class CraftingPlanner:
             )
             if res.hit_probability <= 0:
                 continue
+            if res.collateral_remove_probability == 0.0:
+                has_zero_collateral_option = True
+            eval_cache.append((lv_name, om_list, res))
+
+        for lv_name, _om_list, res in eval_cache:
             # Never destroy already-hit targets when a 0-collateral move or restart exists
-            if protected_ids and res.collateral_remove_probability > 0 and eff_can_restart:
+            if (
+                protected_ids
+                and res.collateral_remove_probability > 0
+                and (eff_can_restart or has_zero_collateral_option)
+            ):
                 continue
 
             cost = price_book.action_cost(
@@ -854,7 +887,14 @@ class CraftingPlanner:
             opener_overhead = base_cost_ex if state.rarity == ItemRarity.NORMAL else 0.0
             eff_cost_per_hit = (cost + opener_overhead) / res.hit_probability
             if res.collateral_remove_probability > 0:
-                eff_cost_per_hit /= max(0.05, 1.0 - res.collateral_remove_probability)
+                col_penalty = (
+                    res.collateral_remove_probability * max(reacquire_cost, 2500.0)
+                    if (protected_ids and not eff_can_restart)
+                    else 0.0
+                )
+                eff_cost_per_hit = (eff_cost_per_hit + col_penalty) / max(
+                    0.05, 1.0 - res.collateral_remove_probability
+                )
 
             if eff_cost_per_hit < best_score:
                 best_score = eff_cost_per_hit

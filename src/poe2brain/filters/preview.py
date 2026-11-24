@@ -237,12 +237,24 @@ def render_filter_preview_html(
     build_banner = ""
     if result and result.build_context:
         bc = result.build_context
+        offhand_part = (
+            f" · Offhands: {html.escape(', '.join(bc.offhand_filter_classes))}"
+            if bc.offhand_filter_classes
+            else ""
+        )
+        party_part = (
+            f" · Party: {html.escape(' & '.join(bc.party_members))}"
+            if len(bc.party_members) > 1
+            else ""
+        )
         build_banner = (
             f'<div class="build-banner">PoB2 Build Context: '
             f"<strong>{html.escape(bc.ascendancy_name or bc.class_name or 'Custom')}</strong> "
             f"(Lv {bc.level}, {html.escape(bc.main_skill or 'Active Skill')}) · "
-            f"Weapons: {html.escape(', '.join(bc.weapon_filter_classes))} · "
-            f"Armour: {html.escape(', '.join(bc.preferred_armour_tags))}</div>"
+            f"Weapons: {html.escape(', '.join(bc.weapon_filter_classes))}"
+            f"{offhand_part} · "
+            f"Armour: {html.escape(', '.join(bc.preferred_armour_tags))}"
+            f"{party_part}</div>"
         )
 
     css_lines = "\n  ".join(

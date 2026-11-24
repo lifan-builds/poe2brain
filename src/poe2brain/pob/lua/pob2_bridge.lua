@@ -488,13 +488,15 @@ local CORE_STAT_KEYS = {
 	"FullDPS", "FullDotDPS", "TotalDPS", "CombinedDPS", "TotalDot", "TotalDotDPS",
 	"WithBleedDPS", "WithIgniteDPS", "WithPoisonDPS", "AverageDamage", "AverageBurstDamage",
 	"Speed", "HitChance", "AccuracyHitChance", "CritChance", "CritMultiplier",
-	"ManaCost", "LifeCost", "ESCost", "RageCost",
+	"ManaCost", "ManaPerSecondCost", "ManaPercentCost", "ManaPercentPerSecondCost", "ManaCostWarning",
+	"LifeCost", "LifePerSecondCost", "ESCost", "ESPerSecondCost", "RageCost",
 	-- Pools & Sustain
 	"TotalEHP", "Life", "LifeUnreserved", "LifeUnreservedPercent", "LifeReserved", "LifeReservedPercent",
 	"LifeRegenRecovery", "LifeLeechGainRate",
 	"EnergyShield", "EnergyShieldRecharge", "EnergyShieldRechargeDelay", "EnergyShieldRegenRecovery",
 	"Mana", "ManaUnreserved", "ManaUnreservedPercent", "ManaReserved", "ManaReservedPercent",
 	"ManaRegenRecovery", "Ward",
+	"ChaosInoculation", "EnergyShieldProtectsMana",
 	-- Spirit
 	"Spirit", "SpiritReserved", "SpiritUnreserved", "SpiritReservedPercent", "SpiritUnreservedPercent",
 	-- Resistances
@@ -504,13 +506,16 @@ local CORE_STAT_KEYS = {
 	"Armour", "PhysicalDamageReduction",
 	"Evasion", "EvadeChance", "MeleeEvadeChance", "ProjectileEvadeChance", "SpellEvadeChance",
 	"DeflectionRating", "DeflectChance", "DeflectEffect",
-	"BlockChance", "BlockChanceMax", "EffectiveBlockChance", "SpellBlockChance", "ProjectileBlockChance",
+	"BlockChance", "BlockChanceMax", "BlockChanceOverCap", "EffectiveBlockChance",
+	"SpellBlockChance", "SpellBlockChanceMax", "EffectiveSpellBlockChance",
+	"ProjectileBlockChance", "EffectiveProjectileBlockChance",
 	-- Max Hits & Thresholds
 	"PhysicalMaximumHitTaken", "FireMaximumHitTaken", "ColdMaximumHitTaken",
 	"LightningMaximumHitTaken", "ChaosMaximumHitTaken", "SecondMinimalMaximumHitTaken",
 	"StunThreshold", "AilmentThreshold",
 	-- Attributes & Mobility
-	"Str", "Dex", "Int", "TotalAttr", "ReqStrString", "ReqDexString", "ReqIntString",
+	"Str", "Dex", "Int", "TotalAttr", "ReqStr", "ReqDex", "ReqInt",
+	"ReqStrString", "ReqDexString", "ReqIntString",
 	"MovementSpeedMod", "EffectiveMovementSpeedMod",
 }
 
@@ -564,6 +569,9 @@ local function extractCharacterInfo()
 	if spec and spec.CountAllocNodes then
 		usedPoints, ascUsedPoints = spec:CountAllocNodes()
 	end
+	local lvl = math.max(1, math.min(100, math.floor(tonumber(build.characterLevel) or 1)))
+	local respecTbl = (data and data.goldRespecPrices) or (build.data and build.data.goldRespecPrices) or {}
+	local goldPerPt = tonumber(respecTbl[lvl]) or 0
 	return {
 		name = build.buildName or "Unnamed Build",
 		level = build.characterLevel or 1,
@@ -574,6 +582,8 @@ local function extractCharacterInfo()
 		treeVersion = spec and spec.treeVersion or latestTreeVersion,
 		passivePointsUsed = usedPoints or 0,
 		ascendancyPointsUsed = ascUsedPoints or 0,
+		goldRespecPerPoint = goldPerPt,
+		ascendancyRespecPerPoint = goldPerPt * 5,
 	}
 end
 
@@ -1793,20 +1803,138 @@ methods.list_valid_supports = function(params)
 	if not activeSkill then
 		return { slot = slotName, groupIndex = gIdx, supports = {} }
 	end
-	local supports = {}
-	for gemId, gemData in pairs(build.data.gems or {}) do
-		if gemData.grantedEffect and gemData.grantedEffect.support then
-			local okS, canSup = pcall(calcLib.canGrantedEffectSupportActiveSkill, gemData.grantedEffect, activeSkill)
-			if okS and canSup then
-				supports[#supports + 1] = {
-					gemId = gemId,
-					gameId = gemData.gameId or dkjson.null,
-					name = gemData.name or gemId,
-				}
+
+	local tierFilter = params and params.tier ~= nil and tonumber(params.tier) or nil
+	local includeLineage = (params == nil or params.includeLineage ~= false)
+	local rankByDps = (params and params.rankByDps == true)
+	local topN = params and params.topN ~= nil and tonumber(params.topN) or nil
+
+	local equippedById = {}
+	local equippedIdxByFamily = {}
+	for idx, g in ipairs(group.gemList or {}) do
+		local gd = g.gemData
+		if gd then
+			if gd.id then equippedById[gd.id] = idx end
+			if gd.gemFamily and gd.grantedEffect and gd.grantedEffect.support then
+				equippedIdxByFamily[gd.gemFamily] = idx
 			end
 		end
 	end
-	table.sort(supports, function(a, b) return a.name < b.name end)
+
+	local supports = {}
+	for gemId, gemData in pairs(build.data.gems or {}) do
+		if gemData.grantedEffect and gemData.grantedEffect.support then
+			local isLineage = (gemData.tags and gemData.tags.lineage == true) or false
+			local sTier = tonumber(gemData.Tier) or 0
+			local keep = true
+			if not includeLineage and isLineage then
+				keep = false
+			elseif tierFilter ~= nil then
+				keep = (sTier == tierFilter) or (includeLineage and isLineage)
+			end
+			if keep then
+				local okS, canSup = pcall(calcLib.canGrantedEffectSupportActiveSkill, gemData.grantedEffect, activeSkill)
+				if okS and canSup then
+					supports[#supports + 1] = {
+						_gemData = gemData,
+						gemId = gemId,
+						gameId = gemData.gameId or dkjson.null,
+						name = gemData.name or gemId,
+						supportTier = sTier,
+						isLineage = isLineage,
+						maxCopiesPerChar = isLineage and 1 or dkjson.null,
+						gemFamily = gemData.gemFamily or dkjson.null,
+						reqStr = tonumber(gemData.reqStr) or 0,
+						reqDex = tonumber(gemData.reqDex) or 0,
+						reqInt = tonumber(gemData.reqInt) or 0,
+						alreadySocketed = equippedById[gemId] ~= nil,
+					}
+				end
+			end
+		end
+	end
+
+	if rankByDps and #supports > 0 then
+		local calcFunc, calcBase = build.calcsTab:GetMiscCalculator()
+		local override = (gIdx ~= (build.mainSocketGroup or 1)) and { mainSocketGroup = gIdx } or nil
+		local baseOut = override and calcFunc(override, false) or calcBase
+		local baseStats = extractStatsTable(baseOut)
+		local useFull = (override == nil) and (safeNum(baseStats.FullDPS, 0) > 0)
+		local baseDps = useFull and safeNum(baseStats.FullDPS, 0) or safeNum(baseStats.EffectiveDPS, 0)
+		local fastOpts = { nodeAlloc = true, requirementsItems = true, requirementsGems = true, skipEHP = true, fullDPSOnly = useFull }
+
+		local gemList = group.gemList
+		local savedDisplayGemList = group.displayGemList
+		local appendIdx = #gemList + 1
+
+		for _, entry in ipairs(supports) do
+			local gd = entry._gemData
+			entry._gemData = nil
+			if entry.alreadySocketed then
+				entry.dpsBefore = baseDps
+				entry.dpsAfter = baseDps
+				entry.dpsDelta = 0
+				entry.dpsPct = 0
+				entry.replacesGem = dkjson.null
+			else
+				local famIdx = (gd.gemFamily and equippedIdxByFamily[gd.gemFamily]) or nil
+				local targetIdx = famIdx or appendIdx
+				local oldSlot = gemList[targetIdx]
+				local replacedName = (oldSlot and oldSlot.gemData and oldSlot.gemData.name) or dkjson.null
+				local lvl = (build.skillsTab.ProcessGemLevel and build.skillsTab:ProcessGemLevel(gd)) or gd.naturalMaxLevel or 1
+				local okCalc, out = pcall(function()
+					gemList[targetIdx] = {
+						level = lvl,
+						quality = 0,
+						count = 1,
+						enabled = true,
+						enableGlobal1 = true,
+						enableGlobal2 = true,
+						gemId = gd.id,
+						nameSpec = gd.name,
+						skillId = gd.grantedEffectId,
+						gemData = gd,
+					}
+					return calcFunc(override, useFull, fastOpts)
+				end)
+				gemList[targetIdx] = oldSlot
+				group.displayGemList = savedDisplayGemList
+
+				if okCalc and out then
+					local afterStats = extractStatsTable(out)
+					local newDps = useFull and safeNum(afterStats.FullDPS, 0) or safeNum(afterStats.EffectiveDPS, 0)
+					local delta = newDps - baseDps
+					entry.dpsBefore = baseDps
+					entry.dpsAfter = newDps
+					entry.dpsDelta = delta
+					entry.dpsPct = baseDps > 0 and (delta / baseDps * 100.0) or 0.0
+					entry.replacesGem = replacedName
+				else
+					entry.dpsBefore = baseDps
+					entry.dpsAfter = baseDps
+					entry.dpsDelta = 0
+					entry.dpsPct = 0
+					entry.replacesGem = dkjson.null
+				end
+			end
+		end
+		table.sort(supports, function(a, b)
+			if math.abs((a.dpsDelta or 0) - (b.dpsDelta or 0)) > 1e-4 then
+				return (a.dpsDelta or 0) > (b.dpsDelta or 0)
+			end
+			return a.name < b.name
+		end)
+	else
+		for _, entry in ipairs(supports) do entry._gemData = nil end
+		table.sort(supports, function(a, b) return a.name < b.name end)
+	end
+
+	if topN and topN > 0 and #supports > topN then
+		local trimmed = {}
+		for i = 1, topN do trimmed[i] = supports[i] end
+		supports = trimmed
+	end
+
 	return { slot = slotName, groupIndex = gIdx, count = #supports, supports = supports }
 end
 
@@ -2261,8 +2389,11 @@ methods.rank_passive_notables = function(params)
 
 	local calcFunc, baseOut = build.calcsTab:GetMiscCalculator()
 	local baseStats = extractStatsTable(baseOut)
+	if (statName == "FullDPS" or statName == "EffectiveDPS") and safeNum(baseStats.FullDPS, 0) <= 0 and safeNum(baseStats.EffectiveDPS, 0) > 0 then
+		statName = "EffectiveDPS"
+	end
 	local baseVal = safeNum(baseStats[statName], baseStats.EffectiveDPS)
-	local useFullDPS = (statName == "FullDPS" or statName == "EffectiveDPS")
+	local useFullDPS = (statName == "FullDPS") and (safeNum(baseStats.FullDPS, 0) > 0)
 
 	local t0 = os.clock()
 	local singleCache = {}
@@ -2285,7 +2416,7 @@ methods.rank_passive_notables = function(params)
 
 				local fullPathDelta = singleDelta
 				local pathIds = {}
-				if sortBy ~= "anoint" and dist <= maxPathDist and node.path and #node.path > 0 then
+				if singleDelta > 0.001 and sortBy ~= "anoint" and dist <= maxPathDist and node.path and #node.path > 0 then
 					local pathSet = {}
 					for _, pNode in ipairs(node.path) do
 						if not pNode.alloc then
@@ -2310,6 +2441,7 @@ methods.rank_passive_notables = function(params)
 						name = node.dn or "",
 						type = node.type or "Notable",
 						stats = node.sd or {},
+						recipe = node.recipe or {},
 						pathDist = dist < 1000 and dist or dkjson.null,
 						pathNodeIds = pathIds,
 						singleNodeDelta = singleDelta,
@@ -2470,6 +2602,7 @@ methods.search_nodes = function(params)
 						allocated = node.alloc == true,
 						pathDist = node.pathDist or dkjson.null,
 						stats = node.sd or {},
+						recipe = node.recipe or {},
 					}
 				end
 			end
@@ -2503,18 +2636,22 @@ methods.slot_stat_weights = function(params)
 	end
 
 	-- Normalize statWeights list
+	local mainOut = build.calcsTab and build.calcsTab.mainOutput
+	local hasFullDps = safeNum(mainOut and mainOut.FullDPS, 0) > 0
+	local fallbackDpsStat = (safeNum(mainOut and mainOut.CombinedDPS, 0) > 0) and "CombinedDPS" or "TotalDPS"
 	local statWeights = {}
 	if type(params.statWeights) == "table" and #params.statWeights > 0 then
 		for _, sw in ipairs(params.statWeights) do
 			local st = tostring(sw.stat or "FullDPS")
 			if st == "EffectiveDPS" then st = "FullDPS" end
+			if st == "FullDPS" and not hasFullDps then st = fallbackDpsStat end
 			statWeights[#statWeights + 1] = {
 				stat = st,
 				weightMult = tonumber(sw.weightMult or sw.weight) or 1.0,
 			}
 		end
 	else
-		statWeights[1] = { stat = "FullDPS", weightMult = 1.0 }
+		statWeights[1] = { stat = hasFullDps and "FullDPS" or fallbackDpsStat, weightMult = 1.0 }
 	end
 
 	-- If targetSlot is currently empty, temporarily insert a zero-mod white item so

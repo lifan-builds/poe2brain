@@ -142,10 +142,56 @@ class ArbitrageScanReport(Poe2Model):
     scout_divine_exalted: float | None = None
     ninja_divine_exalted: float | None = None
     numeraire_lag_pct: float | None = None
+    max_investment_divine: float | None = None
+    max_gold_per_cycle: int | None = None
     opportunities: list[ArbitrageOpportunity] = Field(default_factory=list)
     order_books: list[OrderBookQuote] = Field(default_factory=list)
     trap_warnings: list[ArbitrageTrapWarning] = Field(default_factory=list)
     execution_rules: list[str] = Field(default_factory=list)
+
+
+class CompoundingRung(Poe2Model):
+    rung_index: int
+    opportunity_id: str
+    title: str
+    mechanism: ArbitrageMechanism
+    is_deterministic: bool
+    unit_cost_exalted: float
+    unit_profit_exalted: float
+    unit_gold_est: int
+    cycles_executed: int
+    starting_bankroll_exalted: float
+    starting_bankroll_divine: float
+    ending_bankroll_exalted: float
+    ending_bankroll_divine: float
+    gold_spent_on_rung: int
+    remaining_gold_after_rung: int
+    profit_ex_per_10k_gold: float
+    primary_denomination: str = "divine"
+    steps: list[str] = Field(default_factory=list)
+    rationale: str = ""
+
+
+class CompoundingLadderReport(Poe2Model):
+    league: str = DEFAULT_LEAGUE
+    divine_exalted: float
+    chaos_exalted: float
+    starting_exalted: float
+    starting_divine: float
+    gold_budget: int
+    target_divine: float
+    target_exalted: float
+    final_bankroll_exalted: float
+    final_bankroll_divine: float
+    total_profit_exalted: float
+    total_profit_divine: float
+    total_gold_spent: int
+    remaining_gold: int
+    target_reached: bool
+    estimated_extra_gold_needed: int = 0
+    rungs: list[CompoundingRung] = Field(default_factory=list)
+    skipped_high_capital_or_gold_plays: list[str] = Field(default_factory=list)
+    strategy_notes: list[str] = Field(default_factory=list)
 
 
 def estimate_alva_gold_per_unit(slug: str, unit_exalted: float) -> int:
@@ -234,12 +280,46 @@ class ArbitrageScanner:
     def __exit__(self, *_: object) -> None:
         self.close()
 
+    def scan(
+        self,
+        league: str = DEFAULT_LEAGUE,
+        *,
+        min_volume_divine: float = 2.0,
+        min_roi_pct: float = 5.0,
+        max_investment_divine: float | None = None,
+        max_gold_per_cycle: int | None = None,
+        include_live_exchange: bool = True,
+        exchange_pairs: Sequence[tuple[str, str]] = DEFAULT_EXCHANGE_TRIANGLE_PAIRS,
+        verify_pair_history_top_n: int = 3,
+        include_encounter_gated: bool = True,
+        limit: int = 25,
+        force_refresh: bool = False,
+    ) -> ArbitrageScanReport:
+        """Primary entrypoint for scanning executable PoE2 arbitrage opportunities with optional
+        `max_investment_divine` capital ceiling and `max_gold_per_cycle` Gold tax cap.
+        """
+        return self.scan_all(
+            league=league,
+            min_volume_divine=min_volume_divine,
+            min_roi_pct=min_roi_pct,
+            max_investment_divine=max_investment_divine,
+            max_gold_per_cycle=max_gold_per_cycle,
+            include_live_exchange=include_live_exchange,
+            exchange_pairs=exchange_pairs,
+            verify_pair_history_top_n=verify_pair_history_top_n,
+            include_encounter_gated=include_encounter_gated,
+            limit=limit,
+            force_refresh=force_refresh,
+        )
+
     def scan_all(
         self,
         league: str = DEFAULT_LEAGUE,
         *,
         min_volume_divine: float = 2.0,
         min_roi_pct: float = 5.0,
+        max_investment_divine: float | None = None,
+        max_gold_per_cycle: int | None = None,
         include_live_exchange: bool = True,
         exchange_pairs: Sequence[tuple[str, str]] = DEFAULT_EXCHANGE_TRIANGLE_PAIRS,
         verify_pair_history_top_n: int = 3,
@@ -250,6 +330,7 @@ class ArbitrageScanner:
         snap = self.economy._ensure_snapshot(league, force_refresh=force_refresh)
         rates = snap.rates
         div_ex = rates.divine_exalted
+        max_cost_ex = max_investment_divine * div_ex if max_investment_divine is not None else None
 
         div_entry = snap.entries_by_id.get("divine")
         scout_div_ex = (
@@ -283,18 +364,29 @@ class ArbitrageScanner:
             opportunities.extend(ob_opps)
             traps.extend(ob_traps)
 
+        alva_vol_floor = (
+            max(8.0, min_volume_divine)
+            if (max_investment_divine is not None and max_investment_divine < 3.0)
+            else max(25.0, min_volume_divine)
+        )
         mm_opps, mm_traps = self.scan_alva_spread_making(
             league=league,
-            min_volume_divine=max(25.0, min_volume_divine),
+            min_volume_divine=alva_vol_floor,
+            include_low_capital=(max_investment_divine is not None and max_investment_divine < 3.0),
             snap=snap,
         )
         opportunities.extend(mm_opps)
         traps.extend(mm_traps)
 
         # (B2): Numeraire-adjusted cross-denomination spreads + pair history verification
+        cd_vol_floor = (
+            max(2.0, min_volume_divine)
+            if (max_investment_divine is not None and max_investment_divine < 3.0)
+            else max(10.0, min_volume_divine)
+        )
         cd_opps, cd_traps = self.scan_cross_denomination_spreads(
             league=league,
-            min_volume_divine=max(10.0, min_volume_divine),
+            min_volume_divine=cd_vol_floor,
             min_spread_pct=max(12.0, min_roi_pct),
             verify_pair_history_top_n=verify_pair_history_top_n,
             snap=snap,
@@ -329,6 +421,8 @@ class ArbitrageScanner:
             if opp.roi_pct >= min_roi_pct
             and opp.gross_profit_exalted > 0
             and (include_encounter_gated or opp.executable_in_hideout)
+            and (max_cost_ex is None or opp.input_cost_exalted <= max_cost_ex + 1e-6)
+            and (max_gold_per_cycle is None or opp.gold_per_cycle_est <= max_gold_per_cycle)
         ]
 
         # Rank by hideout executability -> determinism -> liquidity-weighted Gold & Exalted profit
@@ -387,6 +481,8 @@ class ArbitrageScanner:
             scout_divine_exalted=round(scout_div_ex, 4),
             ninja_divine_exalted=round(ninja_div_ex, 4),
             numeraire_lag_pct=lag_pct,
+            max_investment_divine=max_investment_divine,
+            max_gold_per_cycle=max_gold_per_cycle,
             opportunities=filtered[: max(1, limit)],
             order_books=order_books,
             trap_warnings=deduped_traps,
@@ -698,6 +794,7 @@ class ArbitrageScanner:
         *,
         min_volume_divine: float = 150.0,
         assumed_maker_capture_pct: float = 6.0,
+        include_low_capital: bool = False,
         snap: _LeagueSnapshot | None = None,
     ) -> tuple[list[ArbitrageOpportunity], list[ArbitrageTrapWarning]]:
         """Evaluate Gold-efficient asynchronous limit-order market-making on Alva's Currency
@@ -735,24 +832,35 @@ class ArbitrageScanner:
 
         # High-liquidity single-unit items priced between 3 Div and 60 Div traded in Divine/Chaos
         candidates: list[_MergedMarketEntry] = []
+        micro_candidates: list[_MergedMarketEntry] = []
         for entry in resolved_snap.entries_by_id.values():
             vol = entry.volume_divine or 0.0
             if (
                 entry.quote is None
                 or vol < min_volume_divine
-                or entry.max_volume_currency not in ("divine", "chaos")
+                or entry.max_volume_currency not in ("divine", "chaos", "exalted")
+                or entry.id in ("divine", "chaos", "exalted")
             ):
                 continue
             val_div = entry.quote.divine or (entry.quote.exalted / div_ex)
-            if 3.0 <= val_div <= 60.0 and entry.id not in ("divine", "chaos", "exalted"):
+            if 3.0 <= val_div <= 60.0 and entry.max_volume_currency in ("divine", "chaos"):
                 candidates.append(entry)
+            elif include_low_capital and 0.12 <= val_div < 3.0:
+                micro_candidates.append(entry)
 
         candidates.sort(key=lambda e: e.volume_divine or 0.0, reverse=True)
-        for entry in candidates[:4]:
+        micro_candidates.sort(key=lambda e: e.volume_divine or 0.0, reverse=True)
+        selected_entries = [*candidates[:4], *micro_candidates[:4]]
+        for entry in selected_entries:
             assert entry.quote is not None
             val_ex = entry.quote.exalted
             val_div = entry.quote.divine or (val_ex / div_ex)
-            denom = entry.max_volume_currency or "divine"
+            raw_mvc = entry.max_volume_currency or "divine"
+            denom = (
+                "chaos"
+                if (val_div < 1.0 and raw_mvc in ("divine", "exalted"))
+                else (raw_mvc if raw_mvc in ("divine", "chaos") else "chaos")
+            )
             denom_unit_ex = div_ex if denom == "divine" else resolved_snap.rates.chaos_exalted
             denom_qty = val_ex / denom_unit_ex
             # Posting fractional integer ratio bid (e.g. -3%) and ask (+3%) on Alva limit book
@@ -1268,7 +1376,10 @@ class ArbitrageScanner:
                     continue
                 src_vol = src_e.volume_divine or 0.0
                 dst_vol = dst_e.volume_divine or 0.0
-                if src_vol < min(0.5, min_volume_divine) or dst_vol < min_volume_divine:
+                src_units = (src_vol * div_ex) / max(0.1, src_e.quote.exalted)
+                if (src_vol < min(0.5, min_volume_divine) and src_units < 6.0) or (
+                    dst_vol < min_volume_divine
+                ):
                     continue
                 cost_ex = 3.0 * src_e.quote.exalted
                 out_ex = dst_e.quote.exalted
@@ -1385,15 +1496,15 @@ class ArbitrageScanner:
                         )
 
         # 4. Empirical Drop-Weighted Catalyst & Refined Catalyst 3-to-1 Reforging EV
-        for prefix, min_cat_vol in (
-            ("refined-", max(5.0, min_volume_divine)),
-            ("", max(3.0, min_volume_divine)),
+        for prefix, min_cat_vol, min_pool_vol in (
+            ("refined-", max(5.0, min_volume_divine), 1.0),
+            ("", max(0.5, min(1.0, min_volume_divine)), 0.15),
         ):
             pool: dict[str, tuple[_MergedMarketEntry, float]] = {}
             for key, weight in EMPIRICAL_CATALYST_REFORGE_WEIGHTS.items():
                 slug = f"{prefix}{key}-catalyst"
                 entry = resolved_snap.entries_by_id.get(slug)
-                if entry and entry.quote and (entry.volume_divine or 0.0) >= 1.0:
+                if entry and entry.quote and (entry.volume_divine or 0.0) >= min_pool_vol:
                     pool[key] = (entry, weight)
             if len(pool) < 8:
                 continue
@@ -1402,7 +1513,8 @@ class ArbitrageScanner:
             for key_in, (entry_in, _w_in) in ordered_inputs[:3]:
                 assert entry_in.quote is not None
                 in_vol = entry_in.volume_divine or 0.0
-                if in_vol < min_cat_vol:
+                in_units = (in_vol * div_ex) / max(0.1, entry_in.quote.exalted)
+                if in_vol < min_cat_vol and (prefix != "" or in_units < 25.0):
                     continue
                 other_total_w = sum(w for k, (_, w) in pool.items() if k != key_in)
                 if other_total_w <= 0:
@@ -1425,12 +1537,13 @@ class ArbitrageScanner:
                         entry_in.id, 3, entry_in.quote.exalted
                     ) + estimate_leg_gold(entry_in.id, 1, ev_out_ex)
                     cat_label = prefix.title().rstrip("-")
+                    cat_suffix = f"{cat_label} Catalyst" if cat_label else "Catalyst"
                     opportunities.append(
                         ArbitrageOpportunity(
                             id=f"weighted_catalyst_ev:{entry_in.id}",
                             title=(
                                 f"Weighted 3-to-1 Catalyst EV: "
-                                f"3x {entry_in.name} -> Random {cat_label} Catalyst"
+                                f"3x {entry_in.name} -> Random {cat_suffix}"
                             ),
                             mechanism=ArbitrageMechanism.DETERMINISTIC_CONVERSION,
                             executable_in_hideout=True,
@@ -1720,6 +1833,279 @@ class ArbitrageScanner:
                 )
 
         return opportunities, traps
+
+    # ------------------------------------------------------------------
+    # (E): Broke-to-Rich Capital & Gold Compounding Ladder
+    # ------------------------------------------------------------------
+
+    def build_compounding_ladder(
+        self,
+        starting_exalted: float,
+        gold_budget: int,
+        target_divine: float,
+        *,
+        league: str = DEFAULT_LEAGUE,
+        min_volume_divine: float = 0.8,
+        deterministic_only: bool = False,
+        include_live_exchange: bool = False,
+        max_rungs: int = 10,
+        force_refresh: bool = False,
+    ) -> CompoundingLadderReport:
+        """Chain executable hideout arbitrage & conversion rungs from a small starting bankroll
+        (e.g. `250 Ex` = `~0.55 Div` + `80,000 Gold`) up to `target_divine` (e.g. `50+ Div`)
+        while strictly respecting both per-step capital affordability AND Alva Gold tax limits.
+        """
+        if starting_exalted <= 0:
+            raise ValueError("starting_exalted must be > 0")
+        if gold_budget < 0:
+            raise ValueError("gold_budget must be >= 0")
+        if target_divine <= 0:
+            raise ValueError("target_divine must be > 0")
+
+        snap = self.economy._ensure_snapshot(league, force_refresh=force_refresh)
+        div_ex = snap.rates.divine_exalted
+        chaos_ex = snap.rates.chaos_exalted
+        target_ex = target_divine * div_ex
+
+        # Gather full spectrum of hideout-executable opportunities from micro (<0.5 Div) to high
+        eff_vol = min(min_volume_divine, 0.5)
+        full_scan = self.scan_all(
+            league=league,
+            min_volume_divine=eff_vol,
+            min_roi_pct=4.0,
+            include_live_exchange=include_live_exchange,
+            include_encounter_gated=False,
+            limit=200,
+            force_refresh=False,
+        )
+        micro_mm, _ = self.scan_alva_spread_making(
+            league=league,
+            min_volume_divine=max(5.0, eff_vol),
+            include_low_capital=True,
+            snap=snap,
+        )
+
+        by_id: dict[str, ArbitrageOpportunity] = {}
+        for opp in (*full_scan.opportunities, *micro_mm):
+            if not opp.executable_in_hideout or opp.gross_profit_exalted <= 0:
+                continue
+            if deterministic_only and not opp.is_deterministic:
+                continue
+            by_id[opp.id] = opp
+
+        all_opps = sorted(by_id.values(), key=lambda o: o.input_cost_exalted)
+
+        # Document why high-ticket flips & Exalted-stack churn are blocked at t=0
+        skipped: list[str] = []
+        ex_roundtrip_gold = estimate_leg_gold("exalted", div_ex, 1.0) + estimate_leg_gold(
+            "divine", 1.0, div_ex
+        )
+        skipped.append(
+            f"Blocked 1 Divine <-> {div_ex:.0f} Exalted churn (~{ex_roundtrip_gold:,} Gold/cycle "
+            f"burns {ex_roundtrip_gold / max(1, gold_budget) * 100:.0f}% of total Gold budget per "
+            f"round-trip)."
+        )
+        for un_opp in sorted(
+            [o for o in all_opps if o.input_cost_exalted > starting_exalted * 2.0],
+            key=lambda o: o.input_cost_exalted,
+            reverse=True,
+        )[:3]:
+            skipped.append(
+                f"Deferred {un_opp.title} at t=0: requires {un_opp.input_cost_exalted:.0f} Ex "
+                f"({un_opp.input_cost_exalted / div_ex:.2f} Div) > "
+                f"starting {starting_exalted:.0f} Ex."
+            )
+
+        def _max_sustainable_cycles(opp: ArbitrageOpportunity) -> int:
+            vol_ex = max(opp.min_leg_volume_divine * div_ex, opp.input_cost_exalted * 4.0)
+            return max(
+                3, min(40, int(math.ceil((vol_ex * 0.45) / max(1.0, opp.input_cost_exalted))))
+            )
+
+        def _min_bankroll_multiple(opp: ArbitrageOpportunity) -> float:
+            if opp.is_deterministic:
+                return 1.0
+            # Weighted 3-to-1 Catalyst reforging outputs a tradeable Catalyst (~30% max loss)
+            return 1.35
+
+        def _opp_utility(
+            opp: ArbitrageOpportunity, bankroll_ex: float, rem_gold_now: int, rem_need_ex: float
+        ) -> float:
+            if bankroll_ex + 1e-6 < _min_bankroll_multiple(opp) * opp.input_cost_exalted:
+                return -1.0
+            req_ex_per_10k = max(25.0, (rem_need_ex / max(1, rem_gold_now)) * 10_000.0)
+            liq_weight = min(1.0, math.log10(max(1.4, opp.min_leg_volume_divine + 1.0)) / 1.3)
+            det_mult = 1.15 if opp.is_deterministic else 0.90
+            # Penalize Gold-inefficient churn when Gold is the binding constraint to target
+            gold_eff_ratio = opp.profit_ex_per_10k_gold / req_ex_per_10k
+            gold_factor = min(2.5, gold_eff_ratio**1.35)
+            return (
+                (opp.gross_profit_exalted * 0.55 + opp.profit_ex_per_10k_gold * 0.45)
+                * max(0.30, liq_weight)
+                * det_mult
+                * max(0.01, gold_factor)
+            )
+
+        cur_ex = float(starting_exalted)
+        rem_gold = int(gold_budget)
+        exhausted_ids: set[str] = set()
+        rungs: list[CompoundingRung] = []
+
+        while cur_ex + 1e-6 < target_ex and rem_gold > 0 and len(rungs) < max_rungs:
+            need_ex = target_ex - cur_ex
+            req_eff = (need_ex / max(1, rem_gold)) * 10_000.0
+            affordable = [
+                o
+                for o in all_opps
+                if o.id not in exhausted_ids
+                and o.input_cost_exalted <= cur_ex + 1e-6
+                and o.gold_per_cycle_est <= rem_gold
+                and _opp_utility(o, cur_ex, rem_gold, need_ex) > 0
+            ]
+            # Do not force rotation into a Gold-burning filler if all unexhausted options are <35%
+            # of required Gold efficiency while a previously used high-efficiency play is available.
+            if not affordable or max(o.profit_ex_per_10k_gold for o in affordable) < 0.35 * req_eff:
+                all_affordable = [
+                    o
+                    for o in all_opps
+                    if o.input_cost_exalted <= cur_ex + 1e-6
+                    and o.gold_per_cycle_est <= rem_gold
+                    and _opp_utility(o, cur_ex, rem_gold, need_ex) > 0
+                ]
+                if all_affordable and (
+                    not affordable
+                    or max(o.profit_ex_per_10k_gold for o in all_affordable)
+                    > 2.0 * max(o.profit_ex_per_10k_gold for o in affordable)
+                ):
+                    affordable = all_affordable
+            if not affordable:
+                break
+
+            chosen = max(affordable, key=lambda o: _opp_utility(o, cur_ex, rem_gold, need_ex))
+            chosen_util = _opp_utility(chosen, cur_ex, rem_gold, need_ex)
+
+            # Find the lowest capital threshold above `cur_ex` that unlocks a strictly stronger play
+            higher_unlocks = [
+                o.input_cost_exalted * _min_bankroll_multiple(o)
+                for o in all_opps
+                if o.input_cost_exalted * _min_bankroll_multiple(o) > cur_ex + 1e-6
+                and o.input_cost_exalted <= target_ex
+                and o.gold_per_cycle_est <= rem_gold
+                and _opp_utility(
+                    o,
+                    max(cur_ex * 2.0, o.input_cost_exalted * _min_bankroll_multiple(o) * 1.1),
+                    rem_gold,
+                    need_ex,
+                )
+                > chosen_util * 1.20
+            ]
+            rung_goal_ex = min([target_ex, *higher_unlocks]) if higher_unlocks else target_ex
+
+            cycles_to_goal = max(
+                1, int(math.ceil((rung_goal_ex - cur_ex) / chosen.gross_profit_exalted))
+            )
+            # Reserve Gold for higher-efficiency upper rungs when stepping across bridge tiers
+            gold_cap_for_rung = (
+                max(chosen.gold_per_cycle_est, int(rem_gold * 0.40)) if higher_unlocks else rem_gold
+            )
+            max_gold_cycles = max(1, gold_cap_for_rung // max(1, chosen.gold_per_cycle_est))
+            liq_cap = _max_sustainable_cycles(chosen)
+            cycles = max(1, min(cycles_to_goal, max_gold_cycles, liq_cap))
+
+            start_ex = cur_ex
+            gold_used = cycles * chosen.gold_per_cycle_est
+            profit_gained = cycles * chosen.gross_profit_exalted
+            cur_ex = start_ex + profit_gained
+            rem_gold -= gold_used
+            exhausted_ids.add(chosen.id)
+
+            unlocked_note = (
+                f"reaches {target_divine:.1f} Div goal!"
+                if cur_ex >= target_ex
+                else f"unlocks next capital tier (~{cur_ex / div_ex:.2f} Div bankroll)."
+            )
+            rungs.append(
+                CompoundingRung(
+                    rung_index=len(rungs) + 1,
+                    opportunity_id=chosen.id,
+                    title=chosen.title,
+                    mechanism=chosen.mechanism,
+                    is_deterministic=chosen.is_deterministic,
+                    unit_cost_exalted=chosen.input_cost_exalted,
+                    unit_profit_exalted=chosen.gross_profit_exalted,
+                    unit_gold_est=chosen.gold_per_cycle_est,
+                    cycles_executed=cycles,
+                    starting_bankroll_exalted=round(start_ex, 2),
+                    starting_bankroll_divine=round(start_ex / div_ex, 4),
+                    ending_bankroll_exalted=round(cur_ex, 2),
+                    ending_bankroll_divine=round(cur_ex / div_ex, 4),
+                    gold_spent_on_rung=gold_used,
+                    remaining_gold_after_rung=rem_gold,
+                    profit_ex_per_10k_gold=chosen.profit_ex_per_10k_gold,
+                    primary_denomination=chosen.primary_denomination,
+                    steps=list(chosen.steps),
+                    rationale=(
+                        f"Affordable at {start_ex:.1f} Ex ({start_ex / div_ex:.2f} Div) with "
+                        f"{chosen.profit_ex_per_10k_gold:.1f} Ex / 10k Gold efficiency; "
+                        f"{cycles}x cycles (+{profit_gained:.1f} Ex, -{gold_used:,} Gold) "
+                        f"{unlocked_note}"
+                    ),
+                )
+            )
+
+        reached = cur_ex + 1e-6 >= target_ex
+        extra_gold = 0
+        if not reached and all_opps:
+            best_gold_eff = (
+                max(o.profit_ex_per_10k_gold for o in all_opps if o.input_cost_exalted <= cur_ex)
+                if any(o.input_cost_exalted <= cur_ex for o in all_opps)
+                else 500.0
+            )
+            shortfall_ex = max(0.0, target_ex - cur_ex)
+            extra_gold = max(
+                0, int(math.ceil((shortfall_ex / max(1.0, best_gold_eff)) * 10_000.0)) - rem_gold
+            )
+
+        notes = [
+            (
+                f"Compounded {starting_exalted:.0f} Ex ({starting_exalted / div_ex:.2f} Div) -> "
+                f"{cur_ex:.0f} Ex ({cur_ex / div_ex:.2f} Div) across {len(rungs)} hideout rung(s), "
+                f"spending {gold_budget - rem_gold:,} / {gold_budget:,} Gold "
+                f"({rem_gold:,} Gold remaining)."
+            ),
+            (
+                f"Switch quote denomination from Exalted -> Chaos ({chaos_ex:.1f} Ex) -> Divine "
+                f"({div_ex:.1f} Ex) as bankroll crosses 1 Div and 6 Div to keep Gold tax under "
+                "~6k–13k Gold per cycle."
+            ),
+        ]
+        if extra_gold > 0:
+            notes.append(
+                f"Gold budget exhausted before {target_divine:.1f} Div: farm ~{extra_gold:,} "
+                "additional Gold (~1–2 juiced T15 Waystones) to finish the final rung."
+            )
+
+        return CompoundingLadderReport(
+            league=league,
+            divine_exalted=round(div_ex, 4),
+            chaos_exalted=round(chaos_ex, 4),
+            starting_exalted=round(starting_exalted, 2),
+            starting_divine=round(starting_exalted / div_ex, 4),
+            gold_budget=gold_budget,
+            target_divine=round(target_divine, 4),
+            target_exalted=round(target_ex, 2),
+            final_bankroll_exalted=round(cur_ex, 2),
+            final_bankroll_divine=round(cur_ex / div_ex, 4),
+            total_profit_exalted=round(cur_ex - starting_exalted, 2),
+            total_profit_divine=round((cur_ex - starting_exalted) / div_ex, 4),
+            total_gold_spent=gold_budget - rem_gold,
+            remaining_gold=rem_gold,
+            target_reached=reached,
+            estimated_extra_gold_needed=extra_gold,
+            rungs=rungs,
+            skipped_high_capital_or_gold_plays=skipped,
+            strategy_notes=notes,
+        )
 
     # ------------------------------------------------------------------
     # Internal Helpers

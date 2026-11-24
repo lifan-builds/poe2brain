@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import colorsys
+import math
 import re
 from collections.abc import Mapping
 from typing import Any
 
-from poe2brain.filters.grammar import VALID_COLOR_SET, VALID_SHAPE_SET
+from poe2brain.filters.grammar import VALID_COLOR_SET, VALID_SHAPE_SET, VALID_SHAPES
 from poe2brain.models.filters import (
     BeamSpec,
+    ColorVisionDeficiency,
+    CvdPairSeparation,
+    CvdThemeAuditReport,
     MinimapIconSpec,
     RgbaColor,
     SemanticDropTier,
@@ -16,6 +20,47 @@ from poe2brain.models.filters import (
 )
 
 WRAECLAST_GROUND_RGB: tuple[int, int, int] = (18, 20, 26)
+
+# Viénot et al. (1999) / Machado et al. (2009) linear-sRGB dichromat projection matrices
+_CVD_LINEAR_MATRICES: dict[
+    ColorVisionDeficiency,
+    tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+] = {
+    ColorVisionDeficiency.DEUTERANOPIA: (
+        (0.367322, 0.860646, -0.227968),
+        (0.280085, 0.672501, 0.047413),
+        (-0.011820, 0.042940, 0.968881),
+    ),
+    ColorVisionDeficiency.PROTANOPIA: (
+        (0.152286, 1.052583, -0.204868),
+        (0.114503, 0.786281, 0.099216),
+        (-0.003882, -0.048116, 1.051998),
+    ),
+    ColorVisionDeficiency.TRITANOPIA: (
+        (1.255528, -0.076749, -0.178779),
+        (-0.078411, 0.930809, 0.147602),
+        (0.004733, 0.691367, 0.303900),
+    ),
+}
+
+_CVD_AUDIT_TIERS: tuple[str, ...] = (
+    "s_plus",
+    "s",
+    "a",
+    "b",
+    "c",
+    "d",
+    "build_upgrade",
+    "waystone_high",
+    "waystone_prog",
+    "chancing",
+    "gold_high",
+)
+
+_CVD_SAFE_COLOR_REMAP: dict[str, str] = {
+    "Red": "Orange",
+    "Green": "Cyan",
+}
 
 TIER_HIERARCHY: tuple[SemanticDropTier, ...] = (
     SemanticDropTier.S_PLUS,
@@ -47,6 +92,210 @@ def relative_luminance(rgb: tuple[int, int, int]) -> float:
         0.2126 * _srgb_channel_lum(rgb[0])
         + 0.7152 * _srgb_channel_lum(rgb[1])
         + 0.0722 * _srgb_channel_lum(rgb[2])
+    )
+
+
+def _linear_to_srgb_byte(val: float) -> int:
+    clamped = max(0.0, min(1.0, val))
+    srgb = clamped * 12.92 if clamped <= 0.0031308 else 1.055 * (clamped ** (1.0 / 2.4)) - 0.055
+    return max(0, min(255, int(round(srgb * 255.0))))
+
+
+def _as_rgb_tuple(color: RgbaColor | tuple[int, int, int]) -> tuple[int, int, int]:
+    if isinstance(color, RgbaColor):
+        return (color.r, color.g, color.b)
+    return (int(color[0]), int(color[1]), int(color[2]))
+
+
+def simulate_cvd_color(
+    color: RgbaColor | tuple[int, int, int],
+    deficiency: ColorVisionDeficiency | str = ColorVisionDeficiency.DEUTERANOPIA,
+) -> RgbaColor:
+    """Simulate full dichromacy (deuteranopia, protanopia, or tritanopia) in linear sRGB."""
+    mode = (
+        deficiency
+        if isinstance(deficiency, ColorVisionDeficiency)
+        else ColorVisionDeficiency(deficiency.strip().lower())
+    )
+    r_i, g_i, b_i = _as_rgb_tuple(color)
+    alpha = color.a if isinstance(color, RgbaColor) else 255
+    rl, gl, bl = _srgb_channel_lum(r_i), _srgb_channel_lum(g_i), _srgb_channel_lum(b_i)
+    mat = _CVD_LINEAR_MATRICES[mode]
+    r2 = mat[0][0] * rl + mat[0][1] * gl + mat[0][2] * bl
+    g2 = mat[1][0] * rl + mat[1][1] * gl + mat[1][2] * bl
+    b2 = mat[2][0] * rl + mat[2][1] * gl + mat[2][2] * bl
+    return RgbaColor(
+        r=_linear_to_srgb_byte(r2),
+        g=_linear_to_srgb_byte(g2),
+        b=_linear_to_srgb_byte(b2),
+        a=alpha,
+    )
+
+
+def rgb_to_cielab(color: RgbaColor | tuple[int, int, int]) -> tuple[float, float, float]:
+    """Convert sRGB (D65) into CIELAB (L*, a*, b*)."""
+    r_i, g_i, b_i = _as_rgb_tuple(color)
+    rl, gl, bl = _srgb_channel_lum(r_i), _srgb_channel_lum(g_i), _srgb_channel_lum(b_i)
+    x = (rl * 0.4124564 + gl * 0.3575761 + bl * 0.1804375) / 0.95047
+    y = (rl * 0.2126729 + gl * 0.7151522 + bl * 0.0721750) / 1.00000
+    z = (rl * 0.0193339 + gl * 0.1191920 + bl * 0.9503041) / 1.08883
+
+    def _f(t: float) -> float:
+        return t ** (1.0 / 3.0) if t > 0.008856 else (7.787 * t) + (16.0 / 116.0)
+
+    fx, fy, fz = _f(x), _f(y), _f(z)
+    return (116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz))
+
+
+def compute_cie_delta_e(
+    color_a: RgbaColor | tuple[int, int, int],
+    color_b: RgbaColor | tuple[int, int, int],
+) -> float:
+    """Compute perceptual CIELAB Euclidean distance (Delta-E*ab)."""
+    return round(math.dist(rgb_to_cielab(color_a), rgb_to_cielab(color_b)), 2)
+
+
+def _plate_rms_delta_e(
+    style_a: TierVisualStyle,
+    style_b: TierVisualStyle,
+    deficiency: ColorVisionDeficiency | None = None,
+) -> tuple[float, float]:
+    bg_a = composite_over_ground(style_a.background_color)
+    bg_b = composite_over_ground(style_b.background_color)
+    if deficiency is None:
+        fg_de = compute_cie_delta_e(style_a.text_color, style_b.text_color)
+        bd_de = compute_cie_delta_e(style_a.border_color, style_b.border_color)
+        bg_de = compute_cie_delta_e(bg_a, bg_b)
+    else:
+        fg_de = compute_cie_delta_e(
+            simulate_cvd_color(style_a.text_color, deficiency),
+            simulate_cvd_color(style_b.text_color, deficiency),
+        )
+        bd_de = compute_cie_delta_e(
+            simulate_cvd_color(style_a.border_color, deficiency),
+            simulate_cvd_color(style_b.border_color, deficiency),
+        )
+        bg_de = compute_cie_delta_e(
+            simulate_cvd_color(bg_a, deficiency),
+            simulate_cvd_color(bg_b, deficiency),
+        )
+    rms = round(math.sqrt((fg_de**2 + bd_de**2 + bg_de**2) / 3.0), 2)
+    return rms, round(max(fg_de, bd_de, bg_de), 2)
+
+
+def audit_theme_cvd(
+    theme: VisualThemeSpec,
+    *,
+    min_cvd_delta_e: float = 12.0,
+    require_unique_shapes: bool = False,
+) -> CvdThemeAuditReport:
+    """Audit VisualThemeSpec for Deuteranopia/Protanopia/Tritanopia separation and geometry."""
+    present_tiers = [tk for tk in _CVD_AUDIT_TIERS if tk in theme.tiers]
+    shape_owners: dict[str, list[str]] = {}
+    rg_beam_tiers: dict[str, list[str]] = {"Red": [], "Green": []}
+
+    for tk in present_tiers:
+        st = theme.tiers[tk]
+        if st.minimap_icon is not None and st.minimap_icon.size >= 0:
+            shape_owners.setdefault(st.minimap_icon.shape, []).append(tk)
+            if st.minimap_icon.color in rg_beam_tiers:
+                rg_beam_tiers[st.minimap_icon.color].append(f"{tk}:icon")
+        if st.beam is not None and st.beam.color in rg_beam_tiers:
+            rg_beam_tiers[st.beam.color].append(f"{tk}:beam")
+
+    duplicate_shapes = [
+        f"{shape} ({', '.join(owners)})"
+        for shape, owners in sorted(shape_owners.items())
+        if len(owners) > 1
+    ]
+
+    red_green_conflicts: list[str] = []
+    if rg_beam_tiers["Red"] and rg_beam_tiers["Green"]:
+        red_green_conflicts.append(
+            f"Red vs Green beam/icon mix: Red={rg_beam_tiers['Red']} "
+            f"vs Green={rg_beam_tiers['Green']}"
+        )
+
+    all_pairs: list[CvdPairSeparation] = []
+    min_by_mode: dict[ColorVisionDeficiency, float] = {
+        ColorVisionDeficiency.DEUTERANOPIA: 999.0,
+        ColorVisionDeficiency.PROTANOPIA: 999.0,
+        ColorVisionDeficiency.TRITANOPIA: 999.0,
+    }
+
+    for i in range(len(present_tiers)):
+        for j in range(i + 1, len(present_tiers)):
+            ta, tb = present_tiers[i], present_tiers[j]
+            sa, sb = theme.tiers[ta], theme.tiers[tb]
+            norm_rms, _ = _plate_rms_delta_e(sa, sb, None)
+            lum_a = relative_luminance((sa.text_color.r, sa.text_color.g, sa.text_color.b))
+            lum_b = relative_luminance((sb.text_color.r, sb.text_color.g, sb.text_color.b))
+            bg_lum_a = relative_luminance(composite_over_ground(sa.background_color))
+            bg_lum_b = relative_luminance(composite_over_ground(sb.background_color))
+            lum_delta = round(max(abs(lum_a - lum_b), abs(bg_lum_a - bg_lum_b)), 4)
+
+            shape_a = (
+                sa.minimap_icon.shape if (sa.minimap_icon and sa.minimap_icon.size >= 0) else None
+            )
+            shape_b = (
+                sb.minimap_icon.shape if (sb.minimap_icon and sb.minimap_icon.size >= 0) else None
+            )
+            distinct_shapes = shape_a != shape_b
+
+            for mode in (
+                ColorVisionDeficiency.DEUTERANOPIA,
+                ColorVisionDeficiency.PROTANOPIA,
+                ColorVisionDeficiency.TRITANOPIA,
+            ):
+                cvd_rms, cvd_max = _plate_rms_delta_e(sa, sb, mode)
+                min_by_mode[mode] = min(min_by_mode[mode], cvd_rms)
+                rg_collapse = (
+                    mode in (ColorVisionDeficiency.DEUTERANOPIA, ColorVisionDeficiency.PROTANOPIA)
+                    and norm_rms >= 20.0
+                    and cvd_rms < min_cvd_delta_e
+                    and lum_delta < 0.12
+                )
+                if rg_collapse:
+                    red_green_conflicts.append(
+                        f"{ta} vs {tb} collapses under {mode.value} "
+                        f"(normal dE={norm_rms} -> {cvd_rms})"
+                    )
+                all_pairs.append(
+                    CvdPairSeparation(
+                        tier_a=ta,
+                        tier_b=tb,
+                        deficiency=mode,
+                        normal_rms_delta_e=norm_rms,
+                        cvd_rms_delta_e=cvd_rms,
+                        cvd_max_channel_delta_e=cvd_max,
+                        luminance_delta=lum_delta,
+                        distinct_minimap_shapes=distinct_shapes,
+                        relies_on_red_green_hue_alone=rg_collapse,
+                    )
+                )
+
+    all_pairs.sort(key=lambda p: p.cvd_rms_delta_e)
+    min_deut = round(min_by_mode[ColorVisionDeficiency.DEUTERANOPIA], 2)
+    min_prot = round(min_by_mode[ColorVisionDeficiency.PROTANOPIA], 2)
+    min_trit = round(min_by_mode[ColorVisionDeficiency.TRITANOPIA], 2)
+    shapes_ok = (len(duplicate_shapes) == 0) if require_unique_shapes else True
+    cvd_safe = (
+        min_deut >= min_cvd_delta_e
+        and min_prot >= min_cvd_delta_e
+        and not red_green_conflicts
+        and shapes_ok
+    )
+
+    return CvdThemeAuditReport(
+        theme_id=theme.id,
+        cvd_safe=cvd_safe,
+        min_deuteranopia_delta_e=min_deut,
+        min_protanopia_delta_e=min_prot,
+        min_tritanopia_delta_e=min_trit,
+        distinct_minimap_shape_count=len(shape_owners),
+        duplicate_minimap_shapes=duplicate_shapes,
+        red_green_conflicts=red_green_conflicts,
+        worst_pairs=all_pairs[:10],
     )
 
 
@@ -1069,9 +1318,9 @@ def _build_builtin_presets() -> dict[str, VisualThemeSpec]:
             "s": _mk_tier(
                 SemanticDropTier.S,
                 44,
-                "#f0e442",
-                "#e69f00",
-                (12, 20, 36, 252),
+                "#ffb703",
+                "#fb8500",
+                (10, 24, 56, 252),
                 beam=("Orange", False),
                 icon=(0, "Orange", "Diamond"),
                 sound_id=1,
@@ -1082,8 +1331,8 @@ def _build_builtin_presets() -> dict[str, VisualThemeSpec]:
                 SemanticDropTier.A,
                 41,
                 "#56b4e9",
-                "#56b4e9",
-                (10, 18, 30, 248),
+                "#00b4d8",
+                (8, 18, 30, 248),
                 beam=("Cyan", False),
                 icon=(1, "Cyan", "Triangle"),
                 sound_id=2,
@@ -1092,9 +1341,9 @@ def _build_builtin_presets() -> dict[str, VisualThemeSpec]:
             "b": _mk_tier(
                 SemanticDropTier.B,
                 37,
-                "#ffffff",
-                "#cc79a7",
-                (24, 14, 28, 238),
+                "#f5d0fe",
+                "#a855f7",
+                (48, 16, 96, 246),
                 beam=("Pink", True),
                 icon=(1, "Pink", "Circle"),
                 sound_id=3,
@@ -1103,20 +1352,20 @@ def _build_builtin_presets() -> dict[str, VisualThemeSpec]:
             "c": _mk_tier(
                 SemanticDropTier.C,
                 33,
-                "#e5e7eb",
-                "#6b7280",
+                "#e2e8f0",
+                "#64748b",
                 (16, 18, 22, 225),
-                icon=(2, "White", "Hexagon"),
+                icon=(2, "Grey", "Hexagon"),
                 sound_id=12,
                 vol=170,
             ),
-            "d": _mk_tier(SemanticDropTier.D, 28, "#b0b7c3", "#374151", (14, 16, 20, 200)),
+            "d": _mk_tier(SemanticDropTier.D, 28, "#94a3b8", "#334155", (10, 12, 16, 195)),
             "build_upgrade": _mk_tier(
                 SemanticDropTier.BUILD_UPGRADE,
                 41,
-                "#ffbe55",
-                "#e69f00",
-                (28, 18, 8, 248),
+                "#7dd3fc",
+                "#38bdf8",
+                (6, 48, 108, 252),
                 beam=("Blue", False),
                 icon=(0, "Blue", "Pentagon"),
                 sound_id=5,
@@ -1126,8 +1375,8 @@ def _build_builtin_presets() -> dict[str, VisualThemeSpec]:
                 SemanticDropTier.WAYSTONE_HIGH,
                 42,
                 "#ffffff",
-                "#56b4e9",
-                (12, 24, 42, 248),
+                "#ffffff",
+                (34, 44, 64, 250),
                 beam=("White", False),
                 icon=(0, "White", "Square"),
                 sound_id=4,
@@ -1136,20 +1385,20 @@ def _build_builtin_presets() -> dict[str, VisualThemeSpec]:
             "waystone_prog": _mk_tier(
                 SemanticDropTier.WAYSTONE_PROG,
                 36,
-                "#dbeafe",
-                "#0072b2",
-                (12, 20, 34, 232),
-                beam=("Blue", True),
-                icon=(1, "Blue", "Square"),
+                "#fed7aa",
+                "#d97706",
+                (36, 20, 10, 234),
+                beam=("Orange", True),
+                icon=(1, "Orange", "Moon"),
                 sound_id=4,
                 vol=220,
             ),
             "chancing": _mk_tier(
                 SemanticDropTier.CHANCING,
                 38,
-                "#f0e442",
-                "#cc79a7",
-                (24, 16, 26, 235),
+                "#fef08a",
+                "#c084fc",
+                (36, 12, 68, 240),
                 beam=("Pink", True),
                 icon=(1, "Pink", "Kite"),
                 sound_id=7,
@@ -1158,9 +1407,9 @@ def _build_builtin_presets() -> dict[str, VisualThemeSpec]:
             "gold_high": _mk_tier(
                 SemanticDropTier.GOLD_HIGH,
                 36,
-                "#f0e442",
-                "#e69f00",
-                (26, 22, 10, 232),
+                "#fde047",
+                "#a16207",
+                (46, 38, 6, 234),
                 beam=("Yellow", True),
                 icon=(1, "Yellow", "Cross"),
             ),
@@ -1201,9 +1450,22 @@ _NAMED_SWATCHES: dict[str, str] = {
     "obsidian": "#0e1017",
 }
 
+_CVD_PROMPT_KEYWORDS: tuple[str, ...] = (
+    "colorblind",
+    "colourblind",
+    "deuteranopia",
+    "protanopia",
+    "tritanopia",
+    "red-green",
+    "red green",
+    "cvd",
+    "okabe",
+    "accessible",
+)
+
 _PROMPT_PRESET_KEYWORDS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (_CVD_PROMPT_KEYWORDS, "colorblind_safe"),
     (("synthwave", "cyberpunk", "neon", "vaporwave", "laser"), "cyberpunk_neon"),
-    (("colorblind", "deuteranopia", "protanopia", "okabe", "accessible"), "colorblind_safe"),
     (("zen", "minimal", "calm", "subtle", "clean", "low clutter"), "zen_minimal"),
     (("vaal", "blood", "crimson", "atziri", "sacrifice"), "vaal_blood"),
     (("solaris", "royal", "ivory", "sun", "golden"), "solaris_gold"),
@@ -1269,6 +1531,30 @@ def _extract_colors_from_clause(clause: str) -> list[RgbaColor]:
     return [col for _, _, col in positioned]
 
 
+def _enforce_cvd_theme_hygiene(theme: VisualThemeSpec) -> None:
+    """Eliminate Red/Green beam-icon pairs and ensure unique minimap geometry across tiers."""
+    used_shapes: set[str] = set()
+    fallback_shapes = [sh for sh in VALID_SHAPES]
+
+    for tk in _CVD_AUDIT_TIERS:
+        if tk not in theme.tiers:
+            continue
+        st = theme.tiers[tk]
+        if st.beam is not None and st.beam.color in _CVD_SAFE_COLOR_REMAP:
+            st.beam = BeamSpec(color=_CVD_SAFE_COLOR_REMAP[st.beam.color], temp=st.beam.temp)
+        if st.minimap_icon is not None and st.minimap_icon.size >= 0:
+            safe_col = _CVD_SAFE_COLOR_REMAP.get(st.minimap_icon.color, st.minimap_icon.color)
+            shape = st.minimap_icon.shape
+            if shape in used_shapes:
+                shape = next((cand for cand in fallback_shapes if cand not in used_shapes), shape)
+            used_shapes.add(shape)
+            st.minimap_icon = MinimapIconSpec(
+                size=st.minimap_icon.size,
+                color=safe_col,
+                shape=shape,
+            )
+
+
 def compose_theme(
     style_prompt: str | None = None,
     *,
@@ -1280,18 +1566,24 @@ def compose_theme(
     font_scale: float = 1.0,
     min_contrast: float = 4.5,
     beam_mode: str | None = None,
+    cvd_safe: bool | ColorVisionDeficiency | str | None = None,
     overrides: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> VisualThemeSpec:
     """Compose a WCAG-verified PoE2 visual theme from natural-language prompts and overrides."""
     prompt_lower = (style_prompt or "").strip().lower()
+    wants_cvd = bool(cvd_safe) or any(kw in prompt_lower for kw in _CVD_PROMPT_KEYWORDS)
 
     chosen_base = base_preset
+    if not chosen_base and wants_cvd:
+        chosen_base = "colorblind_safe"
     if not chosen_base and prompt_lower:
         for kw_group, preset_key in _PROMPT_PRESET_KEYWORDS:
             if any(kw in prompt_lower for kw in kw_group):
                 chosen_base = preset_key
                 break
     chosen_base = chosen_base or "forbidden_abyss"
+    if chosen_base == "colorblind_safe":
+        wants_cvd = True
     theme = get_visual_theme(chosen_base)
 
     if style_prompt:
@@ -1321,23 +1613,36 @@ def compose_theme(
             # Keep inverted S+ background unless pitch-black / darkmode explicitly requested
             if t_key == "s_plus" and "no white" not in prompt_lower and background_color is None:
                 continue
-            style.background_color = RgbaColor(
-                r=bg_override.r,
-                g=bg_override.g,
-                b=bg_override.b,
-                a=min(style.background_color.a, bg_override.a),
-            )
+            if wants_cvd and background_color is None:
+                # Blend 45% toward obsidian/pitch-black to keep dark comfort + CVD plate separation
+                style.background_color = RgbaColor(
+                    r=int(round(style.background_color.r * 0.55 + bg_override.r * 0.45)),
+                    g=int(round(style.background_color.g * 0.55 + bg_override.g * 0.45)),
+                    b=int(round(style.background_color.b * 0.55 + bg_override.b * 0.45)),
+                    a=min(style.background_color.a, bg_override.a),
+                )
+            else:
+                style.background_color = RgbaColor(
+                    r=bg_override.r,
+                    g=bg_override.g,
+                    b=bg_override.b,
+                    a=min(style.background_color.a, bg_override.a),
+                )
 
     prim = RgbaColor.from_any(primary_color) if primary_color is not None else None
     acc = RgbaColor.from_any(accent_color) if accent_color is not None else None
 
     if prompt_lower and (prim is None or acc is None):
-        first_clause = re.split(r"[,;]", prompt_lower)[0]
+        # Ignore "red-green" / "red green" negated colorblind descriptors when extracting swatches
+        sanitized_clause = re.sub(r"\bred[\s-]+green\b", "", re.split(r"[,;]", prompt_lower)[0])
         swatches = [
             c
-            for c in _extract_colors_from_clause(first_clause)
+            for c in _extract_colors_from_clause(sanitized_clause)
             if (c.r + c.g + c.b) > 70  # skip pitch-black / obsidian swatches as foreground
         ]
+        if wants_cvd:
+            # Filter out red/green confusion swatches unless primary_color was explicit
+            swatches = [c for c in swatches if _nearest_poe_color_name(c) not in ("Red", "Green")]
         if prim is None and len(swatches) >= 1:
             prim = swatches[0]
         if acc is None and len(swatches) >= 2:
@@ -1348,7 +1653,10 @@ def compose_theme(
         theme.tiers["s_plus"].border_color = prim
         beam_col = _nearest_poe_color_name(prim)
         theme.tiers["s"].beam = BeamSpec(color=beam_col, temp=False)
-        theme.tiers["s"].minimap_icon = MinimapIconSpec(size=0, color=beam_col, shape="Diamond")
+        s_shape = (
+            theme.tiers["s"].minimap_icon.shape if theme.tiers["s"].minimap_icon else "Diamond"
+        )
+        theme.tiers["s"].minimap_icon = MinimapIconSpec(size=0, color=beam_col, shape=s_shape)
 
     if acc is not None:
         theme.tiers["a"].text_color = acc
@@ -1356,7 +1664,8 @@ def compose_theme(
         theme.tiers["s"].border_color = acc
         beam_col = _nearest_poe_color_name(acc)
         theme.tiers["a"].beam = BeamSpec(color=beam_col, temp=False)
-        theme.tiers["a"].minimap_icon = MinimapIconSpec(size=1, color=beam_col, shape="Circle")
+        a_shape = theme.tiers["a"].minimap_icon.shape if theme.tiers["a"].minimap_icon else "Circle"
+        theme.tiers["a"].minimap_icon = MinimapIconSpec(size=1, color=beam_col, shape=a_shape)
 
     # Clause-level tier directives (e.g. "huge text on divines", "subtle muted yellows on b-tier")
     if prompt_lower:
@@ -1466,6 +1775,9 @@ def compose_theme(
         if tk not in overridden_fonts and st.font_size > ceil_font:
             st.font_size = ceil_font
         ceil_font = st.font_size
+
+    if wants_cvd:
+        _enforce_cvd_theme_hygiene(theme)
 
     # Final pass: enforce WCAG contrast on every single tier
     for tk, st in theme.tiers.items():

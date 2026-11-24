@@ -11,7 +11,7 @@ import re
 import threading
 import time
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qs, quote, unquote, urlparse
@@ -30,6 +30,7 @@ from poe2brain.knowledge.meta import (
     POE1_OR_UNRELEASED_TRAP_CLASSES,
     MetaService,
 )
+from poe2brain.models.builds import CharacterTimelinePoint, CharacterTimelineReport
 from poe2brain.models.ninja import (
     NinjaBuildEntry,
     NinjaBuildSearchReport,
@@ -214,6 +215,48 @@ def _normalize_account_tag(account: str) -> str:
     return cleaned
 
 
+_TM_LABEL_RE = re.compile(r"^(hour|day|week|month)-(\d+)$", re.IGNORECASE)
+_T0_TRADE_CHASE_UNIQUES: tuple[str, ...] = (
+    "Temporalis",
+    "Mageblood",
+    "Headhunter",
+    "Kalandra's Touch",
+    "Astramentis",
+    "The Adorned",
+    "Voices",
+)
+
+
+def _time_machine_age_hours(label: str) -> float:
+    cleaned = label.strip().lower()
+    if cleaned == "current":
+        return float("inf")
+    m = _TM_LABEL_RE.match(cleaned)
+    if not m:
+        return 1e9
+    unit = m.group(1).lower()
+    val = float(m.group(2))
+    if unit == "hour":
+        return val
+    if unit == "day":
+        return val * 24.0
+    if unit == "week":
+        return val * 24.0 * 7.0
+    if unit == "month":
+        return val * 24.0 * 30.0
+    return 1e9
+
+
+def sort_time_machine_labels(labels: Iterable[str]) -> list[str]:
+    """Return deduplicated `poe.ninja` time-machine labels sorted chronologically."""
+    unique: dict[str, str] = {}
+    for raw in labels:
+        s = str(raw).strip()
+        if s and s.lower() not in unique:
+            unique[s.lower()] = s
+    return sorted(unique.values(), key=lambda lbl: (_time_machine_age_hours(lbl), lbl.lower()))
+
+
 class NinjaBuildsService:
     """Clean-room Path of Exile 2 `poe.ninja` Builds & PoB2 Character Intelligence Service.
 
@@ -262,6 +305,7 @@ class NinjaBuildsService:
 
         self._pace_lock = threading.Lock()
         self._last_uncached_char_ts: float = 0.0
+        self._missing_tm_cache: dict[tuple[str, str, str, str], int] = {}
         self._corpus_records: list[dict[str, Any]] | None = None
         self._deduped_corpus: list[dict[str, Any]] | None = None
 
@@ -556,7 +600,9 @@ class NinjaBuildsService:
                         ov_type = int(sv0.get("overviewType") or 0)
                         passive_tree = str(sv0["passiveTree"]) if sv0.get("passiveTree") else None
                         if isinstance(sv0.get("timeMachineLabels"), list):
-                            tm_labels = [str(lbl) for lbl in sv0["timeMachineLabels"] if lbl]
+                            tm_labels = sort_time_machine_labels(
+                                str(lbl) for lbl in sv0["timeMachineLabels"] if lbl
+                            )
             except httpx.HTTPError as exc:
                 notes.append(
                     f"snapshot-versions ({league_url}) unreachable ({type(exc).__name__}); "
@@ -684,11 +730,14 @@ class NinjaBuildsService:
         skill: str | None = None,
         support_gem: str | None = None,
         unique_item: str | None = None,
+        exclude_uniques: Sequence[str] | None = None,
+        max_uniques: int | None = None,
         keystone: str | None = None,
         weapon_type: str | None = None,
         min_dps: float | None = None,
         min_ehp: float | None = None,
         sort_by: Literal["dps", "ehp", "level", "es", "life"] = "dps",
+        ssf_viable_first: bool = False,
         limit: int = 15,
         refresh_live_top: int = 0,
         include_pob_code: bool = False,
@@ -747,6 +796,12 @@ class NinjaBuildsService:
             applied_filters["support_gem"] = support_gem.strip()
         if unique_item:
             applied_filters["unique_item"] = unique_item.strip()
+        if exclude_uniques:
+            applied_filters["exclude_uniques"] = ", ".join(
+                u.strip() for u in exclude_uniques if u and u.strip()
+            )
+        if max_uniques is not None:
+            applied_filters["max_uniques"] = int(max_uniques)
         if keystone:
             applied_filters["keystone"] = keystone.strip()
         if weapon_type:
@@ -755,6 +810,8 @@ class NinjaBuildsService:
             applied_filters["min_dps"] = float(min_dps)
         if min_ehp is not None:
             applied_filters["min_ehp"] = float(min_ehp)
+
+        excl_terms = [u.strip() for u in (exclude_uniques or ()) if u and u.strip()]
 
         matched: list[dict[str, Any]] = []
         for rec in corpus:
@@ -781,6 +838,14 @@ class NinjaBuildsService:
             if unique_item and not self._matches_term_in_list(
                 unique_item, rec.get("unique_items") or (), uniq_vocab
             ):
+                continue
+            if excl_terms:
+                rec_uniques = rec.get("unique_items") or ()
+                if any(
+                    self._matches_term_in_list(ex_u, rec_uniques, uniq_vocab) for ex_u in excl_terms
+                ):
+                    continue
+            if max_uniques is not None and len(rec.get("unique_items") or ()) > max_uniques:
                 continue
             if keystone:
                 ks_and_notables = list(rec.get("keystones") or []) + list(
@@ -825,36 +890,73 @@ class NinjaBuildsService:
                 weap_counts[str(w)] += 1
 
         q_skill_norm = _norm_token(skill) if skill else ""
+        q_uniq_norm = _norm_token(unique_item) if unique_item else ""
+        t0_norms = {
+            _norm_token(u): u for u in _T0_TRADE_CHASE_UNIQUES if _norm_token(u) != q_uniq_norm
+        }
 
-        def _sort_key(r: Mapping[str, Any]) -> tuple[float, float, float]:
+        if primary_snap.ssf and denom > 0:
+            for t0_norm, t0_name in t0_norms.items():
+                co_cnt = sum(
+                    1
+                    for r in matched
+                    if any(_norm_token(u) == t0_norm for u in (r.get("unique_items") or ()))
+                )
+                if co_cnt >= max(2, int(math.ceil(denom * 0.80))):
+                    extra_tip = ""
+                    if t0_name == "Temporalis" and q_uniq_norm == "choirofthestorm":
+                        extra_tip = (
+                            " In SSF without 'Temporalis', trigger Choir of the Storm's "
+                            "Lightning Bolt via high-crit fast-hitting spells (Spark / Eye of "
+                            "Winter / Ball Lightning) instead of 0-cooldown Blink."
+                        )
+                    notes.append(
+                        f"SSF Chase Co-Dependency Warning: {co_cnt}/{denom} "
+                        f"({(co_cnt / denom) * 100.0:.0f}%) matched corpus builds also equip "
+                        f"{t0_name!r}.{extra_tip}"
+                    )
+
+        def _sort_key(r: Mapping[str, Any]) -> tuple[float, ...]:
             # When filtering by skill, prefer builds whose primary main_skill matches!
             main_bonus = (
                 1.0
                 if (q_skill_norm and q_skill_norm in _norm_token(str(r.get("main_skill") or "")))
                 else 0.0
             )
+            ssf_prefix: tuple[float, ...] = ()
+            if ssf_viable_first:
+                r_uniques = list(r.get("unique_items") or ())
+                t0_count = sum(1 for u in r_uniques if _norm_token(u) in t0_norms)
+                ssf_prefix = (-float(t0_count), -float(len(r_uniques)))
+
             if sort_by == "ehp":
-                return (
+                base_k: tuple[float, ...] = (
                     main_bonus,
                     float(r.get("total_ehp") or 0.0),
                     float(r.get("effective_dps") or 0.0),
                 )
-            if sort_by == "level":
+            elif sort_by == "level":
                 rnk = int(r["rank_within_ascendancy"]) if r.get("rank_within_ascendancy") else 999
-                return (main_bonus, float(r.get("level") or 0), -float(rnk))
-            if sort_by == "es":
-                return (
+                base_k = (main_bonus, float(r.get("level") or 0), -float(rnk))
+            elif sort_by == "es":
+                base_k = (
                     main_bonus,
                     float(r.get("energy_shield") or 0.0),
                     float(r.get("total_ehp") or 0.0),
                 )
-            if sort_by == "life":
-                return (main_bonus, float(r.get("life") or 0.0), float(r.get("total_ehp") or 0.0))
-            return (
-                main_bonus,
-                float(r.get("effective_dps") or 0.0),
-                float(r.get("total_ehp") or 0.0),
-            )
+            elif sort_by == "life":
+                base_k = (
+                    main_bonus,
+                    float(r.get("life") or 0.0),
+                    float(r.get("total_ehp") or 0.0),
+                )
+            else:
+                base_k = (
+                    main_bonus,
+                    float(r.get("effective_dps") or 0.0),
+                    float(r.get("total_ehp") or 0.0),
+                )
+            return (*ssf_prefix, *base_k)
 
         matched.sort(key=_sort_key, reverse=True)
         eff_limit = max(1, min(limit, 100))
@@ -969,6 +1071,324 @@ class NinjaBuildsService:
                 return rec
         return None
 
+    def _parse_character_target(
+        self,
+        account_or_url: str,
+        character: str | None = None,
+        *,
+        default_league: str = DEFAULT_LEAGUE,
+    ) -> tuple[str, str, str, str | None]:
+        """Parse `(account, character, league_hint, url_timemachine)` from URL or pair."""
+        raw_input = account_or_url.strip()
+        if not raw_input:
+            raise ValueError("account_or_url cannot be empty")
+        self._assert_not_protected_url(raw_input)
+
+        parsed_url = urlparse(raw_input) if "://" in raw_input else None
+        clean_url_no_qs = (
+            f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
+            if parsed_url is not None
+            else raw_input
+        )
+        url_tm: str | None = None
+        if parsed_url is not None and parsed_url.query:
+            qs = parse_qs(parsed_url.query)
+            tm_vals = qs.get("timemachine") or qs.get("timeMachine")
+            if tm_vals and tm_vals[0].strip():
+                url_tm = tm_vals[0].strip()
+
+        m_char = _NINJA_CHAR_URL_RE.match(clean_url_no_qs)
+        m_prof = _NINJA_PROFILE_URL_RE.match(clean_url_no_qs) if not m_char else None
+        if m_char:
+            return (
+                _normalize_account_tag(m_char.group(2)),
+                unquote(m_char.group(3)).strip(),
+                unquote(m_char.group(1)),
+                url_tm,
+            )
+        if m_prof:
+            return (
+                _normalize_account_tag(m_prof.group(1)),
+                unquote(m_prof.group(2)).strip(),
+                default_league,
+                url_tm,
+            )
+        if "://" not in raw_input:
+            if character is None and "/" in raw_input:
+                acct_part, char_part = raw_input.split("/", 1)
+                return (
+                    _normalize_account_tag(acct_part),
+                    unquote(char_part).strip(),
+                    default_league,
+                    None,
+                )
+            if not character or not character.strip():
+                raise ValueError(
+                    "character name is required when passing an account name instead of a URL."
+                )
+            return (
+                _normalize_account_tag(raw_input),
+                unquote(character).strip(),
+                default_league,
+                None,
+            )
+        raise ValueError(
+            f"Expected a poe.ninja character URL or (account, character) pair, got {raw_input!r}."
+        )
+
+    def _try_fetch_char_pob(
+        self,
+        *,
+        ov_slug: str,
+        account: str,
+        character: str,
+        timemachine: str | None,
+        force_refresh: bool = False,
+    ) -> tuple[str | None, int]:
+        """Return `(pob_code_or_none, http_status_code)` with negative 404 memoization."""
+        tm_key = (timemachine or "current").lower()
+        neg_key = (ov_slug.lower(), account.lower(), character.lower(), tm_key)
+        if not force_refresh and neg_key in self._missing_tm_cache:
+            return None, self._missing_tm_cache[neg_key]
+
+        params: dict[str, str] = {
+            "overview": ov_slug,
+            "type": "exp",
+            "account": account,
+            "name": character,
+        }
+        if timemachine:
+            params["timemachine"] = timemachine
+
+        try:
+            code = self._cached_get_text(
+                self.char_pob_raw_url,
+                params=params,
+                pace_on_miss=True,
+                force_refresh=force_refresh,
+            )
+            self._missing_tm_cache.pop(neg_key, None)
+            return code, 200
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            if status == 404:
+                self._missing_tm_cache[neg_key] = 404
+                return None, 404
+            raise
+
+    def _discover_nearest_timemachine(
+        self,
+        *,
+        ov_slug: str,
+        account: str,
+        character: str,
+        requested_tm: str,
+        sorted_labels: Sequence[str],
+        max_probes: int = 5,
+        force_refresh: bool = False,
+    ) -> tuple[str | None, str | None]:
+        """Binary-search chronological snapshots after `requested_tm` to find the earliest
+        available historical snapshot without hammering poe.ninja.
+        """
+        req_age = _time_machine_age_hours(requested_tm)
+        forward_all = [
+            lbl
+            for lbl in sorted_labels
+            if lbl.lower() != requested_tm.lower() and _time_machine_age_hours(lbl) > req_age
+        ]
+        # Prefer weekly milestones when probing forward from a week-* request
+        if requested_tm.lower().startswith("week-"):
+            week_forward = [lbl for lbl in forward_all if lbl.lower().startswith("week-")]
+            candidates = week_forward if week_forward else forward_all
+        else:
+            candidates = forward_all
+
+        remaining = max(1, max_probes)
+        if candidates:
+            # First check the latest historical snapshot to confirm the character appeared by then
+            last_lbl = candidates[-1]
+            last_code, _ = self._try_fetch_char_pob(
+                ov_slug=ov_slug,
+                account=account,
+                character=character,
+                timemachine=last_lbl,
+                force_refresh=force_refresh,
+            )
+            remaining -= 1
+            if last_code is not None:
+                best_lbl = last_lbl
+                best_code = last_code
+                lo, hi = 0, len(candidates) - 2
+                while lo <= hi and remaining > 0:
+                    mid = (lo + hi) // 2
+                    cand_lbl = candidates[mid]
+                    code, _ = self._try_fetch_char_pob(
+                        ov_slug=ov_slug,
+                        account=account,
+                        character=character,
+                        timemachine=cand_lbl,
+                        force_refresh=force_refresh,
+                    )
+                    remaining -= 1
+                    if code is not None:
+                        best_lbl = cand_lbl
+                        best_code = code
+                        hi = mid - 1
+                    else:
+                        lo = mid + 1
+                return best_lbl, best_code
+
+        # Check preceding snapshot in case character left ladder before requested_tm
+        earlier = [
+            lbl
+            for lbl in sorted_labels
+            if lbl.lower() != requested_tm.lower() and _time_machine_age_hours(lbl) < req_age
+        ]
+        if earlier and remaining > 0:
+            prev_lbl = earlier[-1]
+            prev_code, _ = self._try_fetch_char_pob(
+                ov_slug=ov_slug,
+                account=account,
+                character=character,
+                timemachine=prev_lbl,
+                force_refresh=force_refresh,
+            )
+            if prev_code is not None:
+                return prev_lbl, prev_code
+
+        return None, None
+
+    def probe_character_timeline(
+        self,
+        account_or_url: str,
+        character: str | None = None,
+        *,
+        league: str = DEFAULT_LEAGUE,
+        candidate_labels: Sequence[str] | None = None,
+        include_current: bool = True,
+        include_pob_code: bool = False,
+        max_probes: int = 7,
+        force_refresh: bool = False,
+    ) -> CharacterTimelineReport:
+        """Probe a character's historical `poe.ninja` time-machine snapshots (`week-1` .. `current`)
+        using polite binary-search milestone discovery (`<= max_probes` HTTP calls) so callers can
+        find the exact earliest & latest snapshots without crashing on HTTP 404.
+        """
+        acct, char_name, league_hint, _ = self._parse_character_target(
+            account_or_url, character, default_league=league
+        )
+        snap_rep = self.get_snapshot_state(league_hint, force_refresh=force_refresh)
+        primary = snap_rep.primary
+        ov_slug = primary.snapshot_name or re.sub(
+            r"[^a-z0-9]+", "-", primary.league_name.lower()
+        ).strip("-")
+        all_labels = sort_time_machine_labels(primary.time_machine_labels)
+        notes = list(snap_rep.notes)
+
+        points_by_label: dict[str, CharacterTimelinePoint] = {}
+        remaining = max(1, max_probes)
+
+        def _probe(lbl: str | None) -> CharacterTimelinePoint:
+            nonlocal remaining
+            key = lbl or "current"
+            if key in points_by_label:
+                return points_by_label[key]
+            remaining -= 1
+            code, status = self._try_fetch_char_pob(
+                ov_slug=ov_slug,
+                account=acct,
+                character=char_name,
+                timemachine=lbl,
+                force_refresh=force_refresh,
+            )
+            if code is None:
+                pt = CharacterTimelinePoint(label=key, available=False, http_status=status)
+            else:
+                insp = inspect_pob2_xml_or_code(code)
+                pt = CharacterTimelinePoint(
+                    label=key,
+                    available=True,
+                    http_status=200,
+                    level=insp.level,
+                    class_name=insp.class_name,
+                    ascendancy_name=insp.ascendancy_name,
+                    main_skill=insp.main_skill,
+                    effective_dps=insp.effective_dps,
+                    total_ehp=insp.total_ehp,
+                    unique_items=insp.unique_items,
+                    keystones=insp.keystones,
+                    pob_code=code if include_pob_code else None,
+                )
+            points_by_label[key] = pt
+            return pt
+
+        if candidate_labels is not None:
+            ordered_cands = sort_time_machine_labels(
+                [lbl for lbl in candidate_labels if lbl.strip().lower() != "current"]
+            )
+            for lbl in ordered_cands:
+                if remaining <= 0:
+                    break
+                _probe(lbl)
+            if (
+                include_current or any(c.strip().lower() == "current" for c in candidate_labels)
+            ) and remaining > 0:
+                _probe(None)
+        else:
+            cur_pt = _probe(None) if (include_current and remaining > 0) else None
+            milestones = [lbl for lbl in all_labels if lbl.lower().startswith("week-")] or list(
+                all_labels
+            )
+            if milestones and remaining > 0:
+                first_pt = _probe(milestones[0])
+                if first_pt.available:
+                    # Sample midpoint when character existed from the earliest milestone
+                    if len(milestones) >= 3 and remaining > 0:
+                        _probe(milestones[len(milestones) // 2])
+                elif len(milestones) >= 2 and remaining > 0:
+                    # Binary-search milestones[1:] to pinpoint exact first week on ladder
+                    last_pt = _probe(milestones[-1])
+                    if last_pt.available:
+                        lo, hi = 1, len(milestones) - 2
+                        while lo <= hi and remaining > 0:
+                            mid = (lo + hi) // 2
+                            m_pt = _probe(milestones[mid])
+                            if m_pt.available:
+                                hi = mid - 1
+                            else:
+                                lo = mid + 1
+            if cur_pt is not None and not cur_pt.available:
+                notes.append(
+                    f"Live 'current' snapshot returned HTTP 404 for {acct}/{char_name} "
+                    "(character may have left ladder, renamed, or gone private)."
+                )
+
+        ordered_points = sorted(
+            points_by_label.values(),
+            key=lambda p: (_time_machine_age_hours(p.label), p.label.lower()),
+        )
+        avail_labels = [p.label for p in ordered_points if p.available]
+        earliest_lbl = avail_labels[0] if avail_labels else None
+        latest_lbl = avail_labels[-1] if avail_labels else None
+
+        if earliest_lbl and ordered_points and not ordered_points[0].available:
+            notes.append(
+                f"Character {acct}/{char_name} was not yet indexed at {ordered_points[0].label!r}; "
+                f"earliest available snapshot is {earliest_lbl!r}."
+            )
+
+        return CharacterTimelineReport(
+            account=acct,
+            character=char_name,
+            league=primary.league_name,
+            overview_slug=ov_slug,
+            available_time_machine_labels=all_labels,
+            probed_points=ordered_points,
+            earliest_available_label=earliest_lbl,
+            latest_available_label=latest_lbl,
+            notes=notes,
+        )
+
     def fetch_character(
         self,
         account_or_url: str,
@@ -976,6 +1396,7 @@ class NinjaBuildsService:
         *,
         league: str = DEFAULT_LEAGUE,
         timemachine: str | None = None,
+        fallback_nearest_timemachine: bool = True,
         load_into_pob: bool = False,
         slot: str = "main",
         audit: bool = False,
@@ -1027,75 +1448,108 @@ class NinjaBuildsService:
         m_pobbin = _POBBIN_POB_RE.match(clean_url_no_qs)
 
         if m_char or m_prof or "://" not in raw_input:
-            if m_char:
-                league_hint = unquote(m_char.group(1))
-                resolved_acct = _normalize_account_tag(m_char.group(2))
-                resolved_char = unquote(m_char.group(3)).strip()
-            elif m_prof:
-                league_hint = league
-                resolved_acct = _normalize_account_tag(m_prof.group(1))
-                resolved_char = unquote(m_prof.group(2)).strip()
-            else:
-                league_hint = league
-                if character is None and "/" in raw_input:
-                    acct_part, char_part = raw_input.split("/", 1)
-                    resolved_acct = _normalize_account_tag(acct_part)
-                    resolved_char = unquote(char_part).strip()
-                else:
-                    if not character or not character.strip():
-                        raise ValueError(
-                            "character name is required when passing an account name "
-                            "instead of a URL."
-                        )
-                    resolved_acct = _normalize_account_tag(raw_input)
-                    resolved_char = unquote(character).strip()
-
-            disp_league, league_url_slug, ov_slug = self._resolve_overview_slug(
-                league_hint, force_refresh=force_refresh
+            resolved_acct, resolved_char, league_hint, _ = self._parse_character_target(
+                raw_input, character, default_league=league
             )
+            snap_rep = self.get_snapshot_state(league_hint, force_refresh=force_refresh)
+            p_snap = snap_rep.primary
+            disp_league = p_snap.league_name
+            league_url_slug = p_snap.league_url
+            ov_slug = p_snap.snapshot_name or re.sub(
+                r"[^a-z0-9]+", "-", p_snap.league_name.lower()
+            ).strip("-")
             resolved_league = disp_league
             ninja_url = (
                 f"{POENINJA_ORIGIN}/poe2/builds/{league_url_slug}/character/"
                 f"{quote(resolved_acct, safe='')}/{quote(resolved_char, safe='')}"
             )
-            params: dict[str, str] = {
-                "overview": ov_slug,
-                "type": "exp",
-                "account": resolved_acct,
-                "name": resolved_char,
-            }
-            if resolved_tm:
-                params["timemachine"] = resolved_tm
 
-            query_str = "&".join(f"{k}={quote(v, safe='')}" for k, v in params.items())
-            resolved_url = f"{self.char_pob_raw_url}?{query_str}"
+            def _build_char_url(tm_val: str | None) -> str:
+                p: dict[str, str] = {
+                    "overview": ov_slug,
+                    "type": "exp",
+                    "account": resolved_acct,
+                    "name": resolved_char,
+                }
+                if tm_val:
+                    p["timemachine"] = tm_val
+                q_str = "&".join(f"{k}={quote(v, safe='')}" for k, v in p.items())
+                return f"{self.char_pob_raw_url}?{q_str}"
+
+            resolved_url = _build_char_url(resolved_tm)
             source_kind = "poeninja_live_pob"
 
-            try:
-                pob_code = self._cached_get_text(
-                    self.char_pob_raw_url,
-                    params=params,
-                    pace_on_miss=True,
+            code_try, status_try = self._try_fetch_char_pob(
+                ov_slug=ov_slug,
+                account=resolved_acct,
+                character=resolved_char,
+                timemachine=resolved_tm,
+                force_refresh=force_refresh,
+            )
+            if code_try is not None:
+                pob_code = code_try
+            elif status_try == 404 and resolved_tm:
+                if not fallback_nearest_timemachine:
+                    raise LookupError(
+                        f"Character {resolved_acct}/{resolved_char} has no snapshot at "
+                        f"timemachine={resolved_tm!r} on overview {ov_slug!r} (HTTP 404). "
+                        "Use probe_character_timeline() or pass fallback_nearest_timemachine=True."
+                    )
+                orig_tm = resolved_tm
+                nearest_lbl, nearest_code = self._discover_nearest_timemachine(
+                    ov_slug=ov_slug,
+                    account=resolved_acct,
+                    character=resolved_char,
+                    requested_tm=orig_tm,
+                    sorted_labels=p_snap.time_machine_labels,
                     force_refresh=force_refresh,
                 )
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code == 404 and not resolved_tm:
-                    fallback = self._find_corpus_fallback(resolved_acct, resolved_char)
-                    if fallback is not None and fallback.get("pob_code"):
-                        pob_code = str(fallback["pob_code"])
-                        source_kind = "poeninja_archived_corpus"
+                if nearest_code is not None and nearest_lbl is not None:
+                    pob_code = nearest_code
+                    resolved_tm = nearest_lbl
+                    resolved_url = _build_char_url(nearest_lbl)
+                    notes.append(
+                        f"Requested timemachine={orig_tm!r} returned HTTP 404 (character not yet "
+                        f"on ladder); automatically resolved nearest available snapshot "
+                        f"timemachine={nearest_lbl!r}."
+                    )
+                else:
+                    cur_code, _ = self._try_fetch_char_pob(
+                        ov_slug=ov_slug,
+                        account=resolved_acct,
+                        character=resolved_char,
+                        timemachine=None,
+                        force_refresh=force_refresh,
+                    )
+                    if cur_code is not None:
+                        pob_code = cur_code
+                        resolved_tm = None
+                        resolved_url = _build_char_url(None)
                         notes.append(
-                            f"Live poe.ninja PoB endpoint returned HTTP 404 for "
-                            f"{resolved_acct}/{resolved_char} (private, renamed, or off-ladder); "
-                            f"served archived {DEFAULT_LEAGUE} {POE2_PATCH} corpus snapshot."
+                            f"Requested timemachine={orig_tm!r} returned HTTP 404 and no "
+                            "historical snapshots matched; served current live snapshot instead."
                         )
                     else:
                         raise LookupError(
-                            f"Character {resolved_acct}/{resolved_char} not found on poe.ninja "
-                            f"overview {ov_slug!r} (HTTP 404)."
-                        ) from exc
+                            f"Character {resolved_acct}/{resolved_char} not found at "
+                            f"timemachine={orig_tm!r} or nearby snapshots on {ov_slug!r} "
+                            "(HTTP 404)."
+                        )
+            else:
+                fallback = self._find_corpus_fallback(resolved_acct, resolved_char)
+                if fallback is not None and fallback.get("pob_code"):
+                    pob_code = str(fallback["pob_code"])
+                    source_kind = "poeninja_archived_corpus"
+                    notes.append(
+                        f"Live poe.ninja PoB endpoint returned HTTP 404 for "
+                        f"{resolved_acct}/{resolved_char} (private, renamed, or off-ladder); "
+                        f"served archived {DEFAULT_LEAGUE} {POE2_PATCH} corpus snapshot."
+                    )
                 else:
-                    raise
+                    raise LookupError(
+                        f"Character {resolved_acct}/{resolved_char} not found on poe.ninja "
+                        f"overview {ov_slug!r} (HTTP 404)."
+                    )
         elif m_ninja_share:
             paste_id = m_ninja_share.group(1)
             resolved_url = f"{POENINJA_SHARE_POB_RAW_BASE_URL}/{paste_id}"

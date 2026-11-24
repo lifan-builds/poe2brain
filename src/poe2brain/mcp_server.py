@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -40,16 +40,19 @@ from poe2brain.filters import (
     FilterValidator,
     NeverSinkAdapter,
     SoundPackGenerator,
+    audit_theme_cvd,
     compose_theme,
     detect_poe2_filter_dir,
     extract_build_filter_context,
     get_visual_theme,
+    heal_filter_text,
     install_filter_bundle,
     list_visual_themes,
+    merge_build_filter_contexts,
     render_filter_preview_html,
 )
 from poe2brain.filters.soundpacks import SCALE_INTERVALS
-from poe2brain.knowledge import KnowledgeService, MetaService
+from poe2brain.knowledge import KnowledgeService, MetaService, build_waystone_regex_plan
 from poe2brain.models.common import AffixSide, EngineStatus
 from poe2brain.models.filters import (
     BuildFilterContext,
@@ -308,13 +311,122 @@ def normalize_item_text_for_pob2(raw_text: str) -> str:
     return stripped
 
 
-def _coerce_str_list(val: list[str] | str | None) -> list[str]:
+_ITEM_CLASS_HEADER_RE = re.compile(r"^Item Class:\s*\S", re.I)
+_RARITY_HEADER_RE = re.compile(
+    r"^Rarity:\s*(?:Normal|Magic|Rare|Unique|Currency|Gem|Divination Card)\b", re.I
+)
+_DUMP_DIVIDER_ONLY_RE = re.compile(r"^[=#*~_]{3,}$")
+
+
+def _coerce_str_list(val: Sequence[str] | str | None) -> list[str]:
     if val is None:
         return []
     if isinstance(val, str):
         s = val.strip()
         return [s] if s else []
     return [str(x).strip() for x in val if str(x).strip()]
+
+
+def _coerce_csv_or_list(val: Sequence[str] | str | None) -> list[str]:
+    if val is None:
+        return []
+    raw_items = [val] if isinstance(val, str) else [str(x) for x in val]
+    out: list[str] = []
+    for item in raw_items:
+        for part in item.split(","):
+            cleaned = part.strip()
+            if cleaned and cleaned not in out:
+                out.append(cleaned)
+    return out
+
+
+def _parse_callouts_arg(
+    callouts: Mapping[str, str] | Sequence[str] | str | None,
+) -> dict[str, str]:
+    if callouts is None:
+        return {}
+    if isinstance(callouts, Mapping):
+        return {
+            str(k).strip(): str(v).strip()
+            for k, v in callouts.items()
+            if str(k).strip() and str(v).strip()
+        }
+    raw_entries = [callouts] if isinstance(callouts, str) else [str(x) for x in callouts]
+    parsed: dict[str, str] = {}
+    for entry in raw_entries:
+        s = entry.strip()
+        if not s:
+            continue
+        if "=" not in s:
+            raise ValueError(
+                f"Expected tier=text for custom callout (e.g. 's_plus=Divine drop!'), got {entry!r}"
+            )
+        tier_k, phrase = s.split("=", 1)
+        if not tier_k.strip() or not phrase.strip():
+            raise ValueError(
+                f"Expected non-empty tier=text for custom callout, got {entry!r}"
+            )
+        parsed[tier_k.strip()] = phrase.strip()
+    return parsed
+
+
+def split_multi_item_clipboard_dump(items: Sequence[str] | str) -> list[str]:
+    """Split a multi-item paste string or sequence into clean per-item Ctrl+C strings."""
+    raw_blocks = [items] if isinstance(items, str) else [str(x) for x in items]
+    split_items: list[str] = []
+
+    for block in raw_blocks:
+        if not block or not block.strip():
+            continue
+        lines = block.splitlines()
+        has_headers = any(
+            _ITEM_CLASS_HEADER_RE.match(ln.strip()) or _RARITY_HEADER_RE.match(ln.strip())
+            for ln in lines
+        )
+        if not has_headers:
+            for sub in re.split(r"\n\s*\n+", block.strip()):
+                if sub.strip():
+                    split_items.append(sub.strip())
+            continue
+
+        chunks: list[list[str]] = []
+        current: list[str] = []
+        last_non_empty = ""
+
+        for ln in lines:
+            stripped = ln.strip()
+            if _DUMP_DIVIDER_ONLY_RE.match(stripped):
+                continue
+            if _ITEM_CLASS_HEADER_RE.match(stripped):
+                if any(x.strip() for x in current):
+                    chunks.append(current)
+                    current = []
+                current.append(ln)
+                last_non_empty = stripped
+            elif _RARITY_HEADER_RE.match(stripped):
+                if any(x.strip() for x in current) and not _ITEM_CLASS_HEADER_RE.match(
+                    last_non_empty
+                ):
+                    chunks.append(current)
+                    current = []
+                current.append(ln)
+                last_non_empty = stripped
+            else:
+                current.append(ln)
+                if stripped:
+                    last_non_empty = stripped
+
+        if any(x.strip() for x in current):
+            chunks.append(current)
+
+        for chunk in chunks:
+            joined = "\n".join(chunk).strip()
+            if joined:
+                split_items.append(joined)
+
+    if not split_items:
+        raise ValueError("Provide at least one PoE2 Ctrl+C item to triage.")
+    return split_items
 
 
 def resolve_live_crafting_prices(
@@ -434,6 +546,7 @@ def execute_craft_odds(
     target: list[str] | str | None = None,
     omen: list[str] | str | None = None,
     item_text: str | None = None,
+    protect_existing_targets: bool = True,
     league: str = DEFAULT_LEAGUE,
     offline_prices: bool = False,
 ) -> dict[str, Any]:
@@ -551,6 +664,7 @@ def execute_craft_odds(
                         omens=omens or None,
                         currency_prices_ex=prices,
                         use_fallback_prices=True,
+                        protect_existing_targets=protect_existing_targets,
                     )
                     if step_evals:
                         raw_note = step_evals[0].notes or ""
@@ -619,6 +733,7 @@ def execute_craft_odds(
         omens=omens or None,
         currency_prices_ex=prices,
         use_fallback_prices=True,
+        protect_existing_targets=protect_existing_targets,
     )
     eval_dicts = [e.model_dump(mode="json") for e in evals]
     primary = eval_dicts[0] if eval_dicts else {}
@@ -629,6 +744,7 @@ def execute_craft_odds(
         "league": league,
         "price_source": price_source,
         "assumed_rarity": state.rarity.value,
+        "protect_existing_targets": protect_existing_targets,
         "targets": targets,
         "evaluations": eval_dicts,
     }
@@ -952,6 +1068,54 @@ def poe2_inspect_ascendancy(
     )
 
 
+def execute_waystone_regex(
+    *,
+    slot: str | None = None,
+    archetypes: Sequence[str] | str | None = None,
+    avoid_keywords: Sequence[str] | str | None = None,
+    want_keywords: Sequence[str] | str | None = None,
+    tablet_want_keywords: Sequence[str] | str | None = None,
+    min_waystone_drop_pct: int = 120,
+    min_pack_size_pct: int | None = 20,
+    item_text: str | None = None,
+    include_dangerous: bool = False,
+    max_chars: int = 50,
+) -> dict[str, Any]:
+    build_payload: dict[str, Any] | None = None
+    clean_slot = slot.strip() if (slot and slot.strip()) else None
+    if clean_slot:
+        svc = get_build_service()
+        ensure_pob_slot_loaded(svc, slot=clean_slot, require_existing=True)
+        insp = svc.inspect_build(slot=clean_slot)
+        build_payload = {
+            **(insp.get("raw_pob_stats") or {}),
+            **insp["stats"].model_dump(mode="json"),
+        }
+
+    arch_list = _coerce_csv_or_list(archetypes) or None
+    avoid_list = _coerce_csv_or_list(avoid_keywords) or None
+    want_list = _coerce_csv_or_list(want_keywords) or None
+    tablet_list = _coerce_csv_or_list(tablet_want_keywords) or None
+    clean_item = item_text.strip() if (item_text and item_text.strip()) else None
+
+    plan = build_waystone_regex_plan(
+        build=build_payload,
+        archetypes=arch_list,
+        avoid_keywords=avoid_list,
+        want_keywords=want_list,
+        tablet_want_keywords=tablet_list,
+        min_waystone_drop_pct=min_waystone_drop_pct,
+        min_pack_size_pct=min_pack_size_pct,
+        waystone_item=clean_item,
+        include_dangerous=include_dangerous,
+        max_chars=max_chars,
+        db=get_knowledge_service().db,
+    )
+    out = plan.model_dump(mode="json")
+    out["slot"] = clean_slot
+    return out
+
+
 @mcp.tool()
 def poe2_meta_ladder(
     league: str = DEFAULT_LEAGUE,
@@ -966,6 +1130,36 @@ def poe2_meta_ladder(
             top_n=top_n,
             include_economy_signals=include_economy_signals,
             force_refresh=force_refresh,
+        )
+    )
+
+
+@mcp.tool()
+def poe2_waystone_regex(
+    slot: str | None = None,
+    archetypes: list[str] | str | None = None,
+    avoid_keywords: list[str] | str | None = None,
+    want_keywords: list[str] | str | None = None,
+    tablet_want_keywords: list[str] | str | None = None,
+    min_waystone_drop_pct: int = 120,
+    min_pack_size_pct: int | None = 20,
+    item_text: str | None = None,
+    include_dangerous: bool = False,
+    max_chars: int = 50,
+) -> dict[str, Any]:
+    """Compile <=50-char PoE2 Waystone brick/safe/juicing & Precursor Tablet stash regexes."""
+    return _safe_tool_call(
+        lambda: execute_waystone_regex(
+            slot=slot,
+            archetypes=archetypes,
+            avoid_keywords=avoid_keywords,
+            want_keywords=want_keywords,
+            tablet_want_keywords=tablet_want_keywords,
+            min_waystone_drop_pct=min_waystone_drop_pct,
+            min_pack_size_pct=min_pack_size_pct,
+            item_text=item_text,
+            include_dangerous=include_dangerous,
+            max_chars=max_chars,
         )
     )
 
@@ -1111,6 +1305,76 @@ def poe2_pob_suggest_nodes(
     return _safe_tool_call(_run)
 
 
+def execute_pob_compare(
+    *,
+    slot_a: str = "early",
+    slot_b: str = "main",
+    dewater: bool = False,
+) -> dict[str, Any]:
+    svc = get_build_service()
+    ensure_pob_slot_loaded(svc, slot=slot_a, require_existing=True)
+    ensure_pob_slot_loaded(svc, slot=slot_b, require_existing=True)
+    comp = svc.compare_slots(slot_a=slot_a, slot_b=slot_b, dewater=dewater)
+    return comp.model_dump(mode="json")
+
+
+def execute_pob_hc_audit(
+    *,
+    source: str | None = None,
+    slot: str = "main",
+    top_nodes: int = 5,
+    apply_dewater: bool = False,
+) -> dict[str, Any]:
+    svc = get_build_service()
+    if source and source.strip():
+        svc.load_build(source.strip(), slot=slot)
+        save_pob_slot_snapshot(svc, slot)
+    else:
+        ensure_pob_slot_loaded(svc, slot=slot, require_existing=True)
+    report = svc.audit_hc_rip_risks(
+        slot=slot,
+        apply_dewater=apply_dewater,
+        top_defensive_nodes=top_nodes,
+    )
+    if apply_dewater:
+        save_pob_slot_snapshot(svc, slot)
+    return report.model_dump(mode="json")
+
+
+@mcp.tool()
+def poe2_pob_compare(
+    slot_a: str = "early",
+    slot_b: str = "main",
+    dewater: bool = False,
+) -> dict[str, Any]:
+    """Compare two loaded PoB2 slots across DPS/EHP, gear, skills, passives, and Gold respec."""
+    return _safe_tool_call(
+        lambda: execute_pob_compare(
+            slot_a=slot_a,
+            slot_b=slot_b,
+            dewater=dewater,
+        )
+    )
+
+
+@mcp.tool()
+def poe2_pob_hc_audit(
+    source: str | None = None,
+    slot: str = "main",
+    top_nodes: int = 5,
+    apply_dewater: bool = False,
+) -> dict[str, Any]:
+    """Audit Hardcore Pinnacle Boss one-shot Max Hits, Bleed/Poison ES bypass, & Gold respecs."""
+    return _safe_tool_call(
+        lambda: execute_pob_hc_audit(
+            source=source,
+            slot=slot,
+            top_nodes=top_nodes,
+            apply_dewater=apply_dewater,
+        )
+    )
+
+
 def export_pob_slot(
     slot: str = "main",
     fmt: Literal["code", "xml", "ggg_json"] = "code",
@@ -1191,16 +1455,43 @@ def execute_scan_arbitrage(
     *,
     min_volume_divine: float = 2.0,
     min_roi_pct: float = 5.0,
+    max_investment_divine: float | None = None,
+    max_gold_per_cycle: int | None = None,
+    starting_exalted: float | None = None,
+    gold_budget: int | None = None,
+    target_divine: float | None = None,
     live_books: bool = True,
     include_encounter_gated: bool = True,
     limit: int = 25,
     force_refresh: bool = False,
     league: str = DEFAULT_LEAGUE,
 ) -> dict[str, Any]:
-    report = get_arbitrage_scanner().scan_all(
+    scanner = get_arbitrage_scanner()
+    if (
+        starting_exalted is not None
+        or gold_budget is not None
+        or target_divine is not None
+    ):
+        eff_start_ex = starting_exalted if starting_exalted is not None else 250.0
+        eff_gold = gold_budget if gold_budget is not None else 80_000
+        eff_target_div = target_divine if target_divine is not None else 50.0
+        ladder = scanner.build_compounding_ladder(
+            starting_exalted=eff_start_ex,
+            gold_budget=eff_gold,
+            target_divine=eff_target_div,
+            league=league,
+            min_volume_divine=min(min_volume_divine, 0.8),
+            include_live_exchange=False,
+            force_refresh=force_refresh,
+        )
+        return ladder.model_dump(mode="json")
+
+    report = scanner.scan_all(
         league=league,
         min_volume_divine=min_volume_divine,
         min_roi_pct=min_roi_pct,
+        max_investment_divine=max_investment_divine,
+        max_gold_per_cycle=max_gold_per_cycle,
         include_live_exchange=live_books,
         include_encounter_gated=include_encounter_gated,
         limit=limit,
@@ -1213,16 +1504,26 @@ def execute_scan_arbitrage(
 def poe2_scan_arbitrage(
     min_volume_divine: float = 2.0,
     min_roi_pct: float = 5.0,
+    max_investment_divine: float | None = None,
+    max_gold_per_cycle: int | None = None,
+    starting_exalted: float | None = None,
+    gold_budget: int | None = None,
+    target_divine: float | None = None,
     live_books: bool = True,
     include_encounter_gated: bool = True,
     limit: int = 25,
     league: str = DEFAULT_LEAGUE,
 ) -> dict[str, Any]:
-    """Scan executable PoE2 0.5.5 conversions, Alva spreads, order books, Gold ROI, and traps."""
+    """Scan PoE2 0.5.5 arbitrage plays or build a starting_exalted -> target_divine Gold ladder."""
     return _safe_tool_call(
         lambda: execute_scan_arbitrage(
             min_volume_divine=min_volume_divine,
             min_roi_pct=min_roi_pct,
+            max_investment_divine=max_investment_divine,
+            max_gold_per_cycle=max_gold_per_cycle,
+            starting_exalted=starting_exalted,
+            gold_budget=gold_budget,
+            target_divine=target_divine,
             live_books=live_books,
             include_encounter_gated=include_encounter_gated,
             limit=limit,
@@ -1295,6 +1596,49 @@ def poe2_find_upgrades(
     )
 
 
+def execute_triage_dump(
+    *,
+    items: Sequence[str] | str,
+    min_exalted: float = 5.0,
+    roll_tolerance: float = 0.9,
+    securable_only: bool = False,
+    live_trade: bool = True,
+    league: str = DEFAULT_LEAGUE,
+) -> dict[str, Any]:
+    split_list = split_multi_item_clipboard_dump(items)
+    report = get_trade_advisor().triage_clipboard_dump(
+        split_list,
+        league=league,
+        min_sell_exalted=min_exalted,
+        roll_tolerance=roll_tolerance,
+        securable_only=securable_only,
+        live_trade=live_trade,
+    )
+    return report.model_dump(mode="json")
+
+
+@mcp.tool()
+def poe2_triage_dump(
+    items: list[str] | str,
+    min_exalted: float = 5.0,
+    securable_only: bool = False,
+    live_trade: bool = True,
+    roll_tolerance: float = 0.9,
+    league: str = DEFAULT_LEAGUE,
+) -> dict[str, Any]:
+    """Batch price-check & classify multi-item PoE2 Ctrl+C dump into sell/craft/unveil/salvage."""
+    return _safe_tool_call(
+        lambda: execute_triage_dump(
+            items=items,
+            min_exalted=min_exalted,
+            roll_tolerance=roll_tolerance,
+            securable_only=securable_only,
+            live_trade=live_trade,
+            league=league,
+        )
+    )
+
+
 @mcp.tool()
 def poe2_craft_odds(
     base: str,
@@ -1303,6 +1647,8 @@ def poe2_craft_odds(
     target: list[str] | str | None = None,
     omen: list[str] | str | None = None,
     item_text: str | None = None,
+    protect_existing_targets: bool = True,
+    offline_prices: bool = False,
     league: str = DEFAULT_LEAGUE,
 ) -> dict[str, Any]:
     """Compute exact PoE2 0.5.5 conditional mod-pool hit odds and step cost (CraftActionEval)."""
@@ -1314,6 +1660,8 @@ def poe2_craft_odds(
             target=target,
             omen=omen,
             item_text=item_text,
+            protect_existing_targets=protect_existing_targets,
+            offline_prices=offline_prices,
             league=league,
         )
     )
@@ -1424,11 +1772,14 @@ def execute_ninja_search(
     skill: str | None = None,
     support_gem: str | None = None,
     unique_item: str | None = None,
+    exclude_uniques: Sequence[str] | str | None = None,
+    max_uniques: int | None = None,
     keystone: str | None = None,
     weapon_type: str | None = None,
     min_dps: float | None = None,
     min_ehp: float | None = None,
     sort_by: str = "dps",
+    ssf_viable_first: bool = False,
     limit: int = 15,
     refresh_live_top: int = 0,
     include_pob_code: bool = False,
@@ -1439,6 +1790,7 @@ def execute_ninja_search(
         raise ValueError(
             f"Unsupported sort_by {sort_by!r} (expected 'dps', 'ehp', 'level', 'es', or 'life')."
         )
+    excl_list = _coerce_csv_or_list(exclude_uniques) or None
     report = get_ninja_service().search_builds(
         league=league,
         class_name=class_name,
@@ -1446,11 +1798,14 @@ def execute_ninja_search(
         skill=skill,
         support_gem=support_gem,
         unique_item=unique_item,
+        exclude_uniques=excl_list,
+        max_uniques=max_uniques,
         keystone=keystone,
         weapon_type=weapon_type,
         min_dps=min_dps,
         min_ehp=min_ehp,
         sort_by=norm_sort,  # type: ignore[arg-type]
+        ssf_viable_first=ssf_viable_first,
         limit=limit,
         refresh_live_top=refresh_live_top,
         include_pob_code=include_pob_code,
@@ -1465,12 +1820,22 @@ def execute_ninja_character(
     character: str | None = None,
     league: str = DEFAULT_LEAGUE,
     timemachine: str | None = None,
+    probe_timeline: bool = False,
     load_into_pob: bool = False,
     slot: str = "main",
     audit: bool = False,
     force_refresh: bool = False,
 ) -> dict[str, Any]:
     ninja_svc = get_ninja_service()
+    if probe_timeline:
+        timeline = ninja_svc.probe_character_timeline(
+            account_or_url,
+            character=character,
+            league=league,
+            force_refresh=force_refresh,
+        )
+        return timeline.model_dump(mode="json")
+
     imp = ninja_svc.fetch_character(
         account_or_url,
         character=character,
@@ -1543,20 +1908,45 @@ def _resolve_strictness_tier(raw: str) -> StrictnessTier:
     raise ValueError(f"Unsupported strictness {raw!r} (expected one of: {valid}).")
 
 
+def _normalize_cvd_flag(cvd_safe: str | bool | None) -> str | bool | None:
+    if cvd_safe is None or cvd_safe is False:
+        return None
+    if cvd_safe is True:
+        return True
+    s_val = str(cvd_safe).strip().lower()
+    if s_val in ("", "false", "0", "none", "off"):
+        return None
+    if s_val in ("true", "1", "yes", "on", "cvd", "colorblind", "colorblind_safe"):
+        return True
+    if s_val in ("deuteranopia", "protanopia", "tritanopia"):
+        return s_val
+    raise ValueError(
+        f"Unsupported cvd_safe {cvd_safe!r} "
+        "(expected 'deuteranopia', 'protanopia', 'tritanopia', or true)."
+    )
+
+
 def _resolve_visual_theme(
     theme: str | None,
     look: str | None,
     *,
+    cvd_safe: str | bool | None = None,
     default_preset: str | None = "forbidden_abyss",
 ) -> VisualThemeSpec | None:
-    if look is not None and look.strip():
-        norm_base = (
-            theme.strip().lower().replace("-", "_")
-            if (theme and theme.strip() and theme.strip().lower() != "none")
-            else None
+    eff_cvd = _normalize_cvd_flag(cvd_safe)
+    has_look = bool(look is not None and look.strip())
+    if has_look or eff_cvd is not None:
+        base_p: str | None = None
+        if theme and theme.strip() and theme.strip().lower() != "none":
+            norm_base = theme.strip().lower().replace("-", "_")
+            base_p = (
+                norm_base if norm_base in BUILTIN_THEME_PRESETS else get_visual_theme(theme).id
+            )
+        return compose_theme(
+            look.strip() if (look and look.strip()) else None,
+            base_preset=base_p,
+            cvd_safe=eff_cvd,
         )
-        base_p = norm_base if norm_base in BUILTIN_THEME_PRESETS else None
-        return compose_theme(look.strip(), base_preset=base_p)
     if theme is not None and theme.strip():
         if theme.strip().lower() == "none":
             return None
@@ -1570,19 +1960,39 @@ def _resolve_build_filter_context(
     *,
     pob: str | None,
     slot: str | None,
+    slots: Sequence[str] | str | None = None,
 ) -> BuildFilterContext | None:
+    contexts: list[BuildFilterContext] = []
+    extra_slots = _coerce_csv_or_list(slots)
+
     if pob is not None and pob.strip():
         b_svc = get_build_service()
-        target_slot = slot.strip() if (slot and slot.strip()) else "main"
+        target_slot = (
+            slot.strip() if (slot and slot.strip() and "," not in slot) else "main"
+        )
         b_svc.load_build(pob.strip(), slot=target_slot)
         save_pob_slot_snapshot(b_svc, target_slot)
-        return extract_build_filter_context(b_svc, slot=target_slot)
-    if slot is not None and slot.strip():
-        b_svc = get_build_service()
-        target_slot = slot.strip()
-        ensure_pob_slot_loaded(b_svc, slot=target_slot, require_existing=True)
-        return extract_build_filter_context(b_svc, slot=target_slot)
-    return None
+        contexts.append(extract_build_filter_context(b_svc, slot=target_slot))
+        for s_name in extra_slots:
+            if s_name == target_slot:
+                continue
+            ensure_pob_slot_loaded(b_svc, slot=s_name, require_existing=True)
+            contexts.append(extract_build_filter_context(b_svc, slot=s_name))
+    else:
+        combined_slots = list(
+            dict.fromkeys([*_coerce_csv_or_list(slot), *extra_slots])
+        )
+        if combined_slots:
+            b_svc = get_build_service()
+            for s_name in combined_slots:
+                ensure_pob_slot_loaded(b_svc, slot=s_name, require_existing=True)
+                contexts.append(extract_build_filter_context(b_svc, slot=s_name))
+
+    if not contexts:
+        return None
+    if len(contexts) == 1:
+        return contexts[0]
+    return merge_build_filter_contexts(contexts)
 
 
 def _maybe_synthesize_sound_pack(
@@ -1590,6 +2000,9 @@ def _maybe_synthesize_sound_pack(
     sound_style: str | None,
     musical_key: str = "D",
     scale: str = "lydian",
+    warm_night_mode: bool = False,
+    lowpass_hz: float | None = None,
+    custom_callouts: Mapping[str, str] | Sequence[str] | str | None = None,
     sound_dir: str | Path | None = None,
     out_path: str | Path | None = None,
     preview_html: str | Path | None = None,
@@ -1599,10 +2012,21 @@ def _maybe_synthesize_sound_pack(
     if sound_style is not None and sound_style.strip().lower() == "none":
         return None
 
+    callout_map = _parse_callouts_arg(custom_callouts)
+
     if sound_style is None or not sound_style.strip():
-        if sound_dir is None and preview_html is None and not install:
+        if callout_map:
+            style_enum = SoundPackStyle.VOICE_CALLOUT
+        elif (
+            warm_night_mode
+            or lowpass_hz is not None
+            or sound_dir is not None
+            or preview_html is not None
+            or install
+        ):
+            style_enum = SoundPackStyle.CELESTIAL_CHIME
+        else:
             return None
-        style_enum = SoundPackStyle.CELESTIAL_CHIME
     else:
         norm_style = sound_style.strip().lower().replace("-", "_")
         try:
@@ -1621,6 +2045,9 @@ def _maybe_synthesize_sound_pack(
     params = SoundSynthesisParams(
         musical_key=musical_key.strip().upper() or "D",
         scale=norm_scale,  # type: ignore[arg-type]
+        warm_night_mode=bool(warm_night_mode),
+        lowpass_hz=lowpass_hz,
+        custom_callouts=callout_map,
     )
 
     pack_id: str | None = None
@@ -1645,6 +2072,9 @@ def _maybe_synthesize_sound_pack(
         style=style_enum,
         pack_id=pack_id,
         params=params,
+        custom_callouts=callout_map or None,
+        warm_night_mode=bool(warm_night_mode),
+        lowpass_hz=lowpass_hz,
     )
 
 
@@ -1706,11 +2136,16 @@ def execute_filter_generate(
     strictness: str = "semi_strict",
     theme: str | None = None,
     look: str | None = None,
+    cvd_safe: str | bool | None = None,
     sound_style: str | None = None,
     musical_key: str = "D",
     scale: str = "lydian",
+    warm_night_mode: bool = False,
+    lowpass_hz: float | None = None,
+    custom_callouts: Mapping[str, str] | Sequence[str] | str | None = None,
     pob: str | None = None,
     slot: str | None = None,
+    slots: Sequence[str] | str | None = None,
     out_path: str | Path | None = None,
     sound_dir: str | Path | None = None,
     preview_html: str | Path | None = None,
@@ -1721,12 +2156,18 @@ def execute_filter_generate(
     offline: bool = False,
 ) -> dict[str, Any]:
     strict_tier = _resolve_strictness_tier(strictness)
-    resolved_theme = _resolve_visual_theme(theme, look) or get_visual_theme("forbidden_abyss")
-    build_ctx = _resolve_build_filter_context(pob=pob, slot=slot)
+    eff_cvd = _normalize_cvd_flag(cvd_safe)
+    resolved_theme = _resolve_visual_theme(theme, look, cvd_safe=eff_cvd) or get_visual_theme(
+        "forbidden_abyss"
+    )
+    build_ctx = _resolve_build_filter_context(pob=pob, slot=slot, slots=slots)
     sound_pack = _maybe_synthesize_sound_pack(
         sound_style=sound_style,
         musical_key=musical_key,
         scale=scale,
+        warm_night_mode=warm_night_mode,
+        lowpass_hz=lowpass_hz,
+        custom_callouts=custom_callouts,
         sound_dir=sound_dir,
         out_path=out_path,
         preview_html=preview_html,
@@ -1778,6 +2219,12 @@ def execute_filter_generate(
         "style_prompt": resolved_theme.style_prompt,
         "min_contrast_ratio": resolved_theme.min_contrast_ratio,
     }
+    if (
+        eff_cvd is not None
+        or resolved_theme.id == "colorblind_safe"
+        or resolved_theme.base_preset == "colorblind_safe"
+    ):
+        out["cvd_audit"] = audit_theme_cvd(resolved_theme).model_dump(mode="json")
     out["sound_pack"] = sound_pack.model_dump(mode="json") if sound_pack is not None else None
     return out
 
@@ -1787,11 +2234,16 @@ def execute_filter_restyle(
     source: str,
     theme: str | None = None,
     look: str | None = None,
+    cvd_safe: str | bool | None = None,
     sound_style: str | None = None,
     musical_key: str = "D",
     scale: str = "lydian",
+    warm_night_mode: bool = False,
+    lowpass_hz: float | None = None,
+    custom_callouts: Mapping[str, str] | Sequence[str] | str | None = None,
     pob: str | None = None,
     slot: str | None = None,
+    slots: Sequence[str] | str | None = None,
     out_path: str | Path | None = None,
     sound_dir: str | Path | None = None,
     preview_html: str | Path | None = None,
@@ -1837,12 +2289,16 @@ def execute_filter_restyle(
             else:
                 inferred_strictness = _resolve_strictness_tier(raw_src)
 
-    resolved_theme = _resolve_visual_theme(theme, look)
-    build_ctx = _resolve_build_filter_context(pob=pob, slot=slot)
+    eff_cvd = _normalize_cvd_flag(cvd_safe)
+    resolved_theme = _resolve_visual_theme(theme, look, cvd_safe=eff_cvd)
+    build_ctx = _resolve_build_filter_context(pob=pob, slot=slot, slots=slots)
     sound_pack = _maybe_synthesize_sound_pack(
         sound_style=sound_style,
         musical_key=musical_key,
         scale=scale,
+        warm_night_mode=warm_night_mode,
+        lowpass_hz=lowpass_hz,
+        custom_callouts=custom_callouts,
         sound_dir=sound_dir,
         out_path=out_path,
         preview_html=preview_html,
@@ -1891,7 +2347,60 @@ def execute_filter_restyle(
         )
 
     out = result.model_dump(mode="json")
+    if resolved_theme is not None and (
+        eff_cvd is not None
+        or resolved_theme.id == "colorblind_safe"
+        or resolved_theme.base_preset == "colorblind_safe"
+    ):
+        out["cvd_audit"] = audit_theme_cvd(resolved_theme).model_dump(mode="json")
     out["sound_pack"] = sound_pack.model_dump(mode="json") if sound_pack is not None else None
+    return out
+
+
+def execute_filter_heal(
+    *,
+    filter_file_or_text: str,
+    out_path: str | Path | None = None,
+    sound_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    if not filter_file_or_text or not filter_file_or_text.strip():
+        raise ValueError("filter_file_or_text cannot be empty.")
+
+    stripped = filter_file_or_text.strip()
+    source_path: Path | None = None
+    base_dir: Path | None = None
+
+    if "\n" not in stripped and len(stripped) < 1024:
+        cand = Path(stripped).expanduser()
+        if cand.is_file():
+            source_path = cand
+            base_dir = cand.parent
+            text = cand.read_text(encoding="utf-8")
+        elif stripped.endswith(".filter") or "/" in stripped or "\\" in stripped:
+            raise FileNotFoundError(f"Filter file not found: {stripped}")
+        else:
+            text = filter_file_or_text
+    else:
+        text = filter_file_or_text
+
+    resolved_out = Path(out_path).expanduser() if out_path is not None else None
+    resolved_dir = resolved_out.parent if resolved_out is not None else base_dir
+    if sound_dir is not None:
+        sd = Path(sound_dir).expanduser()
+        if (sd / "manifest.json").is_file() and sd.name.startswith("poe2brain_"):
+            resolved_dir = sd.parent
+        else:
+            resolved_dir = sd
+
+    report = heal_filter_text(text, filter_dir=resolved_dir)
+    if resolved_out is not None:
+        resolved_out.parent.mkdir(parents=True, exist_ok=True)
+        resolved_out.write_text(report.healed_text, encoding="utf-8")
+
+    out = report.model_dump(mode="json")
+    out["source_path"] = str(source_path) if source_path is not None else None
+    out["out_path"] = str(resolved_out) if resolved_out is not None else None
+    out["filter_dir"] = str(resolved_dir) if resolved_dir is not None else None
     return out
 
 
@@ -1954,16 +2463,19 @@ def poe2_ninja_search(
     skill: str | None = None,
     support_gem: str | None = None,
     unique_item: str | None = None,
+    exclude_uniques: list[str] | str | None = None,
+    max_uniques: int | None = None,
     keystone: str | None = None,
     weapon_type: str | None = None,
     min_dps: float | None = None,
     min_ehp: float | None = None,
     sort_by: Literal["dps", "ehp", "level", "es", "life"] = "dps",
+    ssf_viable_first: bool = False,
     limit: int = 15,
     refresh_live_top: int = 0,
     include_pob_code: bool = False,
 ) -> dict[str, Any]:
-    """Search PoE2 Forbidden Rites poe.ninja builds across class/ascendancy/skill/unique/stats."""
+    """Search PoE2 Forbidden Rites poe.ninja builds across class/ascendancy/skill/unique/SSF."""
     return _safe_tool_call(
         lambda: execute_ninja_search(
             league=league,
@@ -1972,11 +2484,14 @@ def poe2_ninja_search(
             skill=skill,
             support_gem=support_gem,
             unique_item=unique_item,
+            exclude_uniques=exclude_uniques,
+            max_uniques=max_uniques,
             keystone=keystone,
             weapon_type=weapon_type,
             min_dps=min_dps,
             min_ehp=min_ehp,
             sort_by=sort_by,
+            ssf_viable_first=ssf_viable_first,
             limit=limit,
             refresh_live_top=refresh_live_top,
             include_pob_code=include_pob_code,
@@ -1990,18 +2505,20 @@ def poe2_ninja_character(
     character: str | None = None,
     league: str = DEFAULT_LEAGUE,
     timemachine: str | None = None,
+    probe_timeline: bool = False,
     load_into_pob: bool = False,
     slot: str = "main",
     audit: bool = False,
     force_refresh: bool = False,
 ) -> dict[str, Any]:
-    """Import a live poe.ninja character or PoB2 URL, inspect XML, and optionally load/audit."""
+    """Import a live poe.ninja character, probe time-machine timeline, or load/audit in PoB2."""
     return _safe_tool_call(
         lambda: execute_ninja_character(
             account_or_url=account_or_url,
             character=character,
             league=league,
             timemachine=timemachine,
+            probe_timeline=probe_timeline,
             load_into_pob=load_into_pob,
             slot=slot,
             audit=audit,
@@ -2021,11 +2538,16 @@ def poe2_filter_generate(
     strictness: str = "semi_strict",
     theme: str | None = None,
     look: str | None = None,
+    cvd_safe: str | bool | None = None,
     sound_style: str | None = None,
     musical_key: str = "D",
     scale: str = "lydian",
+    warm_night_mode: bool = False,
+    lowpass_hz: float | None = None,
+    custom_callouts: dict[str, str] | list[str] | None = None,
     pob: str | None = None,
     slot: str | None = None,
+    slots: list[str] | str | None = None,
     out_path: str | None = None,
     sound_dir: str | None = None,
     preview_html: str | None = None,
@@ -2035,17 +2557,22 @@ def poe2_filter_generate(
     league: str = DEFAULT_LEAGUE,
     offline: bool = False,
 ) -> dict[str, Any]:
-    """Compile a validated PoE2 0.5.5 .filter + custom theme look + .wav/.mp3 soundpack + HTML."""
+    """Compile a validated PoE2 0.5.5 .filter + CVD/custom theme + warm-night/voice soundpack."""
     return _safe_tool_call(
         lambda: execute_filter_generate(
             strictness=strictness,
             theme=theme,
             look=look,
+            cvd_safe=cvd_safe,
             sound_style=sound_style,
             musical_key=musical_key,
             scale=scale,
+            warm_night_mode=warm_night_mode,
+            lowpass_hz=lowpass_hz,
+            custom_callouts=custom_callouts,
             pob=pob,
             slot=slot,
+            slots=slots,
             out_path=out_path,
             sound_dir=sound_dir,
             preview_html=preview_html,
@@ -2063,11 +2590,16 @@ def poe2_filter_restyle(
     source: str,
     theme: str | None = None,
     look: str | None = None,
+    cvd_safe: str | bool | None = None,
     sound_style: str | None = None,
     musical_key: str = "D",
     scale: str = "lydian",
+    warm_night_mode: bool = False,
+    lowpass_hz: float | None = None,
+    custom_callouts: dict[str, str] | list[str] | None = None,
     pob: str | None = None,
     slot: str | None = None,
+    slots: list[str] | str | None = None,
     out_path: str | None = None,
     sound_dir: str | None = None,
     preview_html: str | None = None,
@@ -2077,17 +2609,22 @@ def poe2_filter_restyle(
     league: str = DEFAULT_LEAGUE,
     offline: bool = False,
 ) -> dict[str, Any]:
-    """Auto-heal 0.5.5 stale BaseTypes, inject economy/PoB2 overrides, and restyle a .filter."""
+    """Auto-heal 0.5.5 stale BaseTypes, inject economy/co-op PoB2 overrides, & restyle .filter."""
     return _safe_tool_call(
         lambda: execute_filter_restyle(
             source=source,
             theme=theme,
             look=look,
+            cvd_safe=cvd_safe,
             sound_style=sound_style,
             musical_key=musical_key,
             scale=scale,
+            warm_night_mode=warm_night_mode,
+            lowpass_hz=lowpass_hz,
+            custom_callouts=custom_callouts,
             pob=pob,
             slot=slot,
+            slots=slots,
             out_path=out_path,
             sound_dir=sound_dir,
             preview_html=preview_html,
@@ -2109,6 +2646,22 @@ def poe2_filter_validate(
     return _safe_tool_call(
         lambda: execute_filter_validate(
             filter_file_or_text=filter_file_or_text,
+            sound_dir=sound_dir,
+        )
+    )
+
+
+@mcp.tool()
+def poe2_filter_heal(
+    filter_file_or_text: str,
+    out_path: str | None = None,
+    sound_dir: str | None = None,
+) -> dict[str, Any]:
+    """Doctor & auto-heal broken PoE1 / PoE2 0.1 .filter files or text to 0 Patch 0.5.5 errors."""
+    return _safe_tool_call(
+        lambda: execute_filter_heal(
+            filter_file_or_text=filter_file_or_text,
+            out_path=out_path,
             sound_dir=sound_dir,
         )
     )

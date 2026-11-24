@@ -55,9 +55,9 @@ Do **NOT** confuse PoE1 Essences (reroll whole Rare) with PoE2's two distinct Es
 - **Multi-Roll & Catalyst Omens**:
   - `Omen of Greater Exaltation` (`+2` mods on next Exalt) & `Omen of Greater Annulment` (`-2` mods on next Annul).
   - `Omen of Catalysing Exaltation`: Consumes Jewellery/item Catalyst quality to weight the next Exalted Orb heavily toward the Catalyst's mod tag!
-- **`Omen of Whittling` (Deterministic Low-ilvl Cleanup)**:
-  - Next **Chaos Orb** (including Greater/Perfect Chaos!) **removes the non-fractured explicit modifier with the LOWEST `required_level`** instead of choosing randomly!
-  - **Whittling Safety Check**: Inspect `ParsedMod.required_level` on **every** desired mod before using Whittling. Some prized mods (e.g., certain `Spirit`, `Rarity`, or mid-tier resistance rolls) have lower `required_level` than high-ilvl trash mods — if tied for lowest `required_level`, removal splits across tied mods!
+- **`Omen of Whittling` (Deterministic Low-ilvl Cleanup) & Mid-Craft Collateral Protection**:
+  - Next **Chaos Orb** (including Greater/Perfect Chaos!) **removes the non-fractured explicit modifier with the LOWEST `required_level`** instead of choosing randomly (fractured mods are ignored even if their `required_level` is lowest on the item).
+  - **Whittling & Collateral Safety Check (`poe2_craft_odds --protect-existing`)**: Inspect `ParsedMod.required_level` on **every** desired mod before using Whittling (if tied for lowest `required_level`, removal splits across tied mods!). When `--item-text` is supplied, `poe2_craft_odds` defaults to `protect_existing_targets=True`, sorting `0.0%`-collateral actions (`Whittling`, side-locked `Crystallisation`, `Omen of Light`) ahead of raw Chaos/swap actions that risk bricking finished T1 affixes.
 - **Terminal Lock Finishers (Apply LAST Only)**:
   - **`Omen of Sanctification` + Divine Orb**: Re-rolls & multiplies all explicit modifier values independently by **`[0.78, 1.22]`** (can push `+4` or `T1` rolls above normal caps!) and **Sanctifies (locks) the item** against all further modification (including Runes!).
   - **`Omen of Corruption` + Vaal Orb**: Removes the "no change" Vaal outcome (forces implicit/socket/mod/brick outcome) and corrupts the item.

@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
-from poe2brain.trade.advisor import TradeAdvisor, TradeCandidate
+from poe2brain.trade.advisor import (
+    DumpTriageBucket,
+    DumpTriageEntry,
+    DumpTriageReport,
+    TradeAdvisor,
+    TradeCandidate,
+)
 from poe2brain.trade.arbitrage import (
     ArbitrageMechanism,
     ArbitrageOpportunity,
     ArbitrageScanner,
     ArbitrageScanReport,
     ArbitrageTrapWarning,
+    CompoundingLadderReport,
+    CompoundingRung,
     OrderBookQuote,
     compute_profit_per_10k_gold,
     estimate_alva_gold_per_unit,
@@ -25,6 +33,8 @@ from poe2brain.trade.economy import (
 )
 from poe2brain.trade.ee2_bundle import DEFAULT_EE2_DATA_DIR, EE2Bundle, get_default_bundle
 from poe2brain.trade.item_parser import (
+    extract_stack_size,
+    extract_unrevealed_desecrated_sides,
     parse_clipboard_item,
     parsed_item_to_pob2_text,
     resolve_slot_or_category,
@@ -57,8 +67,13 @@ __all__ = [
     "ArbitrageScanReport",
     "ArbitrageScanner",
     "ArbitrageTrapWarning",
+    "CompoundingLadderReport",
+    "CompoundingRung",
     "DEFAULT_EE2_DATA_DIR",
     "DetailedPriceCheckResult",
+    "DumpTriageBucket",
+    "DumpTriageEntry",
+    "DumpTriageReport",
     "EE2Bundle",
     "EconomyService",
     "ExchangeOffer",
@@ -82,6 +97,8 @@ __all__ = [
     "deduplicate_listings_by_account",
     "estimate_alva_gold_per_unit",
     "estimate_leg_gold",
+    "extract_stack_size",
+    "extract_unrevealed_desecrated_sides",
     "get_default_bundle",
     "match_mod_line",
     "normalize_market_slug",

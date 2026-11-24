@@ -32,8 +32,9 @@ Combines two zero-CAPTCHA public APIs:
 - Static metadata (`/data/{leagues,stats,items,static,filters}`) cached `4h`.
 - Used for all **Rare equipment, Magic/Fractured crafting bases, Waystones, Precursor Tablets, Jewels, Cut/21-20/6-socket Skill Gems, Sanctified items, and roll-specific/corrupted Uniques**.
 
-### Tier 3: Clipboard (`Ctrl+C` / `Ctrl+Alt+C`) Price-Check & PoB2 Upgrade Loop
-- `TradeAdvisor.price_check_item` parses `Ctrl+C` text -> auto-routes stackables/uncorrupted base Uniques to Tier 1 and affix-bearing items to Tier 2 (`roll_tolerance = 0.9` default on top affixes) -> returns `PriceCheckResult` + clickable `https://www.pathofexile.com/trade2/search/poe2/<League>/<query_id>`.
+### Tier 3: Clipboard (`Ctrl+C` / `Ctrl+Alt+C`) Price-Check, Quad-Tab Triage & PoB2 Upgrade Loop
+- `TradeAdvisor.price_check_item` (`poe2_price_check`) parses `Ctrl+C` text -> auto-routes stackables/uncorrupted base Uniques to Tier 1 and affix-bearing items to Tier 2 (`roll_tolerance = 0.9` default, preserving exact discrete `+Level of Skills` / `+Arrows` / `+Charm Slots` rolls and normalizing legacy `Breach Precursor Tablet -> Breach Tablet` `0.5.5` base names) -> returns `PriceCheckResult` + clickable `https://www.pathofexile.com/trade2/search/poe2/<League>/<query_id>`.
+- `TradeAdvisor.triage_clipboard_dump` (`poe2_triage_dump` / `poe2 trade triage`) splits multi-item `Ctrl+C` pastes on `Item Class:` / `Rarity:` boundaries, multiplies `Stack Size: k/N` stackables via `EconomyService`, and classifies every item into `sell_instant`, `craft_finish_ev`, `high_variance_id_or_unveil` (`Unidentified (Tier 3–5)` or unrevealed `Desecrated`), or `salvage_or_vendor`.
 
 ---
 
@@ -81,5 +82,8 @@ Use `poe2_scan_arbitrage` (`poe2 econ arbitrage --json`) rather than eyeballing 
 2. **Avoid Public `/api/trade2/exchange` Shark Traps**: `99%+` of PoE2 currency volume executes asynchronously inside **Alva's in-game Currency Exchange**. Public `/api/trade2/exchange` (`status_option="online"`) is thin and dominated by wide two-sided sharks and misclick tags — post two-way asynchronous Alva limit orders instead of crossing public bids.
 3. **Price Per-Unit Gold Friction (`profit_ex_per_10k_gold`)**: Alva taxes every unit moved (`~30 Gold` splinters, `~100 Gold` Exalted, `~280 Gold` Chaos, `~1,000 Gold` Divine/Omens/Perfect Runes). Flipping `1 Div <-> 450 Ex` burns `~45k Gold/cycle`; always quote bulk legs in **`Divine` or `Chaos`** rather than `Exalted` stacks.
 4. **Patch `0.5.5` Conversion Rules & Bench Traps**:
-   - **Valid Plays**: Multi-socket **`Masterwork Rune` + `Orb of Extraction` -> `Perfect Runes`** (`Orb of Extraction` extracts ALL socketed augments simultaneously, halving/thirding extraction cost on 2–3 socket trash gear), **`Origin Spark` + `Origin Cradle` -> `Origin Core`**, **`300x Simulacrum Splinter` -> `Simulacrum`**, **`DistilledEmotion` 3-to-1** up to `Concentrated Liquid Isolation`, and empirical drop-weighted **`Refined Catalyst` 3-to-1 EV**.
+   - **Valid Plays**: Multi-socket **`Masterwork Rune` + `Orb of Extraction` -> `Perfect Runes`** (`Orb of Extraction` extracts ALL socketed augments simultaneously, halving/thirding extraction cost on 2–3 socket trash gear), **`Origin Spark` + `Origin Cradle` -> `Origin Core`**, **`300x Simulacrum Splinter` -> `Simulacrum`**, **`DistilledEmotion` 3-to-1** up to `Concentrated Liquid Isolation`, and empirical drop-weighted **`Catalyst` / `Refined Catalyst` 3-to-1 EV**.
    - **Blocked Traps**: **`3x Greater Rune` CANNOT 3-to-1 into `Perfect Rune`**; **`Potent Liquid Melancholy / Ferocity / Contempt`** are NOT on the `DistilledEmotion` 3-to-1 ladder; and **`300x Breach Splinter` combines into `Revelatory Wombgift`** (requires non-tradeable **Hiveblood** at The Genesis Tree), NOT directly into a Breachstone.
+5. **Capital Ceilings & Broke-to-Rich Compounding Ladder**:
+   - Pass `--max-investment-divine <d>` and `--max-gold <g>` to filter plays to a mapper's exact liquid bankroll and Gold cap.
+   - Pass `--ladder-start-exalted 250 --gold-budget 80000 --ladder-target-divine 50` (`starting_exalted`, `gold_budget`, `target_divine` on `poe2_scan_arbitrage`) to chain multi-rung hideout conversions from `<1 Div` to `50+ Div` while transitioning quote tabs (`Exalted -> Chaos -> Divine`) to stay within Gold tax limits.
