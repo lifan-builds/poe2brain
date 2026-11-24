@@ -25,7 +25,7 @@ dev = [
 ]
 
 [project.scripts]
-poe2 = "poe2brain.cli:app"
+poe2 = "poe2brain.cli:main"
 poe2brain-mcp = "poe2brain.mcp_server:main"
 
 [tool.hatch.build.targets.wheel]

@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from typer.testing import CliRunner
 import poe2brain.mcp_server as mcp_mod
 from poe2brain.cli import app
 from poe2brain.config import REPO_ROOT, get_pob2_paths
+from poe2brain.pob.bridge import POB_SOCKET_ENV_VAR
 
 SAMPLE_RARE_WAND_CTRL_C = """Item Class: Wands
 Rarity: Rare
@@ -39,7 +41,11 @@ Item Level: 82
 
 
 @pytest.fixture()
-def isolated_cli_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+def isolated_cli_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    pob_daemon_socket: Path,
+) -> Iterator[dict[str, str]]:
     """Provide an isolated POE2BRAIN_CACHE_DIR linked to the bootstrapped PoB2 runtime."""
     real_pob2 = get_pob2_paths().root_dir
     assert real_pob2.is_dir(), "Expected ~/.cache/poe2brain/pob2 to be bootstrapped"
@@ -48,11 +54,16 @@ def isolated_cli_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[st
     (cache_dir / "pob2").symlink_to(real_pob2, target_is_directory=True)
 
     monkeypatch.setenv("POE2BRAIN_CACHE_DIR", str(cache_dir))
-    mcp_mod._HYDRATED_SLOTS.clear()
+    monkeypatch.setenv(POB_SOCKET_ENV_VAR, str(pob_daemon_socket))
+    mcp_mod.close_services()
 
     env = os.environ.copy()
     env["POE2BRAIN_CACHE_DIR"] = str(cache_dir)
-    return env
+    env[POB_SOCKET_ENV_VAR] = str(pob_daemon_socket)
+    try:
+        yield env
+    finally:
+        mcp_mod.close_services()
 
 
 def test_skill_readme_mcp_and_cli_1_to_1_parity() -> None:
@@ -1088,3 +1099,58 @@ async def test_mcp_server_stdio_roundtrip(
             err_json = json.loads(err_res.content[0].text)  # type: ignore[union-attr]
             assert err_json["ok"] is False
             assert err_json["error_type"] == "RemovedLeverError"
+
+
+def test_direct_cli_pob_exits_without_orphan_luajit(tmp_path: Path) -> None:
+    real_pob2 = get_pob2_paths().root_dir
+    assert real_pob2.is_dir(), "Expected ~/.cache/poe2brain/pob2 to be bootstrapped"
+    cache_dir = tmp_path / "direct_cli_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / "pob2").symlink_to(real_pob2, target_is_directory=True)
+
+    env = os.environ.copy()
+    env["POE2BRAIN_CACHE_DIR"] = str(cache_dir)
+    env.pop(POB_SOCKET_ENV_VAR, None)
+
+    before_ps = subprocess.run(
+        ["pgrep", "-f", "pob2_bridge.lua"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    before_pids = {line.strip() for line in before_ps.stdout.splitlines() if line.strip()}
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "poe2brain.cli",
+            "pob",
+            "slots",
+            "--create",
+            "orphan_check",
+            "--class",
+            "Sorceress",
+            "--ascendancy",
+            "Stormweaver",
+            "--level",
+            "85",
+            "--json",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    payload = json.loads(proc.stdout)
+    assert payload["slot"] == "orphan_check"
+
+    after_ps = subprocess.run(
+        ["pgrep", "-f", "pob2_bridge.lua"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    after_pids = {line.strip() for line in after_ps.stdout.splitlines() if line.strip()}
+    assert after_pids - before_pids == set()

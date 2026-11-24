@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import atexit
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
@@ -137,6 +140,16 @@ def get_crafting_planner() -> CraftingPlanner:
 
 def get_build_service() -> BuildService:
     global _BUILD_SVC
+    target_sock = os.environ.get("POE2BRAIN_POB_SOCKET", "").strip() or None
+    if _BUILD_SVC is not None:
+        cur_sock = (
+            str(_BUILD_SVC.bridge.socket_path)
+            if _BUILD_SVC.bridge.socket_path is not None
+            else None
+        )
+        if cur_sock != target_sock:
+            _BUILD_SVC.close()
+            _BUILD_SVC = None
     if _BUILD_SVC is None:
         _BUILD_SVC = BuildService(
             bridge=Pob2Bridge(request_timeout=120.0),
@@ -2126,8 +2139,73 @@ def run_sync_gamedata(*, out_path: Path | None = None) -> dict[str, Any]:
     }
 
 
+def close_services() -> None:
+    """Close cached singleton services (including the LuaJIT Pob2Bridge) cleanly."""
+    global _KNOWLEDGE_SVC, _META_SVC, _ECONOMY_SVC, _TRADE2_CLIENT, _TRADE_ADVISOR
+    global _CRAFTING_PLANNER, _CRAFT_PROFIT_SCANNER, _ARBITRAGE_SCANNER
+    global _BUILD_SVC, _NINJA_SVC, _FILTER_GEN, _NEVERSINK_ADAPTER
+
+    for attr_name in (
+        "_BUILD_SVC",
+        "_NINJA_SVC",
+        "_CRAFT_PROFIT_SCANNER",
+        "_ARBITRAGE_SCANNER",
+        "_META_SVC",
+        "_TRADE2_CLIENT",
+        "_ECONOMY_SVC",
+    ):
+        obj = globals().get(attr_name)
+        if obj is not None:
+            try:
+                obj.close()
+            except Exception:
+                pass
+            globals()[attr_name] = None
+
+    if _CRAFTING_PLANNER is not None:
+        try:
+            _CRAFTING_PLANNER.engine.close()
+        except Exception:
+            pass
+        _CRAFTING_PLANNER = None
+
+    if _KNOWLEDGE_SVC is not None:
+        try:
+            _KNOWLEDGE_SVC.db.close()
+        except Exception:
+            pass
+        _KNOWLEDGE_SVC = None
+
+    _TRADE_ADVISOR = None
+    _FILTER_GEN = None
+    _NEVERSINK_ADAPTER = None
+    _HYDRATED_SLOTS.clear()
+
+
+atexit.register(close_services)
+
+
+def run_with_service_cleanup(entry_fn: Callable[[], Any]) -> None:
+    """Run an entrypoint with SIGTERM + finally cleanup of cached services."""
+    is_main_thread = threading.current_thread() is threading.main_thread()
+    prev_sigterm: Any = None
+    if is_main_thread:
+
+        def _handle_sigterm(signum: int, _frame: object) -> None:
+            close_services()
+            raise SystemExit(128 + signum)
+
+        prev_sigterm = signal.signal(signal.SIGTERM, _handle_sigterm)
+    try:
+        entry_fn()
+    finally:
+        close_services()
+        if is_main_thread and prev_sigterm is not None:
+            signal.signal(signal.SIGTERM, prev_sigterm)
+
+
 def main() -> None:
-    mcp.run()
+    run_with_service_cleanup(mcp.run)
 
 
 if __name__ == "__main__":

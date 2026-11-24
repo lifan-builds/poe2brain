@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from poe2brain.pob.bridge import Pob2Bridge, Pob2BridgeError
+from poe2brain.pob.daemon import Pob2SocketDaemon
 from poe2brain.pob.service import (
     BuildService,
     LiveSlotUpgradeReport,
@@ -16,5 +17,6 @@ __all__ = [
     "PassiveNodeUpgrade",
     "Pob2Bridge",
     "Pob2BridgeError",
+    "Pob2SocketDaemon",
     "get_default_build_service",
 ]

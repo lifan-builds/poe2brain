@@ -40,6 +40,7 @@ from poe2brain.mcp_server import (
     normalize_pob_objective,
     run_bootstrap_script,
     run_sync_gamedata,
+    run_with_service_cleanup,
     save_pob_slot_snapshot,
 )
 from poe2brain.trade import parse_clipboard_item, parsed_item_to_pob2_text
@@ -2191,5 +2192,9 @@ def bootstrap_pob2_cmd(
     )
 
 
+def main() -> None:
+    run_with_service_cleanup(app)
+
+
 if __name__ == "__main__":
-    app()
+    main()

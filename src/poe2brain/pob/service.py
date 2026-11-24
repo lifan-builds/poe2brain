@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -1289,3 +1290,16 @@ def get_default_build_service() -> BuildService:
     if _DEFAULT_SERVICE is None:
         _DEFAULT_SERVICE = BuildService()
     return _DEFAULT_SERVICE
+
+
+def _close_default_build_service() -> None:
+    global _DEFAULT_SERVICE
+    if _DEFAULT_SERVICE is not None:
+        try:
+            _DEFAULT_SERVICE.close()
+        except Exception:
+            pass
+        _DEFAULT_SERVICE = None
+
+
+atexit.register(_close_default_build_service)

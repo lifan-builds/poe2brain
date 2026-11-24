@@ -250,12 +250,12 @@ def test_native_filter_generator_all_strictnesses_and_unique_safety(
     assert '"Stellar Amulet"' in res.filter_text
 
 
-def test_pob2_build_aware_filter_generation() -> None:
+def test_pob2_build_aware_filter_generation(pob_daemon_socket: Path) -> None:
     fg = FilterGenerator()
     if get_pob2_paths().is_ready:
-        from poe2brain.pob.service import BuildService
+        from poe2brain.pob import BuildService, Pob2Bridge
 
-        svc = BuildService()
+        svc = BuildService(bridge=Pob2Bridge(socket_path=pob_daemon_socket))
         try:
             svc.create_character("Monk", "Invoker", level=85, slot="filter_test")
             svc.equip_item(

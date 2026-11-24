@@ -11,7 +11,8 @@ import pytest
 
 from poe2brain.http import GGGRateLimiter, Poe2HttpClient
 from poe2brain.models.common import SaleType
-from poe2brain.pob import BuildService, Pob2Bridge
+from poe2brain.pob import BuildService, Pob2Bridge, Pob2SocketDaemon
+from poe2brain.pob.bridge import _close_live_bridges
 
 BASELINE_WAND = """Rarity: RARE
 Storm Spire
@@ -56,7 +57,7 @@ Implicits: 0
 
 @pytest.fixture(scope="module")
 def build_service() -> Iterator[BuildService]:
-    svc = BuildService()
+    svc = BuildService(bridge=Pob2Bridge(use_daemon=False))
     try:
         svc.create_character(
             "Sorceress",
@@ -98,7 +99,7 @@ def build_service() -> Iterator[BuildService]:
 
 
 def test_bridge_lifecycle_and_crash_recovery() -> None:
-    with Pob2Bridge() as bridge:
+    with Pob2Bridge(use_daemon=False) as bridge:
         ping = bridge.ping()
         assert ping["ok"] is True
         assert ping["treeVersion"] == "0_5"
@@ -123,6 +124,47 @@ def test_bridge_lifecycle_and_crash_recovery() -> None:
         recovered = bridge.ping()
         assert recovered["ok"] is True
         assert bridge.is_running is True
+
+    assert bridge.is_running is False
+
+
+def test_bridge_atexit_cleanup_and_socket_daemon_reuse() -> None:
+    def _is_pid_alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+    # 1. Unclosed direct Pob2Bridge is cleaned up by _close_live_bridges()
+    leaky_bridge = Pob2Bridge(use_daemon=False)
+    assert leaky_bridge.ping()["ok"] is True
+    assert leaky_bridge._proc is not None
+    leaky_pid = leaky_bridge._proc.pid
+    assert _is_pid_alive(leaky_pid)
+    _close_live_bridges()
+    assert not leaky_bridge.is_running
+    assert not _is_pid_alive(leaky_pid)
+
+    # 2. Pob2SocketDaemon shares one warm LuaJIT process across clients and closes cleanly
+    with Pob2SocketDaemon(lazy=False) as daemon:
+        assert daemon.bridge._proc is not None
+        daemon_pid = daemon.bridge._proc.pid
+        assert _is_pid_alive(daemon_pid)
+
+        with Pob2Bridge(socket_path=daemon.socket_path) as c1:
+            p1 = c1.ping()
+            assert p1["ok"] is True
+        # Closing client 1 must keep the shared daemon alive
+        assert _is_pid_alive(daemon_pid)
+
+        with Pob2Bridge(socket_path=daemon.socket_path) as c2:
+            p2 = c2.ping()
+            assert p2["ok"] is True
+            assert p2["bootSeconds"] == p1["bootSeconds"]
+
+    assert not _is_pid_alive(daemon_pid)
+    assert not daemon.socket_path.exists()
 
 
 def test_slots_clone_undo_redo_and_isolation(build_service: BuildService) -> None:

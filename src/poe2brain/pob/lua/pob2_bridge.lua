@@ -2697,3 +2697,7 @@ while not shouldExit do
 		end
 	end
 end
+
+stdout:flush()
+stderr:flush()
+os.exit(0)
