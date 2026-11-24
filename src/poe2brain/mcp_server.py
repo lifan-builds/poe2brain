@@ -30,13 +30,39 @@ from poe2brain.crafting import (
     ModPoolEngine,
     RemovedLeverError,
 )
+from poe2brain.filters import (
+    BUILTIN_THEME_PRESETS,
+    STRICTNESS_POLICIES,
+    FilterGenerator,
+    FilterValidator,
+    NeverSinkAdapter,
+    SoundPackGenerator,
+    compose_theme,
+    detect_poe2_filter_dir,
+    extract_build_filter_context,
+    get_visual_theme,
+    install_filter_bundle,
+    list_visual_themes,
+    render_filter_preview_html,
+)
+from poe2brain.filters.soundpacks import SCALE_INTERVALS
 from poe2brain.knowledge import KnowledgeService, MetaService
 from poe2brain.models.common import AffixSide, EngineStatus
+from poe2brain.models.filters import (
+    BuildFilterContext,
+    SoundPackManifest,
+    SoundPackStyle,
+    SoundSynthesisParams,
+    StrictnessTier,
+    VisualThemeSpec,
+)
 from poe2brain.models.items import ItemRarity
+from poe2brain.ninja import NinjaBuildsService
 from poe2brain.pob import (
     BuildService,
     LiveSlotUpgradeReport,
     LiveUpgradeCandidate,
+    Pob2Bridge,
     Pob2BridgeError,
 )
 from poe2brain.trade import (
@@ -63,6 +89,9 @@ _CRAFTING_PLANNER: CraftingPlanner | None = None
 _CRAFT_PROFIT_SCANNER: CraftProfitScanner | None = None
 _ARBITRAGE_SCANNER: ArbitrageScanner | None = None
 _BUILD_SVC: BuildService | None = None
+_NINJA_SVC: NinjaBuildsService | None = None
+_FILTER_GEN: FilterGenerator | None = None
+_NEVERSINK_ADAPTER: NeverSinkAdapter | None = None
 _HYDRATED_SLOTS: dict[tuple[int, str], set[str]] = {}
 
 
@@ -110,6 +139,7 @@ def get_build_service() -> BuildService:
     global _BUILD_SVC
     if _BUILD_SVC is None:
         _BUILD_SVC = BuildService(
+            bridge=Pob2Bridge(request_timeout=120.0),
             trade_client=get_trade2_client(),
             economy_service=get_economy_service(),
         )
@@ -121,6 +151,42 @@ def get_meta_service() -> MetaService:
     if _META_SVC is None:
         _META_SVC = MetaService(economy_service=get_economy_service())
     return _META_SVC
+
+
+def get_ninja_service() -> NinjaBuildsService:
+    global _NINJA_SVC
+    b_svc = get_build_service()
+    m_svc = get_meta_service()
+    if _NINJA_SVC is None or _NINJA_SVC._build_service is not b_svc:
+        _NINJA_SVC = NinjaBuildsService(
+            build_service=b_svc,
+            meta_service=m_svc,
+        )
+    return _NINJA_SVC
+
+
+def get_filter_generator() -> FilterGenerator:
+    global _FILTER_GEN
+    econ = get_economy_service()
+    b_svc = get_build_service()
+    if (
+        _FILTER_GEN is None
+        or _FILTER_GEN.economy_service is not econ
+        or _FILTER_GEN.build_service is not b_svc
+    ):
+        _FILTER_GEN = FilterGenerator(
+            economy_service=econ,
+            build_service=b_svc,
+        )
+    return _FILTER_GEN
+
+
+def get_neversink_adapter() -> NeverSinkAdapter:
+    global _NEVERSINK_ADAPTER
+    gen = get_filter_generator()
+    if _NEVERSINK_ADAPTER is None or _NEVERSINK_ADAPTER.generator is not gen:
+        _NEVERSINK_ADAPTER = NeverSinkAdapter(generator=gen)
+    return _NEVERSINK_ADAPTER
 
 
 def get_craft_profit_scanner() -> CraftProfitScanner:
@@ -292,14 +358,22 @@ def format_domain_error(exc: Exception) -> dict[str, Any]:
             ),
         }
     if isinstance(exc, LookupError) and not isinstance(exc, KeyError):
+        msg_low = str(exc).lower()
+        hint = (
+            "Use 'poe2 ninja search' / poe2_ninja_search() or "
+            "'poe2 ninja snapshots' / poe2_ninja_snapshots() to verify account tag "
+            "(Account-1234), character name, and overview snapshot."
+            if ("poe.ninja" in msg_low or "overview" in msg_low)
+            else (
+                "Run 'poe2 wiki ascendancy' / poe2_inspect_ascendancy() with no arguments to list "
+                "all 8 playable PoE2 Patch 0.5.5 classes and 23 Ascendancies."
+            )
+        )
         return {
             "ok": False,
             "error": str(exc),
             "error_type": type(exc).__name__,
-            "hint": (
-                "Run 'poe2 wiki ascendancy' / poe2_inspect_ascendancy() with no arguments to list "
-                "all 8 playable PoE2 Patch 0.5.5 classes and 23 Ascendancies."
-            ),
+            "hint": hint,
         }
     if isinstance(exc, httpx.HTTPError):
         return {
@@ -1308,6 +1382,708 @@ def poe2_scan_craft_profit(
             max_trade_queries=max_trade_queries,
             sims=sims,
             league=league,
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# PoE Ninja Builds (`poe2_ninja_*`) & Loot Filter Studio (`poe2_filter_*`)
+# ---------------------------------------------------------------------------
+
+
+def execute_ninja_snapshots(
+    *,
+    league: str = DEFAULT_LEAGUE,
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    return (
+        get_ninja_service()
+        .get_snapshot_state(league=league, force_refresh=force_refresh)
+        .model_dump(mode="json")
+    )
+
+
+def execute_ninja_search(
+    *,
+    league: str = DEFAULT_LEAGUE,
+    class_name: str | None = None,
+    ascendancy: str | None = None,
+    skill: str | None = None,
+    support_gem: str | None = None,
+    unique_item: str | None = None,
+    keystone: str | None = None,
+    weapon_type: str | None = None,
+    min_dps: float | None = None,
+    min_ehp: float | None = None,
+    sort_by: str = "dps",
+    limit: int = 15,
+    refresh_live_top: int = 0,
+    include_pob_code: bool = False,
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    norm_sort = sort_by.strip().lower()
+    if norm_sort not in ("dps", "ehp", "level", "es", "life"):
+        raise ValueError(
+            f"Unsupported sort_by {sort_by!r} (expected 'dps', 'ehp', 'level', 'es', or 'life')."
+        )
+    report = get_ninja_service().search_builds(
+        league=league,
+        class_name=class_name,
+        ascendancy=ascendancy,
+        skill=skill,
+        support_gem=support_gem,
+        unique_item=unique_item,
+        keystone=keystone,
+        weapon_type=weapon_type,
+        min_dps=min_dps,
+        min_ehp=min_ehp,
+        sort_by=norm_sort,  # type: ignore[arg-type]
+        limit=limit,
+        refresh_live_top=refresh_live_top,
+        include_pob_code=include_pob_code,
+        force_refresh=force_refresh,
+    )
+    return report.model_dump(mode="json")
+
+
+def execute_ninja_character(
+    *,
+    account_or_url: str,
+    character: str | None = None,
+    league: str = DEFAULT_LEAGUE,
+    timemachine: str | None = None,
+    load_into_pob: bool = False,
+    slot: str = "main",
+    audit: bool = False,
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    ninja_svc = get_ninja_service()
+    imp = ninja_svc.fetch_character(
+        account_or_url,
+        character=character,
+        league=league,
+        timemachine=timemachine,
+        load_into_pob=load_into_pob,
+        slot=slot,
+        audit=audit,
+        force_refresh=force_refresh,
+    )
+    out = imp.model_dump(mode="json")
+    if imp.loaded_into_pob and imp.pob_slot:
+        b_svc = ninja_svc._ensure_build_service()
+        snap = save_pob_slot_snapshot(b_svc, imp.pob_slot)
+        out["snapshot_path"] = str(snap)
+    return out
+
+
+_NEVERSINK_STRICTNESS_ALIASES: dict[str, StrictnessTier] = {
+    "soft": StrictnessTier.SOFT,
+    "0_soft": StrictnessTier.SOFT,
+    "regular": StrictnessTier.REGULAR,
+    "1_regular": StrictnessTier.REGULAR,
+    "semi_strict": StrictnessTier.SEMI_STRICT,
+    "semistrict": StrictnessTier.SEMI_STRICT,
+    "2_semi_strict": StrictnessTier.SEMI_STRICT,
+    "neversink": StrictnessTier.SEMI_STRICT,
+    "strict": StrictnessTier.STRICT,
+    "3_strict": StrictnessTier.STRICT,
+    "very_strict": StrictnessTier.VERY_STRICT,
+    "verystrict": StrictnessTier.VERY_STRICT,
+    "4_very_strict": StrictnessTier.VERY_STRICT,
+    "uber_strict": StrictnessTier.UBER_STRICT,
+    "uberstrict": StrictnessTier.UBER_STRICT,
+    "5_uber_strict": StrictnessTier.UBER_STRICT,
+    "uber_plus_strict": StrictnessTier.UBER_STRICT,
+    "6_uber_plus_strict": StrictnessTier.UBER_STRICT,
+}
+
+_SOUND_STYLE_DESCRIPTIONS: dict[SoundPackStyle, str] = {
+    SoundPackStyle.CELESTIAL_CHIME: (
+        "5-voice stereo-panned FM crystalline bell arpeggio with detuned shimmer."
+    ),
+    SoundPackStyle.RITUAL_GONG: (
+        "Inharmonic bronze gong partials with sub-bass transient punch and stereo beating."
+    ),
+    SoundPackStyle.CYBER_SYNTH: (
+        "Detuned band-limited sawtooth synthwave lead with octave sub-bass."
+    ),
+    SoundPackStyle.ARCADE_RETRO: (
+        "25%/50% duty-cycle chiptune pulse arpeggio with triangle sub-bass."
+    ),
+    SoundPackStyle.ZEN_MINIMAL: (
+        "Low-fatigue Rhodes-style electric piano tine ticks for marathon mapping."
+    ),
+    SoundPackStyle.VOICE_CALLOUT: (
+        "Instant 140ms FM chime attack mixed with auto-ducked spoken tier callouts."
+    ),
+}
+
+
+def _resolve_strictness_tier(raw: str) -> StrictnessTier:
+    cleaned = raw.strip().lower()
+    if cleaned.startswith("neversink:"):
+        cleaned = cleaned.split(":", 1)[1].strip()
+    norm = re.sub(r"[^a-z0-9]+", "_", cleaned).strip("_")
+    if norm in _NEVERSINK_STRICTNESS_ALIASES:
+        return _NEVERSINK_STRICTNESS_ALIASES[norm]
+    valid = ", ".join(t.value for t in StrictnessTier)
+    raise ValueError(f"Unsupported strictness {raw!r} (expected one of: {valid}).")
+
+
+def _resolve_visual_theme(theme: str | None, look: str | None) -> VisualThemeSpec | None:
+    if look is not None and look.strip():
+        norm_base = theme.strip().lower().replace("-", "_") if theme else None
+        base_p = norm_base if norm_base in BUILTIN_THEME_PRESETS else None
+        return compose_theme(look.strip(), base_preset=base_p)
+    if theme is None or not theme.strip() or theme.strip().lower() == "none":
+        return None
+    return get_visual_theme(theme)
+
+
+def _resolve_build_filter_context(
+    *,
+    pob: str | None,
+    slot: str | None,
+) -> BuildFilterContext | None:
+    if pob is not None and pob.strip():
+        b_svc = get_build_service()
+        target_slot = slot.strip() if (slot and slot.strip()) else "main"
+        b_svc.load_build(pob.strip(), slot=target_slot)
+        save_pob_slot_snapshot(b_svc, target_slot)
+        return extract_build_filter_context(b_svc, slot=target_slot)
+    if slot is not None and slot.strip():
+        b_svc = get_build_service()
+        target_slot = slot.strip()
+        ensure_pob_slot_loaded(b_svc, slot=target_slot, require_existing=True)
+        return extract_build_filter_context(b_svc, slot=target_slot)
+    return None
+
+
+def _maybe_synthesize_sound_pack(
+    *,
+    sound_style: str | None,
+    musical_key: str = "D",
+    scale: str = "lydian",
+    sound_dir: str | Path | None = None,
+    out_path: str | Path | None = None,
+    preview_html: str | Path | None = None,
+    install: bool = False,
+    install_dir: str | Path | None = None,
+) -> SoundPackManifest | None:
+    if sound_style is not None and sound_style.strip().lower() == "none":
+        return None
+
+    if sound_style is None or not sound_style.strip():
+        if sound_dir is None and preview_html is None and not install:
+            return None
+        style_enum = SoundPackStyle.CELESTIAL_CHIME
+    else:
+        norm_style = sound_style.strip().lower().replace("-", "_")
+        try:
+            style_enum = SoundPackStyle(norm_style)
+        except ValueError as exc:
+            valid = ", ".join([s.value for s in SoundPackStyle] + ["none"])
+            raise ValueError(
+                f"Unsupported sound_style {sound_style!r} (expected one of: {valid})."
+            ) from exc
+
+    norm_scale = scale.strip().lower()
+    if norm_scale not in SCALE_INTERVALS:
+        valid_scales = ", ".join(SCALE_INTERVALS)
+        raise ValueError(f"Unsupported scale {scale!r} (expected one of: {valid_scales}).")
+
+    params = SoundSynthesisParams(
+        musical_key=musical_key.strip().upper() or "D",
+        scale=norm_scale,  # type: ignore[arg-type]
+    )
+
+    pack_id: str | None = None
+    if sound_dir is not None:
+        sd = Path(sound_dir).expanduser()
+        if sd.name.startswith("poe2brain_"):
+            output_root = sd.parent
+            pack_id = sd.name
+        else:
+            output_root = sd
+    elif out_path is not None:
+        output_root = Path(out_path).expanduser().parent
+    elif install:
+        output_root = (
+            Path(install_dir).expanduser() if install_dir is not None else detect_poe2_filter_dir()
+        )
+    else:
+        output_root = get_cache_dir() / "soundpacks"
+
+    return SoundPackGenerator().generate_pack(
+        output_root,
+        style=style_enum,
+        pack_id=pack_id,
+        params=params,
+    )
+
+
+def execute_filter_presets() -> dict[str, Any]:
+    filter_dir = detect_poe2_filter_dir()
+    themes = list_visual_themes()
+    return {
+        "patch": POE2_PATCH,
+        "default_league": DEFAULT_LEAGUE,
+        "detected_poe2_filter_dir": str(filter_dir),
+        "detected_poe2_filter_dir_exists": filter_dir.is_dir(),
+        "theme_count": len(themes),
+        "visual_themes": [
+            {
+                "id": t.id,
+                "name": t.name,
+                "description": t.description,
+                "min_contrast_ratio": t.min_contrast_ratio,
+                "s_plus_style": {
+                    "font_size": t.tiers["s_plus"].font_size,
+                    "text_hex": t.tiers["s_plus"].text_color.to_hex(),
+                    "border_hex": t.tiers["s_plus"].border_color.to_hex(),
+                    "background_hex": t.tiers["s_plus"].background_color.to_hex(),
+                    "contrast_ratio": t.tiers["s_plus"].contrast_ratio,
+                },
+            }
+            for t in themes
+        ],
+        "strictness_count": len(StrictnessTier),
+        "strictness_tiers": [
+            {
+                "id": st.value,
+                "min_currency_ex": pol.min_currency_ex,
+                "min_endgame_waystone_tier": pol.min_endgame_waystone_tier,
+                "min_gold_stack_endgame": pol.min_gold_stack_endgame,
+                "min_uncut_gem_level": pol.min_uncut_gem_level,
+                "min_unid_tier_generic": pol.min_unid_tier_generic,
+                "min_unid_tier_build": pol.min_unid_tier_build,
+                "hide_endgame_normal_magic_gear": pol.hide_endgame_normal_magic_gear,
+                "hide_endgame_untiered_rares": pol.hide_endgame_untiered_rares,
+            }
+            for st, pol in STRICTNESS_POLICIES.items()
+        ],
+        "sound_style_count": len(SoundPackStyle),
+        "sound_styles": [
+            {
+                "id": s.value,
+                "description": _SOUND_STYLE_DESCRIPTIONS[s],
+            }
+            for s in SoundPackStyle
+        ],
+        "musical_keys": ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"],
+        "synth_scales": list(SCALE_INTERVALS.keys()),
+    }
+
+
+def execute_filter_generate(
+    *,
+    strictness: str = "semi_strict",
+    theme: str = "forbidden_abyss",
+    look: str | None = None,
+    sound_style: str | None = None,
+    musical_key: str = "D",
+    scale: str = "lydian",
+    pob: str | None = None,
+    slot: str | None = None,
+    out_path: str | Path | None = None,
+    sound_dir: str | Path | None = None,
+    preview_html: str | Path | None = None,
+    install: bool = False,
+    install_dir: str | Path | None = None,
+    filter_name: str | None = None,
+    league: str = DEFAULT_LEAGUE,
+    offline: bool = False,
+) -> dict[str, Any]:
+    strict_tier = _resolve_strictness_tier(strictness)
+    resolved_theme = _resolve_visual_theme(theme, look) or get_visual_theme("forbidden_abyss")
+    build_ctx = _resolve_build_filter_context(pob=pob, slot=slot)
+    sound_pack = _maybe_synthesize_sound_pack(
+        sound_style=sound_style,
+        musical_key=musical_key,
+        scale=scale,
+        sound_dir=sound_dir,
+        out_path=out_path,
+        preview_html=preview_html,
+        install=install,
+        install_dir=install_dir,
+    )
+
+    resolved_out = Path(out_path).expanduser() if out_path is not None else None
+    eff_name = (
+        filter_name
+        or (resolved_out.stem if resolved_out is not None else None)
+        or f"poe2brain_{strict_tier.value}"
+    )
+
+    gen = get_filter_generator()
+    result = gen.generate(
+        filter_name=eff_name,
+        strictness=strict_tier,
+        theme=resolved_theme,
+        sound_pack=sound_pack,
+        league=league,
+        use_live_economy=not offline,
+        build_context=build_ctx,
+        output_path=resolved_out,
+    )
+
+    if sound_pack is not None and sound_dir is not None:
+        result.validation = gen.validator.validate_text(
+            result.filter_text,
+            filter_dir=Path(sound_pack.pack_dir).parent,
+        )
+
+    if install:
+        target_dir = Path(install_dir).expanduser() if install_dir is not None else None
+        install_filter_bundle(result, target_dir=target_dir, sound_pack=sound_pack)
+
+    if preview_html is not None:
+        render_filter_preview_html(
+            resolved_theme,
+            result=result,
+            sound_pack=sound_pack,
+            output_path=Path(preview_html).expanduser(),
+        )
+
+    out = result.model_dump(mode="json")
+    out["theme"] = {
+        "id": resolved_theme.id,
+        "name": resolved_theme.name,
+        "style_prompt": resolved_theme.style_prompt,
+        "min_contrast_ratio": resolved_theme.min_contrast_ratio,
+    }
+    out["sound_pack"] = sound_pack.model_dump(mode="json") if sound_pack is not None else None
+    return out
+
+
+def execute_filter_restyle(
+    *,
+    source: str,
+    theme: str | None = "forbidden_abyss",
+    look: str | None = None,
+    sound_style: str | None = None,
+    musical_key: str = "D",
+    scale: str = "lydian",
+    pob: str | None = None,
+    slot: str | None = None,
+    out_path: str | Path | None = None,
+    sound_dir: str | Path | None = None,
+    preview_html: str | Path | None = None,
+    install: bool = False,
+    install_dir: str | Path | None = None,
+    filter_name: str | None = None,
+    league: str = DEFAULT_LEAGUE,
+    offline: bool = False,
+) -> dict[str, Any]:
+    raw_src = source.strip()
+    if not raw_src:
+        raise ValueError("source filter path or NeverSink strictness cannot be empty.")
+
+    source_text: str | None = None
+    source_path: Path | None = None
+    inferred_strictness = StrictnessTier.SEMI_STRICT
+
+    if "\n" in raw_src or raw_src.lstrip().startswith(("Show", "Hide", "Minimal")):
+        source_text = source
+    else:
+        cand_path = Path(raw_src).expanduser()
+        if cand_path.is_file():
+            source_path = cand_path
+            fname_norm = re.sub(r"[^a-z0-9]+", "_", cand_path.stem.lower())
+            for alias_key, st_val in sorted(
+                _NEVERSINK_STRICTNESS_ALIASES.items(),
+                key=lambda kv: len(kv[0]),
+                reverse=True,
+            ):
+                if alias_key in fname_norm:
+                    inferred_strictness = st_val
+                    break
+        else:
+            norm_src = re.sub(
+                r"[^a-z0-9]+",
+                "_",
+                raw_src.lower().removeprefix("neversink:"),
+            ).strip("_")
+            if norm_src in _NEVERSINK_STRICTNESS_ALIASES:
+                inferred_strictness = _NEVERSINK_STRICTNESS_ALIASES[norm_src]
+            elif raw_src.endswith(".filter") or "/" in raw_src or "\\" in raw_src:
+                raise FileNotFoundError(f"Source filter file not found: {raw_src}")
+            else:
+                inferred_strictness = _resolve_strictness_tier(raw_src)
+
+    resolved_theme = _resolve_visual_theme(theme, look)
+    build_ctx = _resolve_build_filter_context(pob=pob, slot=slot)
+    sound_pack = _maybe_synthesize_sound_pack(
+        sound_style=sound_style,
+        musical_key=musical_key,
+        scale=scale,
+        sound_dir=sound_dir,
+        out_path=out_path,
+        preview_html=preview_html,
+        install=install,
+        install_dir=install_dir,
+    )
+
+    resolved_out = Path(out_path).expanduser() if out_path is not None else None
+    eff_name = (
+        filter_name
+        or (resolved_out.stem if resolved_out is not None else None)
+        or f"poe2brain_neversink_{inferred_strictness.value}"
+    )
+
+    adapter = get_neversink_adapter()
+    result = adapter.restyle_and_heal(
+        source_filter_text=source_text,
+        source_filter_path=source_path,
+        strictness=inferred_strictness,
+        theme=resolved_theme,
+        sound_pack=sound_pack,
+        league=league,
+        use_live_economy=not offline,
+        build_context=build_ctx,
+        filter_name=eff_name,
+        output_path=resolved_out,
+    )
+
+    if sound_pack is not None and sound_dir is not None:
+        result.validation = adapter.validator.validate_text(
+            result.filter_text,
+            filter_dir=Path(sound_pack.pack_dir).parent,
+        )
+
+    if install:
+        target_dir = Path(install_dir).expanduser() if install_dir is not None else None
+        install_filter_bundle(result, target_dir=target_dir, sound_pack=sound_pack)
+
+    if preview_html is not None:
+        preview_theme = resolved_theme or get_visual_theme("forbidden_abyss")
+        render_filter_preview_html(
+            preview_theme,
+            result=result,
+            sound_pack=sound_pack,
+            output_path=Path(preview_html).expanduser(),
+        )
+
+    out = result.model_dump(mode="json")
+    out["sound_pack"] = sound_pack.model_dump(mode="json") if sound_pack is not None else None
+    return out
+
+
+def execute_filter_validate(
+    *,
+    filter_file_or_text: str,
+    sound_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    if not filter_file_or_text or not filter_file_or_text.strip():
+        raise ValueError("filter_file_or_text cannot be empty.")
+
+    stripped = filter_file_or_text.strip()
+    source_path: Path | None = None
+    base_dir: Path | None = None
+
+    if "\n" not in stripped and len(stripped) < 1024:
+        cand = Path(stripped).expanduser()
+        if cand.is_file():
+            source_path = cand
+            base_dir = cand.parent
+            text = cand.read_text(encoding="utf-8")
+        elif stripped.endswith(".filter") or "/" in stripped or "\\" in stripped:
+            raise FileNotFoundError(f"Filter file not found: {stripped}")
+        else:
+            text = filter_file_or_text
+    else:
+        text = filter_file_or_text
+
+    resolved_dir = base_dir
+    if sound_dir is not None:
+        sd = Path(sound_dir).expanduser()
+        if (sd / "manifest.json").is_file() and sd.name.startswith("poe2brain_"):
+            resolved_dir = sd.parent
+        else:
+            resolved_dir = sd
+
+    report = FilterValidator().validate_text(text, filter_dir=resolved_dir)
+    out = report.model_dump(mode="json")
+    out["source_path"] = str(source_path) if source_path is not None else None
+    out["filter_dir"] = str(resolved_dir) if resolved_dir is not None else None
+    return out
+
+
+@mcp.tool()
+def poe2_ninja_snapshots(
+    league: str = DEFAULT_LEAGUE,
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    """Query live poe.ninja PoE2 build-index-state & snapshot-versions across SC/HC/SSF/HCSSF."""
+    return _safe_tool_call(
+        lambda: execute_ninja_snapshots(league=league, force_refresh=force_refresh)
+    )
+
+
+@mcp.tool()
+def poe2_ninja_search(
+    league: str = DEFAULT_LEAGUE,
+    class_name: str | None = None,
+    ascendancy: str | None = None,
+    skill: str | None = None,
+    support_gem: str | None = None,
+    unique_item: str | None = None,
+    keystone: str | None = None,
+    weapon_type: str | None = None,
+    min_dps: float | None = None,
+    min_ehp: float | None = None,
+    sort_by: Literal["dps", "ehp", "level", "es", "life"] = "dps",
+    limit: int = 15,
+    refresh_live_top: int = 0,
+    include_pob_code: bool = False,
+) -> dict[str, Any]:
+    """Search PoE2 Forbidden Rites poe.ninja builds across class/ascendancy/skill/unique/stats."""
+    return _safe_tool_call(
+        lambda: execute_ninja_search(
+            league=league,
+            class_name=class_name,
+            ascendancy=ascendancy,
+            skill=skill,
+            support_gem=support_gem,
+            unique_item=unique_item,
+            keystone=keystone,
+            weapon_type=weapon_type,
+            min_dps=min_dps,
+            min_ehp=min_ehp,
+            sort_by=sort_by,
+            limit=limit,
+            refresh_live_top=refresh_live_top,
+            include_pob_code=include_pob_code,
+        )
+    )
+
+
+@mcp.tool()
+def poe2_ninja_character(
+    account_or_url: str,
+    character: str | None = None,
+    league: str = DEFAULT_LEAGUE,
+    timemachine: str | None = None,
+    load_into_pob: bool = False,
+    slot: str = "main",
+    audit: bool = False,
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    """Import a live poe.ninja character or PoB2 URL, inspect XML, and optionally load/audit."""
+    return _safe_tool_call(
+        lambda: execute_ninja_character(
+            account_or_url=account_or_url,
+            character=character,
+            league=league,
+            timemachine=timemachine,
+            load_into_pob=load_into_pob,
+            slot=slot,
+            audit=audit,
+            force_refresh=force_refresh,
+        )
+    )
+
+
+@mcp.tool()
+def poe2_filter_presets() -> dict[str, Any]:
+    """List PoE2 0.5.5 visual theme presets, strictnesses, soundpack styles, and filter folder."""
+    return _safe_tool_call(execute_filter_presets)
+
+
+@mcp.tool()
+def poe2_filter_generate(
+    strictness: str = "semi_strict",
+    theme: str = "forbidden_abyss",
+    look: str | None = None,
+    sound_style: str | None = None,
+    musical_key: str = "D",
+    scale: str = "lydian",
+    pob: str | None = None,
+    slot: str | None = None,
+    out_path: str | None = None,
+    sound_dir: str | None = None,
+    preview_html: str | None = None,
+    install: bool = False,
+    install_dir: str | None = None,
+    filter_name: str | None = None,
+    league: str = DEFAULT_LEAGUE,
+    offline: bool = False,
+) -> dict[str, Any]:
+    """Compile a validated PoE2 0.5.5 .filter + custom theme look + .wav/.mp3 soundpack + HTML."""
+    return _safe_tool_call(
+        lambda: execute_filter_generate(
+            strictness=strictness,
+            theme=theme,
+            look=look,
+            sound_style=sound_style,
+            musical_key=musical_key,
+            scale=scale,
+            pob=pob,
+            slot=slot,
+            out_path=out_path,
+            sound_dir=sound_dir,
+            preview_html=preview_html,
+            install=install,
+            install_dir=install_dir,
+            filter_name=filter_name,
+            league=league,
+            offline=offline,
+        )
+    )
+
+
+@mcp.tool()
+def poe2_filter_restyle(
+    source: str,
+    theme: str | None = "forbidden_abyss",
+    look: str | None = None,
+    sound_style: str | None = None,
+    musical_key: str = "D",
+    scale: str = "lydian",
+    pob: str | None = None,
+    slot: str | None = None,
+    out_path: str | None = None,
+    sound_dir: str | None = None,
+    preview_html: str | None = None,
+    install: bool = False,
+    install_dir: str | None = None,
+    filter_name: str | None = None,
+    league: str = DEFAULT_LEAGUE,
+    offline: bool = False,
+) -> dict[str, Any]:
+    """Auto-heal 0.5.5 stale BaseTypes, inject economy/PoB2 overrides, and restyle a .filter."""
+    return _safe_tool_call(
+        lambda: execute_filter_restyle(
+            source=source,
+            theme=theme,
+            look=look,
+            sound_style=sound_style,
+            musical_key=musical_key,
+            scale=scale,
+            pob=pob,
+            slot=slot,
+            out_path=out_path,
+            sound_dir=sound_dir,
+            preview_html=preview_html,
+            install=install,
+            install_dir=install_dir,
+            filter_name=filter_name,
+            league=league,
+            offline=offline,
+        )
+    )
+
+
+@mcp.tool()
+def poe2_filter_validate(
+    filter_file_or_text: str,
+    sound_dir: str | None = None,
+) -> dict[str, Any]:
+    """Validate a PoE2 0.5.5 .filter file or text against live BaseTypes, Classes, and grammar."""
+    return _safe_tool_call(
+        lambda: execute_filter_validate(
+            filter_file_or_text=filter_file_or_text,
+            sound_dir=sound_dir,
         )
     )
 

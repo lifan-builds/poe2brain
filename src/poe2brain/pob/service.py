@@ -347,6 +347,26 @@ class BuildService:
             raise ValueError(f"Empty share code returned from {raw_url}")
         return code
 
+    def _fetch_remote_poe2_build_xml(self, url: str) -> tuple[str, str | None]:
+        import tempfile
+
+        from poe2brain.ninja.service import NinjaBuildsService
+        from poe2brain.ninja.xml_inspector import decode_pob2_code_to_xml
+
+        is_mocked = self.http_client._sync_transport is not None
+        if is_mocked:
+            with tempfile.TemporaryDirectory(prefix="poe2brain_mock_url_") as tmp_dir:
+                ninja_svc = NinjaBuildsService(
+                    http_client=self.http_client,
+                    cache_dir=Path(tmp_dir),
+                    min_uncached_char_interval_seconds=0.0,
+                )
+                imp = ninja_svc.fetch_character(url, load_into_pob=False, force_refresh=True)
+        else:
+            ninja_svc = NinjaBuildsService(http_client=self.http_client)
+            imp = ninja_svc.fetch_character(url, load_into_pob=False)
+        return decode_pob2_code_to_xml(imp.pob_code), imp.character
+
     def load_build(
         self,
         source: str | Path,
@@ -368,6 +388,9 @@ class BuildService:
                 raise ValueError("Build source cannot be empty")
             if _POBBIN_URL_RE.match(raw_str):
                 text = self._fetch_pobbin_code(raw_str)
+            elif raw_str.lower().startswith(("https://", "http://")):
+                text, char_name = self._fetch_remote_poe2_build_xml(raw_str)
+                inferred_name = inferred_name or char_name
             elif (
                 len(raw_str) < 512
                 and "\n" not in raw_str
@@ -607,7 +630,11 @@ class BuildService:
         params: dict[str, Any] = {"slot": slot, "apply": apply_dewater}
         if keep:
             params["keep"] = list(keep)
-        res = self.bridge.call("audit_build", params)
+        res = self.bridge.call(
+            "audit_build",
+            params,
+            timeout=max(self.bridge.request_timeout, 120.0),
+        )
 
         char_info = res.get("character")
         skills_info = res.get("skills")
@@ -778,6 +805,7 @@ class BuildService:
                 "topN": top_n,
                 "includeKeystones": include_keystones,
             },
+            timeout=max(self.bridge.request_timeout, 120.0),
         )
         out: list[PassiveNodeUpgrade] = []
         for row in res.get("notables") or []:

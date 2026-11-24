@@ -2,12 +2,14 @@
 name: poe2brain
 description: >-
   Operate accurately in Path of Exile 2 (Patch 0.5.5 / Forbidden Rites) across
-  verified gamedata, 23 Ascendancies & live ladder meta, headless Path of Building 2
-  (PoB2) build audits and upgrades, live trade2, currency economy & arbitrage scanning,
-  and exact expected-cost / profit-ranked crafting plans. Activate whenever a prompt
-  touches PoE2 builds, classes, ascendancies, ladder meta, PoB2 codes, skills, gems,
-  passives, items, clipboard price-checks, trade searches, currencies, arbitrage,
-  omens, essences, desecration, or crafting.
+  verified gamedata, 23 Ascendancies & live ladder meta, poe.ninja build discovery &
+  character import, headless Path of Building 2 (PoB2) build audits and upgrades, live
+  trade2, currency economy & arbitrage scanning, exact expected-cost / profit-ranked
+  crafting plans, and validated PoE2 loot filters with custom visual themes and audio
+  soundpacks. Activate whenever a prompt touches PoE2 builds, poe.ninja, classes,
+  ascendancies, ladder meta, PoB2 codes/URLs, skills, gems, passives, items, clipboard
+  price-checks, trade searches, currencies, arbitrage, omens, essences, desecration,
+  crafting, loot filters (.filter / NeverSink / FilterBlade), filter themes, or drop sounds.
 ---
 
 # PoE2Brain (`0.5.5` / `Forbidden Rites`)
@@ -31,7 +33,7 @@ Both surfaces call the same typed Python engine in `/Users/lfan/Project/poe2brai
 | **Knowledge** | `poe2_inspect_augment` | `poe2 wiki augment "<query>" --json` | Runes, Soul Cores, Azmeri Idols, Shaman Bonded bonuses, and Patch `0.5` Verisium Anvil / Kalguuran Remnant recipes. |
 | **Knowledge** | `poe2_inspect_ascendancy` | `poe2 wiki ascendancy ["<name_or_class>"] [--class <cls>] --json` | List all 23 PoE2 `0.5.5` Ascendancies across 8 classes, or inspect full notables, multiple-choice nodes, `Abyssal Lich` inheritance, and PoE1/`1.0` trap errors. |
 | **Knowledge** | `poe2_meta_ladder` | `poe2 wiki meta [--league "Forbidden Rites"] --json` | Live SC/HC/SSF/HCSSF ladder shares (`142k+` indexed characters), composite Ascendancy tier rankings, and liquid chase item / Lineage Support demand signals. |
-| **PoB2** | `poe2_pob_load` | `poe2 pob load <code_url_or_file> [--slot main] --json` | Load `eN...` share code, `https://pobb.in/<id>` URL, PoB XML, or GGG `.build` JSON into named slot (`main`, `ref`, `candidate`) and return `BuildStats`. |
+| **PoB2** | `poe2_pob_load` | `poe2 pob load <code_url_or_file> [--slot main] --json` | Load `eN...` share code, `poe.ninja` / `poe2db.tw` / `maxroll.gg` / `pobb.in` URL, PoB XML, or GGG `.build` JSON into named slot (`main`, `ref`, `candidate`) and return `BuildStats`. |
 | **PoB2** | `poe2_pob_stats` | `poe2 pob stats [--slot main] --json` | Extract `FullDPS`, `TotalEHP`, `Life`, `ES`, `Mana`, `Spirit` (`total`/`reserved`/`unreserved`), resists, `Block`, `Deflection`, `Evasion`, `Armour`. |
 | **PoB2** | `poe2_pob_audit` | `poe2 pob audit [<code_url_or_file>] [--slot main] --json` | **Dewatering audit**: strip PoB-warrior config inflation and return `DewateredAudit` (`raw_stats` vs `sustainable_pinnacle_stats` + `stripped_flags`). |
 | **PoB2** | `poe2_pob_eval_item` | `poe2 pob eval-item --equip-slot "<slot>" --item-text "<text>" [--slot main] --json` | Non-destructive `GetMiscCalculator()` swap returning `ItemUpgradeDiff` (`full_dps_delta`, `total_ehp_delta`, `spirit_unreserved_delta`, `resist_deltas`). |
@@ -46,6 +48,13 @@ Both surfaces call the same typed Python engine in `/Users/lfan/Project/poe2brai
 | **Crafting** | `poe2_craft_odds` | `poe2 craft odds --base "<base>" --ilvl 82 --lever "<lever>" [--target "<mod>"] [--omen "<omen>"] --json` | Exact conditional mod-pool hit odds (`CraftActionEval`) honoring ilvl, orb `min_mod_level` floors, family blocking, and dynamic elemental tag-blocking. |
 | **Crafting** | `poe2_craft_plan` | `poe2 craft plan --base "<base>" --ilvl 82 --target "<mod>"... [--buy-exalted <p>] [--sims 3000] --json` | Optimal state-conditional crafting policy + Monte Carlo cost (`expected_cost_exalted`, `p50`/`p80`/`p95`) + `trade_vs_craft` recommendation. |
 | **Crafting** | `poe2_scan_craft_profit` | `poe2 craft profit [--budget all\|low\|mid\|high] [--live-trade/--no-live-trade] [--league "Forbidden Rites"] --json` | Rank profitable `0.5.5` crafts across low/mid/high budgets comparing sanitized live currency inputs + `p50`/`p80` drawdowns against live `trade2` `securable` exit prices. |
+| **Ninja** | `poe2_ninja_snapshots` | `poe2 ninja snapshots [--league "Forbidden Rites"] --json` | Live `poe.ninja` PoE2 `build-index-state` & `snapshot-versions` across SC/HC/SSF/HCSSF modes, character totals, class shares, and time-machine labels. |
+| **Ninja** | `poe2_ninja_search` | `poe2 ninja search [--league "Forbidden Rites"] [--class <cls>] [--ascendancy <asc>] [--skill <sk>] [--support <sup>] [--unique <item>] [--keystone <ks>] [--weapon <w>] [--min-dps <n>] [--min-ehp <n>] [--sort dps\|ehp\|level\|es\|life] [--limit 15] [--refresh-live 0] --json` | Multi-facet `Forbidden Rites` `poe.ninja` build search with top skill/support/unique/keystone/weapon facets and `min`/`median`/`p90`/`max` DPS/EHP/Life/ES distributions. |
+| **Ninja** | `poe2_ninja_character` | `poe2 ninja character <account_or_url> [--name <char>] [--league "Forbidden Rites"] [--timemachine <lbl>] [--load-pob] [--slot main] [--audit] --json` | Fetch live `poe.ninja` character (or `poe.ninja`/`poe2db`/`maxroll`/`pobb.in` share URL), inspect `<PathOfBuilding2>` XML, and optionally load + persist into PoB2 `--slot` and run dewatering audit. |
+| **Filter** | `poe2_filter_presets` | `poe2 filter presets --json` | List all 8 WCAG-verified visual theme presets, 6 strictness tiers, 6 custom soundpack styles + musical keys/scales, and local PoE2 filter directory (`detect_poe2_filter_dir()`). |
+| **Filter** | `poe2_filter_generate` | `poe2 filter generate [--strictness semi_strict] [--theme forbidden_abyss] [--look "<prompt>"] [--sound-style <style>] [--musical-key D] [--scale lydian] [--pob <code>] [--slot <slot>] [--out <path>] [--sound-dir <dir>] [--preview-html <html_path>] [--install] --json` | Compile a validated `0.5.5` `.filter` from live `Forbidden Rites` economy + optional PoB2 build context, compose custom look & `.wav`/`.mp3` soundpack, render HTML preview, and optionally install. |
+| **Filter** | `poe2_filter_restyle` | `poe2 filter restyle <source_path_or_neversink_strictness> [--theme <preset>] [--look "<prompt>"] [--sound-style <style>] [--pob <code>] [--slot <slot>] [--out <path>] [--sound-dir <dir>] [--preview-html <html_path>] [--install] --json` | Auto-heal stale `0.5.5` `BaseType`s/`HasExplicitMod` spacing on local or MIT NeverSink `.filter` files, inject live `0.5.5` economy + PoB2 overrides, and restyle look & sounds to `0` errors. |
+| **Filter** | `poe2_filter_validate` | `poe2 filter validate <filter_file_or_text> [--sound-dir <dir>] --json` | Validate any `.filter` file or text against all 7 PoE2 `0.5.5` client-crash traps (`ItemClasses` ID vs Name, unknown/removed bases, `HasExplicitMod` spacing, `Continue`-last, `SetFontSize 18..45`, sound paths). |
 
 ## Mandatory Anti-Hallucination Guardrails (Zero Tolerance)
 
@@ -59,8 +68,9 @@ Both surfaces call the same typed Python engine in `/Users/lfan/Project/poe2brai
    - PoE1 bases (`Vaal Regalia`, `Hubris Circlet`, `Astral Plate`, `Stygian Vise`) and removed `0.1` `Expert ` prefixes (`Expert Hexer's Robe` -> `Hexer's Robe`) fail in `0.5.5` — validate every base with `poe2_inspect_base`.
    - In-game PoE2 tooltips since `0.2.1` use **`Tier 1` (`display_tier = 1`) = BEST tier** (internal `.datc64` `internal_rank_asc = 1` is worst).
    - Zero Scouring, Alteration, Fusing, Chromatic, Fossils, or Crafting Bench. **`Omen of Homogenising Exaltation` / `Coronation` (removed in `0.4`)** and **Recombinators (`Omen of Recombination`, phased out in `0.5`)** do NOT drop in `0.5.5`.
-4. **Never scrape dead endpoints or violate GGG ToS**:
-   - `poe.ninja`'s PoE2 `/stash/` endpoint returns `HTTP 404` and `poe2scout.com/api` returns HTML — always use `poe2brain`'s verified clients (`api.poe2scout.com`, `poe.ninja/poe2/api/economy/exchange/current/overview`, and `pathofexile.com/api/trade2`).
+4. **Never scrape dead/protected endpoints, emit unvalidated `.filter` syntax, or violate GGG ToS**:
+   - `poe.ninja`'s PoE2 `/stash/` endpoint returns `HTTP 404`, `/api/protected/poe2/builds/...` is Cloudflare-gated (`HTTP 403`), and `poe2scout.com/api` returns HTML — always use `poe2brain`'s verified clients (`api.poe2scout.com`, `poe.ninja/poe2/api/economy/exchange/current/overview`, `poe.ninja/poe2/pob/raw/overview/code`, and `pathofexile.com/api/trade2`).
+   - Never hand-emit raw PoE2 `.filter` rules without `poe2_filter_validate` (raw SQLite `item_class` IDs like `Body Armour`/`Warstaff`, stale `BaseType`s like `"Fist of Kalguur"`, or `HasExplicitMod >= 2` spaces crash PoE2 filter load!).
    - Strictly read-only public APIs and clipboard text: never read `POESESSID`, inject game inputs, automate trade clicks, or send automated whispers.
 
 ## Core Decision Playbooks
@@ -90,3 +100,12 @@ Read [trade-economy.md](references/trade-economy.md) and [mechanics-0.5.5.md](re
 1. **Run `poe2_scan_arbitrage` for Executable Plays**: Never treat raw `poe2scout` vs `poe.ninja` Exalted spreads as arbitrage (VWAP `Div/Ex` numeraire lag creates illusory `13–18%` spreads). Use `poe2_scan_arbitrage` to rank deterministic hideout conversions (`2-Socket Masterwork Rune + Orb of Extraction -> Perfect Runes`, `Origin Spark + Cradle -> Origin Core`, `300x Simulacrum Splinter -> Simulacrum`, `DistilledEmotion` 3-to-1, drop-weighted `Refined Catalyst` EV) and Alva asynchronous limit-order spreads by **both ROI % and `profit_ex_per_10k_gold`**.
 2. **Enforce Gold-Tax & Liquidity Discipline**: Quote bulk flips in `Divine` or `Chaos` (never `450+` `Exalted` stacks that burn `~45k Gold/cycle`), never cross `/api/trade2/exchange` shark bids, and require `volumePrimaryValue >= 2–5 Div` and `>= 8–10` traded units on both legs.
 3. **Align Atlas Setup to Build**: Match Waystone mod count to revive tolerance (`6 mods = 0 revives`), slot Precursor Tablets directly into the **Map Device** (not Towers), and leverage Patch `0.5` *Masters of the Atlas* (*Jado, Hilda, Doryani*) and Verisium Runeforging recipes (`poe2_inspect_augment`).
+
+### Playbook E: `poe.ninja` Build Discovery -> Headless PoB2 Audit -> Build-Tailored Loot Filter + Custom Look & Sound Pack
+Read [filters-and-ninja.md](references/filters-and-ninja.md) and [pob2-workflows.md](references/pob2-workflows.md).
+1. **Discover & Filter Real `Forbidden Rites` Builds (`poe2_ninja_search`)**: Filter across `--ascendancy`, `--skill`, `--unique`, `--keystone`, `--weapon`, and `--min-dps`/`--min-ehp` to compare top skills, Lineage Supports, uniques, keystones, and `median`/`p90` DPS & EHP distributions (use `poe2_ninja_snapshots` for live SC/HC/SSF/HCSSF character totals and time-machine labels).
+2. **Import Live Character into Persistent PoB2 (`poe2_ninja_character --load-pob`)**: Pull any `poe.ninja` character URL, `(account, character)` pair (`Account-1234`), `?timemachine=` snapshot, or `poe.ninja`/`poe2db`/`maxroll`/`pobb.in` share URL directly into `--slot main`, then run `poe2_pob_audit` (`--audit`) to verify sustainable Pinnacle Boss DPS/EHP and uncapped resistances.
+3. **Compile Build-Tailored Filter, Custom Look & Sound Pack (`poe2_filter_generate` / `poe2_filter_restyle`)**:
+   - Pass `--slot main` (or `--pob <code>`), desired `--strictness` (`soft`..`uber_strict`), a preset `--theme` (`forbidden_abyss`, `cyberpunk_neon`, `darkmode_obsidian`, `colorblind_safe`, etc.) and/or natural-language `--look "<prompt>"`, plus `--sound-style` (`celestial_chime`, `ritual_gong`, `cyber_synth`, `arcade_retro`, `zen_minimal`, or spoken `voice_callout`) and `--preview-html <path.html>`.
+   - If the user prefers NeverSink's base rules, run `poe2_filter_restyle <path_or_strictness>` to auto-heal stale `0.10.4a` `BaseType`s (`"Fist of Kalguur"`, `"Fragments of the Past"`), inject live `0.5.5` economy + PoB2 overrides, and apply the custom look & soundpack.
+4. **Validate & Preview Before Installing**: Confirm `validation.valid == true` and `error_count == 0` (`poe2_filter_validate`), share the interactive HTML preview (`--preview-html`), and pass `--install` (`install=True`) only when the user asks to install into their local PoE2 filter directory.

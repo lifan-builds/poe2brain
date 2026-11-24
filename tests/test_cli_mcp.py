@@ -63,16 +63,38 @@ def test_skill_readme_mcp_and_cli_1_to_1_parity() -> None:
 
     skill_tools = set(re.findall(r"\|\s*`?(poe2_[a-z0-9_]+)`?\s*\|", skill_text))
     readme_tools = set(re.findall(r"\|\s*`?(poe2_[a-z0-9_]+)`?\s*\|", readme_text))
-    assert len(skill_tools) == 24
+    assert len(skill_tools) == 31
     assert skill_tools == readme_tools
 
     registered_tools = {t.name for t in mcp_mod.mcp._tool_manager.list_tools()}
     assert registered_tools == skill_tools
 
     runner = CliRunner()
-    for group in ("wiki", "pob", "econ", "trade", "craft", "sync", "bootstrap"):
+    for group in (
+        "wiki",
+        "pob",
+        "econ",
+        "trade",
+        "craft",
+        "ninja",
+        "filter",
+        "sync",
+        "bootstrap",
+    ):
         res = runner.invoke(app, [group, "--help"])
         assert res.exit_code == 0, f"Failed --help for group {group}: {res.stdout}"
+
+    for sub_args in (
+        ["ninja", "snapshots", "--help"],
+        ["ninja", "search", "--help"],
+        ["ninja", "character", "--help"],
+        ["filter", "presets", "--help"],
+        ["filter", "generate", "--help"],
+        ["filter", "restyle", "--help"],
+        ["filter", "validate", "--help"],
+    ):
+        sub_res = runner.invoke(app, sub_args)
+        assert sub_res.exit_code == 0, f"Failed --help for {sub_args}: {sub_res.stdout}"
 
 
 def test_cli_wiki_and_trade_parse(isolated_cli_env: dict[str, str]) -> None:
@@ -500,7 +522,389 @@ def test_cross_process_cli_pob_slot_persistence(isolated_cli_env: dict[str, str]
     assert float(diff["dps_per_exalted"]) > 0.0  # type: ignore[arg-type]
 
 
-async def test_mcp_server_stdio_roundtrip(isolated_cli_env: dict[str, str]) -> None:
+def test_cli_ninja_and_filter_commands_and_structured_errors(
+    isolated_cli_env: dict[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del isolated_cli_env
+    import httpx
+
+    from poe2brain.http import Poe2HttpClient
+    from poe2brain.ninja import NinjaBuildsService
+
+    def ninja_mock_handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/build-index-state"):
+            return httpx.Response(
+                200,
+                json={
+                    "leagueBuilds": [
+                        {
+                            "leagueName": "Forbidden Rites",
+                            "leagueUrl": "forbiddenrites",
+                            "total": 124092,
+                            "hardcore": False,
+                            "statistics": [
+                                {"class": "Gemling Legionnaire", "percentage": 16.4, "trend": 1},
+                                {"class": "Martial Artist", "percentage": 11.2, "trend": 1},
+                            ],
+                        },
+                        {
+                            "leagueName": "HC Forbidden Rites",
+                            "leagueUrl": "forbiddenriteshc",
+                            "total": 6396,
+                            "hardcore": True,
+                            "statistics": [],
+                        },
+                    ]
+                },
+            )
+        if path.endswith("/snapshot-versions"):
+            lg = request.url.params.get("league", "forbiddenrites")
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "url": lg,
+                        "name": "Forbidden Rites",
+                        "version": "cd" * 32,
+                        "snapshotName": "forbidden-rites",
+                        "overviewType": 0,
+                        "passiveTree": "PassiveTree-0.5",
+                        "timeMachineLabels": ["day-3", "week-3"],
+                    }
+                ],
+            )
+        if path == "/poe2/pob/raw/overview/code":
+            return httpx.Response(404, json={"title": "Not Found", "status": 404})
+        raise AssertionError(f"Unexpected ninja mock URL: {request.url}")
+
+    n_http = Poe2HttpClient(sync_transport=httpx.MockTransport(ninja_mock_handler))
+    n_svc = NinjaBuildsService(
+        http_client=n_http,
+        build_service=mcp_mod.get_build_service(),
+        cache_dir=tmp_path / "ninja_http_mock",
+        min_uncached_char_interval_seconds=0.0,
+    )
+    monkeypatch.setattr(mcp_mod, "_NINJA_SVC", n_svc)
+
+    runner = CliRunner()
+
+    # 1. poe2 ninja snapshots (--json & human)
+    snap_res = runner.invoke(app, ["ninja", "snapshots", "--json"])
+    assert snap_res.exit_code == 0, snap_res.stdout
+    snap_data = json.loads(snap_res.stdout)
+    assert snap_data["primary"]["total_characters"] == 124092
+    assert set(snap_data["modes"]) == {"sc_trade", "hc_trade", "ssf", "hc_ssf"}
+    assert "week-3" in snap_data["primary"]["time_machine_labels"]
+    assert runner.invoke(app, ["ninja", "snapshots"]).exit_code == 0
+
+    # 2. poe2 ninja search (--json, human, and PoE1 trap structured LookupError)
+    srch_res = runner.invoke(
+        app,
+        ["ninja", "search", "--ascendancy", "Martial Artist", "--limit", "5", "--json"],
+    )
+    assert srch_res.exit_code == 0, srch_res.stdout
+    srch_data = json.loads(srch_res.stdout)
+    assert srch_data["matched_builds"] >= 5
+    assert len(srch_data["builds"]) == 5
+    assert srch_data["dps_distribution"]["max"] >= srch_data["dps_distribution"]["median"] > 0
+    assert (
+        runner.invoke(app, ["ninja", "search", "--ascendancy", "Martial Artist", "--limit", "3"])
+        .exit_code
+        == 0
+    )
+
+    trap_srch = runner.invoke(app, ["ninja", "search", "--ascendancy", "Necromancer", "--json"])
+    assert trap_srch.exit_code == 1
+    trap_err = json.loads(trap_srch.stdout)
+    assert trap_err["ok"] is False
+    assert trap_err["error_type"] == "LookupError"
+
+    # 3. poe2 ninja character structured LookupError (missing char) & ValueError (/api/protected/)
+    miss_char = runner.invoke(
+        app,
+        ["ninja", "character", "nobody-0000", "--name", "GhostChar999", "--json"],
+    )
+    assert miss_char.exit_code == 1
+    miss_err = json.loads(miss_char.stdout)
+    assert miss_err["ok"] is False
+    assert miss_err["error_type"] == "LookupError"
+
+    prot_char = runner.invoke(
+        app,
+        ["ninja", "character", "https://poe.ninja/api/protected/poe2/builds/xyz/search", "--json"],
+    )
+    assert prot_char.exit_code == 1
+    prot_err = json.loads(prot_char.stdout)
+    assert prot_err["ok"] is False
+    assert prot_err["error_type"] == "ValueError"
+    assert "protected" in prot_err["error"].lower()
+
+    # 4. poe2 filter presets, generate, restyle, install (--install-dir tmp), and validate
+    presets_res = runner.invoke(app, ["filter", "presets", "--json"])
+    assert presets_res.exit_code == 0, presets_res.stdout
+    presets_data = json.loads(presets_res.stdout)
+    assert presets_data["theme_count"] == 8
+    assert presets_data["strictness_count"] == 6
+    assert presets_data["sound_style_count"] == 6
+    assert runner.invoke(app, ["filter", "presets"]).exit_code == 0
+
+    out_dir = tmp_path / "filter_out"
+    filter_file = out_dir / "cyber_strict.filter"
+    preview_file = out_dir / "cyber_preview.html"
+    install_target = tmp_path / "mock_poe2_install"
+
+    gen_res = runner.invoke(
+        app,
+        [
+            "filter",
+            "generate",
+            "--strictness",
+            "strict",
+            "--look",
+            "cyberpunk neon magenta and cyan on deep obsidian, huge divine labels",
+            "--sound-style",
+            "cyber_synth",
+            "--musical-key",
+            "F#",
+            "--scale",
+            "phrygian",
+            "--out",
+            str(filter_file),
+            "--sound-dir",
+            str(out_dir),
+            "--preview-html",
+            str(preview_file),
+            "--install",
+            "--install-dir",
+            str(install_target),
+            "--offline",
+            "--json",
+        ],
+    )
+    assert gen_res.exit_code == 0, gen_res.stdout
+    gen_data = json.loads(gen_res.stdout)
+    assert gen_data["validation"]["valid"] is True
+    assert gen_data["validation"]["error_count"] == 0
+    assert filter_file.is_file()
+    assert preview_file.is_file()
+    assert "data:audio/" in preview_file.read_text(encoding="utf-8")
+    assert (install_target / "cyber_strict.filter").is_file()
+    assert (install_target / "poe2brain_cyber_synth" / "s_plus.wav").is_file()
+
+    # NeverSink 0.10.4a stale BaseType + HasExplicitMod spacing auto-healing
+    stale_ns = tmp_path / "stale_neversink.filter"
+    stale_ns.write_text(
+        "\n".join(
+            [
+                "# [[0100]] OVERRIDE AREA 1",
+                'Show # $type->currency $tier->s',
+                '\tBaseType == "Divine Orb" "Fist of Kalguur" "Fragments of the Past"',
+                "\tSetFontSize 45",
+                "\tSetTextColor 255 0 0 255",
+                "\tSetBorderColor 255 0 0 255",
+                "\tSetBackgroundColor 255 255 255 255",
+                'Show # $type->rare $tier->t1',
+                '\tClass == "Wands"',
+                "\tRarity Rare",
+                '\tHasExplicitMod >= 2 "Merciless"',
+                "\tSetFontSize 38",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    healed_out = out_dir / "healed_ns.filter"
+    restyle_res = runner.invoke(
+        app,
+        [
+            "filter",
+            "restyle",
+            str(stale_ns),
+            "--theme",
+            "darkmode_obsidian",
+            "--sound-style",
+            "zen_minimal",
+            "--out",
+            str(healed_out),
+            "--sound-dir",
+            str(out_dir),
+            "--offline",
+            "--json",
+        ],
+    )
+    assert restyle_res.exit_code == 0, restyle_res.stdout
+    restyle_data = json.loads(restyle_res.stdout)
+    assert restyle_data["validation"]["valid"] is True
+    assert restyle_data["validation"]["error_count"] == 0
+    assert "Fist of Kalguur" in restyle_data["healed_basetypes"]
+    assert "Fragments of the Past" in restyle_data["healed_basetypes"]
+    assert restyle_data["injected_override_blocks"] >= 1
+
+    val_ok = runner.invoke(app, ["filter", "validate", str(healed_out), "--json"])
+    assert val_ok.exit_code == 0
+    assert json.loads(val_ok.stdout)["valid"] is True
+
+    val_bad = runner.invoke(
+        app,
+        [
+            "filter",
+            "validate",
+            'Show\n\tClass == "Body Armour"\n\tSetFontSize 50',
+            "--json",
+        ],
+    )
+    assert val_bad.exit_code == 0
+    bad_report = json.loads(val_bad.stdout)
+    assert bad_report["valid"] is False
+    assert bad_report["error_count"] >= 2
+
+
+def test_cross_process_ninja_character_to_pob_and_filter_generate(
+    isolated_cli_env: dict[str, str],
+    tmp_path: Path,
+) -> None:
+    from poe2brain.http import get_cached_json
+    from poe2brain.ninja.service import (
+        DEFAULT_BUILD_INDEX_TTL_SECONDS,
+        DEFAULT_CHAR_POB_TTL_SECONDS,
+        DEFAULT_SNAPSHOT_TTL_SECONDS,
+        POENINJA_BUILD_INDEX_URL,
+        POENINJA_CHAR_POB_RAW_URL,
+        POENINJA_SNAPSHOT_VERSIONS_URL,
+        NinjaBuildsService,
+    )
+
+    # Pick a real Martial Artist character from the bundled Forbidden Rites corpus
+    corpus_svc = NinjaBuildsService()
+    _, corpus_rows = corpus_svc._ensure_corpus_loaded()
+    sample = next(r for r in corpus_rows if r.get("ascendancy_name") == "Martial Artist")
+    acct = str(sample["account"])
+    char_name = str(sample["character"])
+    pob_code = str(sample["pob_code"])
+
+    # When running offline, pre-warm HTTP disk cache inside isolated POE2BRAIN_CACHE_DIR
+    if os.environ.get("POE2_LIVE_TESTS") != "1":
+        cache_root = Path(isolated_cli_env["POE2BRAIN_CACHE_DIR"])
+        get_cached_json(
+            POENINJA_BUILD_INDEX_URL,
+            ttl_seconds=DEFAULT_BUILD_INDEX_TTL_SECONDS,
+            fetcher=lambda: {
+                "leagueBuilds": [
+                    {
+                        "leagueName": "Forbidden Rites",
+                        "leagueUrl": "forbiddenrites",
+                        "total": 124092,
+                        "hardcore": False,
+                        "statistics": [],
+                    }
+                ]
+            },
+            cache_dir=cache_root,
+            force_refresh=True,
+        )
+        for slug in (
+            "forbiddenrites",
+            "forbiddenriteshc",
+            "forbiddenritesssf",
+            "forbiddenriteshcssf",
+        ):
+            get_cached_json(
+                POENINJA_SNAPSHOT_VERSIONS_URL,
+                params={"league": slug},
+                ttl_seconds=DEFAULT_SNAPSHOT_TTL_SECONDS,
+                fetcher=lambda s=slug: [
+                    {
+                        "url": s,
+                        "name": "Forbidden Rites",
+                        "version": "ef" * 32,
+                        "snapshotName": "forbidden-rites",
+                        "overviewType": 0,
+                        "passiveTree": "PassiveTree-0.5",
+                        "timeMachineLabels": ["week-3"],
+                    }
+                ],
+                cache_dir=cache_root,
+                force_refresh=True,
+            )
+        get_cached_json(
+            POENINJA_CHAR_POB_RAW_URL,
+            params={
+                "overview": "forbidden-rites",
+                "type": "exp",
+                "account": acct,
+                "name": char_name,
+            },
+            ttl_seconds=DEFAULT_CHAR_POB_TTL_SECONDS,
+            fetcher=lambda: {"code": pob_code},
+            cache_dir=cache_root,
+            force_refresh=True,
+        )
+
+    def _run_poe2(*args: str) -> dict[str, object]:
+        proc = subprocess.run(
+            [sys.executable, "-m", "poe2brain.cli", *args, "--json"],
+            cwd=REPO_ROOT,
+            env=isolated_cli_env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(proc.stdout)
+
+    # Process 1: Import poe.ninja character into persistent PoB2 slot 'ninja_main'
+    imported = _run_poe2(
+        "ninja",
+        "character",
+        acct,
+        "--name",
+        char_name,
+        "--load-pob",
+        "--slot",
+        "ninja_main",
+    )
+    assert imported["loaded_into_pob"] is True
+    assert imported["pob_slot"] == "ninja_main"
+    assert Path(str(imported["snapshot_path"])).is_file()
+
+    # Process 2: Separate OS process compiles build-tailored filter + soundpack from 'ninja_main'
+    out_filter = tmp_path / "ninja_bundle" / "martial_artist.filter"
+    out_html = tmp_path / "ninja_bundle" / "martial_artist.html"
+    compiled = _run_poe2(
+        "filter",
+        "generate",
+        "--strictness",
+        "strict",
+        "--theme",
+        "forbidden_abyss",
+        "--sound-style",
+        "celestial_chime",
+        "--slot",
+        "ninja_main",
+        "--out",
+        str(out_filter),
+        "--preview-html",
+        str(out_html),
+        "--offline",
+    )
+    assert compiled["build_context"] is not None
+    assert compiled["build_context"]["ascendancy_name"] == "Martial Artist"  # type: ignore[index]
+    assert compiled["validation"]["valid"] is True  # type: ignore[index]
+    assert compiled["validation"]["error_count"] == 0  # type: ignore[index]
+    assert out_filter.is_file()
+    assert out_html.is_file()
+
+    # Process 3: Separate OS process validates the written .filter bundle
+    validated = _run_poe2("filter", "validate", str(out_filter))
+    assert validated["valid"] is True
+    assert validated["error_count"] == 0
+
+
+async def test_mcp_server_stdio_roundtrip(
+    isolated_cli_env: dict[str, str], tmp_path: Path
+) -> None:
     params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "poe2brain.mcp_server"],
@@ -512,7 +916,7 @@ async def test_mcp_server_stdio_roundtrip(isolated_cli_env: dict[str, str]) -> N
             await session.initialize()
             tools_resp = await session.list_tools()
             names = {t.name for t in tools_resp.tools}
-            assert len(names) == 24
+            assert len(names) == 31
             assert {
                 "poe2_status",
                 "poe2_inspect_ascendancy",
@@ -520,6 +924,13 @@ async def test_mcp_server_stdio_roundtrip(isolated_cli_env: dict[str, str]) -> N
                 "poe2_scan_craft_profit",
                 "poe2_scan_arbitrage",
                 "poe2_craft_plan",
+                "poe2_ninja_snapshots",
+                "poe2_ninja_search",
+                "poe2_ninja_character",
+                "poe2_filter_presets",
+                "poe2_filter_generate",
+                "poe2_filter_restyle",
+                "poe2_filter_validate",
             }.issubset(names)
 
             st_res = await session.call_tool("poe2_status", {})
@@ -548,6 +959,39 @@ async def test_mcp_server_stdio_roundtrip(isolated_cli_env: dict[str, str]) -> N
             prof_json = json.loads(prof_res.content[0].text)  # type: ignore[union-attr]
             assert prof_json["profitable_count"] >= 1
 
+            fp_res = await session.call_tool("poe2_filter_presets", {})
+            fp_json = json.loads(fp_res.content[0].text)  # type: ignore[union-attr]
+            assert fp_json["theme_count"] == 8
+            assert fp_json["strictness_count"] == 6
+            assert fp_json["sound_style_count"] == 6
+
+            mcp_filter_path = tmp_path / "mcp_studio" / "synth.filter"
+            mcp_html_path = tmp_path / "mcp_studio" / "synth.html"
+            fg_res = await session.call_tool(
+                "poe2_filter_generate",
+                {
+                    "strictness": "strict",
+                    "look": "synthwave neon pink and cyan on obsidian, huge divine labels",
+                    "sound_style": "arcade_retro",
+                    "out_path": str(mcp_filter_path),
+                    "preview_html": str(mcp_html_path),
+                    "offline": True,
+                },
+            )
+            fg_json = json.loads(fg_res.content[0].text)  # type: ignore[union-attr]
+            assert fg_json["validation"]["valid"] is True
+            assert fg_json["validation"]["error_count"] == 0
+            assert mcp_filter_path.is_file()
+            assert mcp_html_path.is_file()
+
+            fv_res = await session.call_tool(
+                "poe2_filter_validate",
+                {"filter_file_or_text": str(mcp_filter_path)},
+            )
+            fv_json = json.loads(fv_res.content[0].text)  # type: ignore[union-attr]
+            assert fv_json["valid"] is True
+            assert fv_json["error_count"] == 0
+
             if os.environ.get("POE2_LIVE_TESTS") == "1":
                 meta_res = await session.call_tool(
                     "poe2_meta_ladder", {"league": "Forbidden Rites"}
@@ -561,6 +1005,27 @@ async def test_mcp_server_stdio_roundtrip(isolated_cli_env: dict[str, str]) -> N
                 )
                 arb_json = json.loads(arb_res.content[0].text)  # type: ignore[union-attr]
                 assert len(arb_json["opportunities"]) >= 1
+
+                ns_res = await session.call_tool(
+                    "poe2_ninja_search",
+                    {"ascendancy": "Martial Artist", "limit": 3},
+                )
+                ns_json = json.loads(ns_res.content[0].text)  # type: ignore[union-attr]
+                assert ns_json["matched_builds"] >= 3
+                top_char = ns_json["builds"][0]
+
+                nc_res = await session.call_tool(
+                    "poe2_ninja_character",
+                    {
+                        "account_or_url": top_char["account"],
+                        "character": top_char["character"],
+                        "load_into_pob": True,
+                        "slot": "mcp_live_ninja",
+                    },
+                )
+                nc_json = json.loads(nc_res.content[0].text)  # type: ignore[union-attr]
+                assert nc_json["loaded_into_pob"] is True
+                assert nc_json["pob_stats"]["level"] >= 90
 
             err_res = await session.call_tool(
                 "poe2_craft_odds",

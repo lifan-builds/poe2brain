@@ -17,9 +17,16 @@ from poe2brain.mcp_server import (
     ensure_pob_slot_loaded,
     execute_craft_odds,
     execute_craft_plan,
+    execute_filter_generate,
+    execute_filter_presets,
+    execute_filter_restyle,
+    execute_filter_validate,
     execute_find_upgrades,
     execute_inspect_ascendancy,
     execute_meta_ladder,
+    execute_ninja_character,
+    execute_ninja_search,
+    execute_ninja_snapshots,
     execute_scan_arbitrage,
     execute_scan_craft_profit,
     export_pob_slot,
@@ -61,6 +68,14 @@ craft_app = typer.Typer(
     help="Pillar 4: Exact PoE2 0.5.5 mod-pool odds and expected-cost crafting planner.",
     no_args_is_help=True,
 )
+ninja_app = typer.Typer(
+    help="Pillar 5: PoE Ninja PoE2 builds search, snapshots, and live PoB2 character import.",
+    no_args_is_help=True,
+)
+filter_app = typer.Typer(
+    help="Pillar 6: PoE2 0.5.5 loot filter compiler, theme composer, custom soundpacks, & healing.",
+    no_args_is_help=True,
+)
 sync_app = typer.Typer(
     help="Rebuild bundled deterministic PoE2 gamedata artifacts.", no_args_is_help=True
 )
@@ -71,6 +86,8 @@ app.add_typer(pob_app, name="pob")
 app.add_typer(econ_app, name="econ")
 app.add_typer(trade_app, name="trade")
 app.add_typer(craft_app, name="craft")
+app.add_typer(ninja_app, name="ninja")
+app.add_typer(filter_app, name="filter")
 app.add_typer(sync_app, name="sync")
 app.add_typer(bootstrap_app, name="bootstrap")
 
@@ -1626,6 +1643,507 @@ def craft_profit_cmd(
                 f"{ev['expected_roi_pct']:+.1f}%",
             )
         console.print(table)
+
+    _run_cli(json_output, _compute, _render)
+
+
+# ---------------------------------------------------------------------------
+# Pillar 5: PoE Ninja Builds (`poe2 ninja ...`)
+# ---------------------------------------------------------------------------
+
+
+@ninja_app.command("snapshots")
+def ninja_snapshots_cmd(
+    league: Annotated[str, typer.Option("--league", help="PoE2 league name.")] = DEFAULT_LEAGUE,
+    refresh: Annotated[
+        bool, typer.Option("--refresh", help="Bypass snapshot telemetry cache.")
+    ] = False,
+    json_output: JsonOpt = False,
+) -> None:
+    """Show live poe.ninja PoE2 build-index-state & snapshot-versions across SC/HC/SSF/HCSSF."""
+
+    def _compute() -> dict[str, Any]:
+        return execute_ninja_snapshots(league=league, force_refresh=refresh)
+
+    def _render(data: dict[str, Any]) -> None:
+        table = Table(
+            title=f"poe.ninja PoE2 {data['patch']} Build Snapshots ({data['requested_league']})"
+        )
+        table.add_column("Mode", style="cyan")
+        table.add_column("League", style="bold")
+        table.add_column("Indexed", justify="right", style="green")
+        table.add_column("Overview Slug")
+        table.add_column("Tree")
+        table.add_column("Time Machine")
+        for mode_key, snap in (data.get("modes") or {}).items():
+            tms = snap.get("time_machine_labels") or []
+            tm_summary = f"{len(tms)} ({tms[0]}..{tms[-1]})" if len(tms) >= 2 else ", ".join(tms)
+            table.add_row(
+                mode_key,
+                str(snap.get("league_name")),
+                f"{snap.get('total_characters', 0):,}",
+                str(snap.get("snapshot_name") or "-"),
+                str(snap.get("passive_tree") or "-"),
+                tm_summary or "-",
+            )
+        console.print(table)
+
+    _run_cli(json_output, _compute, _render)
+
+
+@ninja_app.command("search")
+def ninja_search_cmd(
+    league: Annotated[str, typer.Option("--league", help="PoE2 league name.")] = DEFAULT_LEAGUE,
+    class_name: Annotated[
+        str | None, typer.Option("--class", help="Base class or Ascendancy filter.")
+    ] = None,
+    ascendancy: Annotated[
+        str | None, typer.Option("--ascendancy", help="Ascendancy name or alias filter.")
+    ] = None,
+    skill: Annotated[
+        str | None, typer.Option("--skill", help="Main or active skill gem filter.")
+    ] = None,
+    support: Annotated[
+        str | None, typer.Option("--support", help="Support or Lineage Support gem filter.")
+    ] = None,
+    unique: Annotated[
+        str | None, typer.Option("--unique", help="Equipped Unique item filter.")
+    ] = None,
+    keystone: Annotated[
+        str | None, typer.Option("--keystone", help="Allocated Keystone or Ascendancy notable.")
+    ] = None,
+    weapon: Annotated[
+        str | None, typer.Option("--weapon", help="Weapon/offhand type filter (e.g. Quarterstaff).")
+    ] = None,
+    min_dps: Annotated[
+        float | None, typer.Option("--min-dps", help="Minimum Effective DPS floor.")
+    ] = None,
+    min_ehp: Annotated[
+        float | None, typer.Option("--min-ehp", help="Minimum Total EHP floor.")
+    ] = None,
+    sort_by: Annotated[
+        str, typer.Option("--sort", help="Sort metric: dps, ehp, level, es, or life.")
+    ] = "dps",
+    limit: Annotated[int, typer.Option("--limit", "-n", help="Max build rows to return.")] = 15,
+    refresh_live: Annotated[
+        int,
+        typer.Option(
+            "--refresh-live",
+            help="Live-refresh top N matched characters via poe.ninja PoB endpoint.",
+        ),
+    ] = 0,
+    include_pob_code: Annotated[
+        bool, typer.Option("--include-pob-code", help="Include full eN... PoB2 code per build row.")
+    ] = False,
+    json_output: JsonOpt = False,
+) -> None:
+    """Search PoE2 Forbidden Rites poe.ninja builds across class/ascendancy/skill/unique/stats."""
+
+    def _compute() -> dict[str, Any]:
+        return execute_ninja_search(
+            league=league,
+            class_name=class_name,
+            ascendancy=ascendancy,
+            skill=skill,
+            support_gem=support,
+            unique_item=unique,
+            keystone=keystone,
+            weapon_type=weapon,
+            min_dps=min_dps,
+            min_ehp=min_ehp,
+            sort_by=sort_by,
+            limit=limit,
+            refresh_live_top=refresh_live,
+            include_pob_code=include_pob_code,
+        )
+
+    def _render(data: dict[str, Any]) -> None:
+        table = Table(
+            title=(
+                f"poe.ninja Builds — {data['league']} "
+                f"(matched {data['matched_builds']}/{data['corpus_total_builds']} | "
+                f"sort={data['sort_by']})"
+            )
+        )
+        table.add_column("Character", style="bold cyan")
+        table.add_column("Ascendancy")
+        table.add_column("Lv", justify="right")
+        table.add_column("Main Skill")
+        table.add_column("DPS", justify="right", style="green")
+        table.add_column("EHP", justify="right")
+        table.add_column("ES / Life", justify="right")
+        for b in data.get("builds", []):
+            table.add_row(
+                f"{b['character']} ({b['account']})",
+                str(b.get("ascendancy_name") or b["class_name"]),
+                str(b["level"]),
+                str(b.get("main_skill") or "-"),
+                f"{b['effective_dps']:,.0f}",
+                f"{b['total_ehp']:,.0f}",
+                f"{b['energy_shield']:,.0f} / {b['life']:,.0f}",
+            )
+        console.print(table)
+
+    _run_cli(json_output, _compute, _render)
+
+
+@ninja_app.command("character")
+def ninja_character_cmd(
+    account_or_url: Annotated[
+        str,
+        typer.Argument(
+            help="poe.ninja character URL, PoB share URL (ninja/poe2db/maxroll/pobb.in), or acct."
+        ),
+    ],
+    name: Annotated[
+        str | None,
+        typer.Option("--name", "--character", help="Character name when passing account tag."),
+    ] = None,
+    league: Annotated[str, typer.Option("--league", help="PoE2 league name.")] = DEFAULT_LEAGUE,
+    timemachine: Annotated[
+        str | None,
+        typer.Option("--timemachine", help="Optional time-machine label (e.g. week-3, day-5)."),
+    ] = None,
+    load_pob: Annotated[
+        bool,
+        typer.Option("--load-pob", help="Load imported character into persistent PoB2 --slot."),
+    ] = False,
+    slot: Annotated[str, typer.Option("--slot", help="Target PoB2 build slot name.")] = "main",
+    audit: Annotated[
+        bool,
+        typer.Option("--audit", help="Run headless PoB2 dewatering audit on the character."),
+    ] = False,
+    refresh: Annotated[
+        bool, typer.Option("--refresh", help="Bypass 30-minute character PoB cache.")
+    ] = False,
+    json_output: JsonOpt = False,
+) -> None:
+    """Import a live poe.ninja character or PoB2 share URL and optionally load/audit in PoB2."""
+
+    def _compute() -> dict[str, Any]:
+        return execute_ninja_character(
+            account_or_url=account_or_url,
+            character=name,
+            league=league,
+            timemachine=timemachine,
+            load_into_pob=load_pob,
+            slot=slot,
+            audit=audit,
+            force_refresh=refresh,
+        )
+
+    def _render(data: dict[str, Any]) -> None:
+        cls_lbl = f"{data['class_name']}/{data.get('ascendancy_name') or 'None'}"
+        ident = (
+            f"{data['character']} ({data['account']})"
+            if data.get("character")
+            else data["requested_source"]
+        )
+        console.print(
+            f"[bold cyan]{ident}[/bold cyan] — Lv{data['level']} {cls_lbl} "
+            f"(Main: {data.get('main_skill') or 'None'} | src: {data['source_kind']})"
+        )
+        if data.get("unique_items"):
+            console.print(f"  Uniques  : {', '.join(data['unique_items'][:8])}")
+        if data.get("keystones"):
+            console.print(f"  Keystones: {', '.join(data['keystones'][:8])}")
+        if data.get("pob_stats"):
+            _render_build_stats(
+                {**data["pob_stats"], "slot": data.get("pob_slot") or slot},
+                "Headless PoB2 Stats",
+            )
+        if data.get("dewatered_audit"):
+            aud = data["dewatered_audit"]
+            console.print(
+                f"  Audit    : DPS inflation +{aud['dps_inflation_pct']:.1f}% | "
+                f"EHP inflation +{aud['ehp_inflation_pct']:.1f}%"
+            )
+
+    _run_cli(json_output, _compute, _render)
+
+
+# ---------------------------------------------------------------------------
+# Pillar 6: Loot Filter, Visual Theme & Sound Studio (`poe2 filter ...`)
+# ---------------------------------------------------------------------------
+
+
+def _render_filter_compile_summary(data: dict[str, Any], label: str) -> None:
+    val = data["validation"]
+    console.print(
+        f"[bold cyan]{label}[/bold cyan] — [bold]{data['filter_name']}[/bold] "
+        f"(strictness={data['strictness']} | theme={data['theme_id']} | "
+        f"sound={data.get('sound_pack_id') or 'builtin_poe2'})"
+    )
+    console.print(
+        f"  Validation: valid=[bold green]{val['valid']}[/bold green] "
+        f"({val['total_blocks']} blocks, {val['error_count']} errors, "
+        f"{val['warning_count']} warnings)"
+    )
+    if data.get("healed_basetypes"):
+        console.print(f"  Healed    : {', '.join(data['healed_basetypes'])}")
+    if data.get("filter_path"):
+        console.print(f"  Filter    : {data['filter_path']}")
+    if data.get("sound_pack"):
+        console.print(f"  Soundpack : {data['sound_pack']['pack_dir']}")
+    if data.get("preview_html_path"):
+        console.print(f"  Preview   : {data['preview_html_path']}")
+    if data.get("installed_dir"):
+        console.print(f"  Installed : {data['installed_dir']}")
+
+
+@filter_app.command("presets")
+def filter_presets_cmd(json_output: JsonOpt = False) -> None:
+    """List PoE2 0.5.5 visual theme presets, strictness tiers, soundpack styles, and filter dir."""
+
+    def _render(data: dict[str, Any]) -> None:
+        console.print(
+            f"[bold cyan]PoE2 {data['patch']} Filter Studio Presets[/bold cyan] "
+            f"(PoE2 folder: {data['detected_poe2_filter_dir']})"
+        )
+        t_table = Table(title=f"Visual Themes ({data['theme_count']})")
+        t_table.add_column("ID", style="cyan")
+        t_table.add_column("Name", style="bold")
+        t_table.add_column("S+ Contrast", justify="right")
+        t_table.add_column("Description")
+        for t in data["visual_themes"]:
+            t_table.add_row(
+                t["id"],
+                t["name"],
+                f"{t['s_plus_style']['contrast_ratio']}:1",
+                t["description"][:78],
+            )
+        console.print(t_table)
+
+        s_table = Table(title=f"Soundpack Styles ({data['sound_style_count']})")
+        s_table.add_column("Style", style="magenta")
+        s_table.add_column("Description")
+        for s in data["sound_styles"]:
+            s_table.add_row(s["id"], s["description"])
+        console.print(s_table)
+
+    _run_cli(json_output, execute_filter_presets, _render)
+
+
+@filter_app.command("generate")
+def filter_generate_cmd(
+    strictness: Annotated[
+        str,
+        typer.Option(
+            "--strictness",
+            help="Strictness: soft, regular, semi_strict, strict, very_strict, uber_strict.",
+        ),
+    ] = "semi_strict",
+    theme: Annotated[
+        str, typer.Option("--theme", help="Visual theme preset ID (e.g. forbidden_abyss).")
+    ] = "forbidden_abyss",
+    look: Annotated[
+        str | None,
+        typer.Option("--look", help="Natural-language visual theme customization prompt."),
+    ] = None,
+    sound_style: Annotated[
+        str | None,
+        typer.Option(
+            "--sound-style",
+            help=(
+                "Sound pack style: celestial_chime, ritual_gong, cyber_synth, arcade_retro, "
+                "zen_minimal, voice_callout, or none."
+            ),
+        ),
+    ] = None,
+    musical_key: Annotated[
+        str, typer.Option("--musical-key", help="Musical root key for synth pack (e.g. D, F#, A).")
+    ] = "D",
+    scale: Annotated[
+        str,
+        typer.Option(
+            "--scale", help="Musical scale: lydian, major, minor, pentatonic, phrygian, dorian."
+        ),
+    ] = "lydian",
+    pob: Annotated[
+        str | None,
+        typer.Option("--pob", help="Optional PoB2 share code, URL, or XML for build tailoring."),
+    ] = None,
+    slot: Annotated[
+        str | None,
+        typer.Option("--slot", help="Optional persisted PoB2 slot name (e.g. main) to tailor to."),
+    ] = None,
+    out_path: Annotated[
+        Path | None, typer.Option("--out", "-o", help="Output .filter file path.")
+    ] = None,
+    sound_dir: Annotated[
+        Path | None, typer.Option("--sound-dir", help="Output root directory for custom soundpack.")
+    ] = None,
+    preview_html: Annotated[
+        Path | None,
+        typer.Option("--preview-html", help="Output path for interactive HTML drop/audio preview."),
+    ] = None,
+    install: Annotated[
+        bool, typer.Option("--install", help="Install .filter and soundpack into PoE2 folder.")
+    ] = False,
+    install_dir: Annotated[
+        Path | None,
+        typer.Option("--install-dir", help="Override target PoE2 folder when using --install."),
+    ] = None,
+    filter_name: Annotated[
+        str | None, typer.Option("--name", help="Optional filter display/file stem.")
+    ] = None,
+    league: Annotated[str, typer.Option("--league", help="PoE2 league name.")] = DEFAULT_LEAGUE,
+    offline: Annotated[
+        bool, typer.Option("--offline", help="Use offline Patch 0.5.5 currency/unique baselines.")
+    ] = False,
+    json_output: JsonOpt = False,
+) -> None:
+    """Compile a validated PoE2 0.5.5 .filter, custom look, .wav/.mp3 soundpack, & HTML preview."""
+
+    def _compute() -> dict[str, Any]:
+        return execute_filter_generate(
+            strictness=strictness,
+            theme=theme,
+            look=look,
+            sound_style=sound_style,
+            musical_key=musical_key,
+            scale=scale,
+            pob=pob,
+            slot=slot,
+            out_path=out_path,
+            sound_dir=sound_dir,
+            preview_html=preview_html,
+            install=install,
+            install_dir=install_dir,
+            filter_name=filter_name,
+            league=league,
+            offline=offline,
+        )
+
+    _run_cli(
+        json_output,
+        _compute,
+        lambda d: _render_filter_compile_summary(d, "Compiled PoE2 Filter"),
+    )
+
+
+@filter_app.command("restyle")
+def filter_restyle_cmd(
+    source: Annotated[
+        str,
+        typer.Argument(
+            help="Local .filter file path or NeverSink strictness (e.g. semi_strict, strict)."
+        ),
+    ],
+    theme: Annotated[
+        str | None, typer.Option("--theme", help="Visual theme preset ID (or 'none').")
+    ] = "forbidden_abyss",
+    look: Annotated[
+        str | None,
+        typer.Option("--look", help="Natural-language visual theme customization prompt."),
+    ] = None,
+    sound_style: Annotated[
+        str | None,
+        typer.Option("--sound-style", help="Sound pack style (or 'none')."),
+    ] = None,
+    musical_key: Annotated[
+        str, typer.Option("--musical-key", help="Musical root key for synth pack.")
+    ] = "D",
+    scale: Annotated[
+        str, typer.Option("--scale", help="Musical scale for synth pack.")
+    ] = "lydian",
+    pob: Annotated[
+        str | None,
+        typer.Option("--pob", help="Optional PoB2 code/URL/file for build override injection."),
+    ] = None,
+    slot: Annotated[
+        str | None,
+        typer.Option("--slot", help="Optional persisted PoB2 slot for build override injection."),
+    ] = None,
+    out_path: Annotated[
+        Path | None, typer.Option("--out", "-o", help="Output .filter file path.")
+    ] = None,
+    sound_dir: Annotated[
+        Path | None, typer.Option("--sound-dir", help="Output root directory for custom soundpack.")
+    ] = None,
+    preview_html: Annotated[
+        Path | None,
+        typer.Option("--preview-html", help="Output path for interactive HTML preview."),
+    ] = None,
+    install: Annotated[
+        bool, typer.Option("--install", help="Install healed/restyled bundle into PoE2 folder.")
+    ] = False,
+    install_dir: Annotated[
+        Path | None,
+        typer.Option("--install-dir", help="Override target PoE2 folder when using --install."),
+    ] = None,
+    filter_name: Annotated[
+        str | None, typer.Option("--name", help="Optional filter display/file stem.")
+    ] = None,
+    league: Annotated[str, typer.Option("--league", help="PoE2 league name.")] = DEFAULT_LEAGUE,
+    offline: Annotated[
+        bool, typer.Option("--offline", help="Use offline Patch 0.5.5 economy baselines.")
+    ] = False,
+    json_output: JsonOpt = False,
+) -> None:
+    """Auto-heal 0.5.5 stale BaseTypes, inject economy/PoB2 overrides, and restyle a .filter."""
+
+    def _compute() -> dict[str, Any]:
+        return execute_filter_restyle(
+            source=source,
+            theme=theme,
+            look=look,
+            sound_style=sound_style,
+            musical_key=musical_key,
+            scale=scale,
+            pob=pob,
+            slot=slot,
+            out_path=out_path,
+            sound_dir=sound_dir,
+            preview_html=preview_html,
+            install=install,
+            install_dir=install_dir,
+            filter_name=filter_name,
+            league=league,
+            offline=offline,
+        )
+
+    _run_cli(
+        json_output,
+        _compute,
+        lambda d: _render_filter_compile_summary(d, "Healed & Restyled PoE2 Filter"),
+    )
+
+
+@filter_app.command("validate")
+def filter_validate_cmd(
+    filter_file_or_text: Annotated[
+        str, typer.Argument(help="Path to .filter file or inline .filter text.")
+    ],
+    sound_dir: Annotated[
+        Path | None,
+        typer.Option("--sound-dir", help="Optional directory to verify CustomAlertSound files."),
+    ] = None,
+    json_output: JsonOpt = False,
+) -> None:
+    """Validate a PoE2 0.5.5 .filter file or text against live BaseTypes, Classes, and grammar."""
+
+    def _compute() -> dict[str, Any]:
+        return execute_filter_validate(
+            filter_file_or_text=filter_file_or_text,
+            sound_dir=sound_dir,
+        )
+
+    def _render(data: dict[str, Any]) -> None:
+        badge = (
+            "[bold green]VALID[/bold green]" if data["valid"] else "[bold red]INVALID[/bold red]"
+        )
+        console.print(
+            f"PoE2 {data['patch']} Filter Validation: {badge} "
+            f"({data['total_blocks']} blocks | {data['error_count']} errors | "
+            f"{data['warning_count']} warnings)"
+        )
+        for diag in data.get("diagnostics", [])[:15]:
+            col = "red" if diag["severity"] == "error" else "yellow"
+            console.print(
+                f"  [{col}][{diag['severity'].upper()} L{diag['line']} {diag['code']}][/{col}] "
+                f"{diag['message']}"
+            )
 
     _run_cli(json_output, _compute, _render)
 

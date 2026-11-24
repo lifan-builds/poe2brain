@@ -212,6 +212,85 @@ def test_universal_load_and_export_formats(build_service: BuildService, tmp_path
     finally:
         mock_http.close()
 
+    # 5. poe.ninja character URL + poe.ninja/poe2db/maxroll share URLs via NinjaBuildsService
+    seen_remote_urls: list[str] = []
+
+    def multisite_handler(request: httpx.Request) -> httpx.Response:
+        seen_remote_urls.append(str(request.url))
+        path = request.url.path
+        if path.endswith("/build-index-state"):
+            return httpx.Response(
+                200,
+                json={
+                    "leagueBuilds": [
+                        {
+                            "leagueName": "Forbidden Rites",
+                            "leagueUrl": "forbiddenrites",
+                            "total": 124092,
+                            "hardcore": False,
+                            "statistics": [],
+                        }
+                    ]
+                },
+            )
+        if path.endswith("/snapshot-versions"):
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "url": "forbiddenrites",
+                        "name": "Forbidden Rites",
+                        "version": "ab" * 32,
+                        "snapshotName": "forbidden-rites",
+                        "overviewType": 0,
+                        "passiveTree": "PassiveTree-0.5",
+                        "timeMachineLabels": ["week-3"],
+                    }
+                ],
+            )
+        if path == "/poe2/pob/raw/overview/code":
+            assert request.url.params["overview"] == "forbidden-rites"
+            assert request.url.params["account"] == "0bibea-1410"
+            assert request.url.params["name"] == "FR_obi"
+            assert request.url.params["timemachine"] == "week-3"
+            return httpx.Response(200, text=code)
+        if path in (
+            "/poe2/pob/raw/NinjaShare42",
+            "/pob/Poe2dbShare77/raw",
+            "/poe2/api/pob/MaxrollShare88",
+        ):
+            return httpx.Response(200, text=code)
+        raise AssertionError(f"Unexpected remote build URL: {request.url}")
+
+    ms_http = Poe2HttpClient(sync_transport=httpx.MockTransport(multisite_handler))
+    ms_svc = BuildService(bridge=build_service.bridge, http_client=ms_http)
+    try:
+        ninja_char_stats = ms_svc.load_build(
+            "https://poe.ninja/poe2/builds/forbiddenrites/character/0bibea%231410/FR_obi?timemachine=week-3",
+            slot="ref_url",
+        )
+        assert math.isclose(ninja_char_stats.full_dps, base_main.full_dps, rel_tol=1e-6)
+        assert ms_svc.inspect_build("ref_url")["character"]["name"] == "FR_obi"
+
+        for share_url in (
+            "https://poe.ninja/poe2/pob/NinjaShare42",
+            "https://poe2db.tw/pob/Poe2dbShare77",
+            "https://maxroll.gg/poe2/pob/MaxrollShare88",
+        ):
+            st = ms_svc.load_build(share_url, slot="ref_url")
+            assert math.isclose(st.full_dps, base_main.full_dps, rel_tol=1e-6)
+
+        with pytest.raises(ValueError, match="protected"):
+            ms_svc.load_build(
+                "https://poe.ninja/api/protected/poe2/builds/xyz/search?overview=forbidden-rites",
+                slot="ref_url",
+            )
+    finally:
+        ms_svc.switch_slot("main")
+        for tmp_slot in ("ref_code", "ref_xml", "ref_ggg", "ref_url"):
+            ms_svc.delete_slot(tmp_slot)
+        ms_http.close()
+
 
 def test_poe2_inspection_and_dewater_audit(build_service: BuildService) -> None:
     inspected = build_service.inspect_build("main", include_item_raw=True)

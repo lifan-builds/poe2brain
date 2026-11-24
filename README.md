@@ -1,10 +1,10 @@
 # poe2brain
 
-**`poe2brain`** is an agent-native Path of Exile 2 (`Patch 0.5.5` / `Forbidden Rites`) intelligence engine. It exposes a single typed Python 3.12+ core simultaneously as a JSON-first CLI (`poe2`) and a Model Context Protocol stdio server (`poe2brain-mcp`), giving AI coding/gaming agents and power users ground-truth mechanics, real Path of Building 2 calculations, live market/trade pricing, and exact expected-cost crafting plans.
+**`poe2brain`** is an agent-native Path of Exile 2 (`Patch 0.5.5` / `Forbidden Rites`) intelligence engine. It exposes a single typed Python 3.12+ core simultaneously as a JSON-first CLI (`poe2`) and a Model Context Protocol stdio server (`poe2brain-mcp`, **31** tools in 1:1 parity), giving AI coding/gaming agents and power users ground-truth mechanics, `poe.ninja` build discovery & character import, real Path of Building 2 calculations, live market/trade pricing, exact expected-cost crafting plans, and validated PoE2 loot filters with custom visual themes and audio soundpacks.
 
 ---
 
-## Architecture & Four Pillars
+## Architecture & Six Pillars
 
 ```text
                        ┌──────────────────────────────────────┐
@@ -19,20 +19,22 @@
                        └────────┬─────────┘ └─────────┬────────┘
                                 └──────────┬──────────┘
                                            ▼
-        ┌──────────────────┬───────────────┴───────────────┬──────────────────┐
-        ▼                  ▼                               ▼                  ▼
-┌───────────────┐  ┌───────────────┐               ┌───────────────┐  ┌───────────────┐
-│ 1. Knowledge  │  │ 2. Headless   │               │ 3. Economy &  │  │ 4. Crafting   │
-│ SQLite + FTS5 │  │    PoB2       │               │    Trade2     │  │    Solver     │
-│ 0.5.5 Rules   │  │ LuaJIT Daemon │◄─────────────►│ Scout + Ninja │─►│ Pool + Policy │
-│ & Gamedata    │  │ & Dewatering  │  Item/Weight  │ + Official    │  │ + Monte Carlo │
-└───────────────┘  └───────────────┘   Closed Loop └───────────────┘  └───────────────┘
+  ┌─────────────┬─────────────┬────────────┴────────────┬─────────────┬─────────────┐
+  ▼             ▼             ▼                         ▼             ▼             ▼
+┌───────────┐ ┌───────────┐ ┌───────────┐             ┌───────────┐ ┌───────────┐ ┌───────────┐
+│1.Knowledge│ │2.Headless │ │3.Economy &│             │4.Crafting │ │5.poe.ninja│ │6.Loot     │
+│SQLite+FTS5│ │  PoB2     │ │  Trade2   │◄───────────►│  Solver   │ │  Builds & │ │  Filter & │
+│0.5.5 Rules│ │LuaJIT RPC │ │Scout+Ninja│             │Pool+MDP+MC│ │  Char PoB │ │  Sound    │
+│& Meta 23  │ │& Dewater  │ │+ Official │             │+ Profit   │ │  Importer │ │  Studio   │
+└───────────┘ └───────────┘ └───────────┘             └───────────┘ └───────────┘ └───────────┘
 ```
 
 1. **Knowledge, Ascendancies & Live Ladder Meta (`poe2brain.knowledge`)** — Read-only SQLite + FTS5 index (`data/poe2_0.5.5.sqlite`) over **769** official GGG `KeywordPopups`, **49** Patch `0.5.5` anti-hallucination rules & formulas, **1,711** gems, **435** uniques, **3,219** live PoE2 bases (catching PoE1 / stale `0.1` `Expert ` base traps), **313** socketable augments, **293** crafting levers, and **882** Verisium/Kalguuran runeforge recipes, plus `MetaService` (`TreeData/0_5` **8 playable classes & 23 Ascendancies**, `Abyssal Lich` inheritance, choice notables, PoE1/`1.0` trap guardrails, and live SC/HC/SSF/HCSSF ladder shares + chase demand signals).
-2. **Headless Path of Building 2 (`poe2brain.pob`)** — Persistent native `LuaJIT` + `PathOfBuilding-PoE2` (`tree 0_5`) JSON-RPC 2.0 daemon supporting multi-slot builds (`main`, `ref`, `candidate` persisted across CLI calls), `eN...` / `pobb.in` / XML / GGG `.build` JSON I/O, **PoB-warrior dewatering audits**, `<10ms` `GetMiscCalculator()` item upgrade sweeps, passive/anoint ranking, and marginal `trade2` stat-weight generation.
+2. **Headless Path of Building 2 (`poe2brain.pob`)** — Persistent native `LuaJIT` + `PathOfBuilding-PoE2` (`tree 0_5`) JSON-RPC 2.0 daemon supporting multi-slot builds (`main`, `ref`, `candidate` persisted across CLI calls), `eN...` / `poe.ninja` / `poe2db.tw` / `maxroll.gg` / `pobb.in` / XML / GGG `.build` JSON I/O, **PoB-warrior dewatering audits**, `<10ms` `GetMiscCalculator()` item upgrade sweeps, passive/anoint ranking, and marginal `trade2` stat-weight generation.
 3. **Live Economy, Arbitrage & Official Trade2 (`poe2brain.trade`)** — 3-tier pricing router normalized to **`Exalted Orb = 1.0`** combining `api.poe2scout.com` + `poe.ninja` `/poe2/api/economy/exchange/current/overview` (15m TTL disk cache, Reliquary Key vs Unique disambiguation, liquidity & 7d trends) with unauthenticated `pathofexile.com/api/trade2` (`GGGRateLimiter` + `1.0s` buffer), `ArbitrageScanner` (executable `0.5.5` conversions, Alva spreads, online order books/triangles, `profit_ex_per_10k_gold`, and index-lag/bench trap filters), `Exiled-Exchange-2`-backed `Ctrl+C` / `Ctrl+Alt+C` item parsing, **Instant Buyout (`securable` Gold `fee`) vs In-Person (`whisper`)** separation, and price-fixer account deduplication.
 4. **Exact Crafting Odds, Policy & Profit Scanner (`poe2brain.crafting`)** — Conditional `ModPoolEngine` (`display_tier = 1` best, tiered orb `min_mod_level` floors `{1, 35, 50, 55, 70}`, Ancient Bone `40` floor, family mutual exclusion, dynamic elemental tag-blocking, 3-draw without-replacement Well of Souls unveil, `Omen of Whittling`, cross-slot/cross-pool `Sinistral/Dextral Crystallisation`, blocking removed `0.4` Homogenising Omens & `0.5` Recombinators) + sunk-cost-disciplined `CraftingPlanner` (`4-mod Fracturing Orb` checkpoints, `p50`/`p80`/`p95` Monte Carlo, buy-vs-craft) + `CraftProfitScanner` ranking profitable crafts against live `trade2` `securable` exit prices.
+5. **PoE Ninja Builds Discovery & Live Character Import (`poe2brain.ninja`)** — Live `poe.ninja` `build-index-state` & `snapshot-versions` telemetry across SC/HC/SSF/HCSSF, pure-stdlib `SearchResult` protobuf + `NDIC\x02` dictionary decoder, `<2ms` `<PathOfBuilding2>` XML inspector, multi-facet search over the bundled **353-build `Forbidden Rites` Top-10 Leaderboard corpus** (all **23** Ascendancies), and live `HTTP 200` character / time-machine / multi-site PoB2 share-URL importer directly into `Pob2Bridge`.
+6. **Agentic Loot Filter, Visual Theme & Custom Sound Studio (`poe2brain.filters`)** — Self-validating PoE2 `0.5.5` `.filter` compiler & `FilterValidator` enforcing all 7 client-crash traps (`ItemClasses` ID->Name translation, dead/removed `BaseType`s, `HasExplicitMod` spacing, `Continue`-last, `SetFontSize 18..45`, multi-base unique safety), **8 WCAG-verified visual presets** + natural-language `compose_theme` (`--look`), pure-stdlib `44.1 kHz` `16-bit` stereo `.wav` polyphonic synth + hybrid `voice_callout` studio (`.mp3` twin export), `NeverSink` `0.10.4a` auto-healing & restyling, and self-contained interactive HTML drop/audio previews.
 
 ---
 
@@ -83,7 +85,7 @@ Every MCP tool maps 1:1 to a `poe2 ... --json` CLI command over the exact same d
 | **Knowledge** | `poe2_inspect_augment` | `poe2 wiki augment "<query>" --json` | Runes, Soul Cores, Azmeri Idols, Shaman `Bonded:` bonuses, and Verisium / Kalguuran Remnant recipes. |
 | **Knowledge** | `poe2_inspect_ascendancy` | `poe2 wiki ascendancy ["<name_or_class>"] [--class <cls>] --json` | List all 23 PoE2 `0.5.5` Ascendancies (8 classes) or inspect notables, choice nodes, and PoE1/`1.0` traps. |
 | **Knowledge** | `poe2_meta_ladder` | `poe2 wiki meta [--league "Forbidden Rites"] --json` | Live SC/HC/SSF/HCSSF ladder shares, Ascendancy tier rankings, and liquid chase item demand signals. |
-| **PoB2** | `poe2_pob_load` | `poe2 pob load <code_url_or_file> [--slot main] --json` | Load `eN...` share code, `pobb.in/<id>` URL, PoB XML, or GGG `.build` JSON into a persistent named slot. |
+| **PoB2** | `poe2_pob_load` | `poe2 pob load <code_url_or_file> [--slot main] --json` | Load `eN...` share code, `poe.ninja` / `poe2db.tw` / `maxroll.gg` / `pobb.in` URL, PoB XML, or GGG `.build` JSON into a persistent named slot. |
 | **PoB2** | `poe2_pob_stats` | `poe2 pob stats [--slot main] --json` | Extract `FullDPS`, `TotalEHP`, `Life`, `ES`, `Mana`, `Spirit`, resists, `Block`, `Deflection`, `Evasion`, `Armour`. |
 | **PoB2** | `poe2_pob_audit` | `poe2 pob audit [<code_url_or_file>] [--slot main] --json` | **Dewatering audit**: strip PoB-warrior config inflation and return sustainable Pinnacle Boss stats + culprits. |
 | **PoB2** | `poe2_pob_eval_item` | `poe2 pob eval-item --equip-slot "<slot>" --item-text "<text>" [--slot main] --json` | Non-destructive `GetMiscCalculator()` item swap returning `ItemUpgradeDiff` (`full_dps_delta`, `total_ehp_delta`, `spirit_unreserved_delta`). |
@@ -98,6 +100,13 @@ Every MCP tool maps 1:1 to a `poe2 ... --json` CLI command over the exact same d
 | **Crafting** | `poe2_craft_odds` | `poe2 craft odds --base "<base>" --ilvl 82 --lever "<lever>" [--target "<mod>"] [--omen "<omen>"] --json` | Exact conditional mod-pool hit odds (`CraftActionEval`) with live currency pricing. |
 | **Crafting** | `poe2_craft_plan` | `poe2 craft plan --base "<base>" --ilvl 82 --target "<mod>"... [--buy-exalted <p>] [--sims 3000] --json` | Optimal state-conditional policy + Monte Carlo cost (`expected_cost_exalted`, `p50`/`p80`/`p95`) + `trade_vs_craft`. |
 | **Crafting** | `poe2_scan_craft_profit` | `poe2 craft profit [--budget all\|low\|mid\|high] [--live-trade/--no-live-trade] [--league "Forbidden Rites"] --json` | Rank profitable `0.5.5` crafts with sanitized live input costs, `p50`/`p80` drawdowns, live `securable` exits, and ROI %. |
+| **Ninja** | `poe2_ninja_snapshots` | `poe2 ninja snapshots [--league "Forbidden Rites"] --json` | Live `poe.ninja` PoE2 `build-index-state` & `snapshot-versions` across SC/HC/SSF/HCSSF modes and time-machine labels. |
+| **Ninja** | `poe2_ninja_search` | `poe2 ninja search [--league "Forbidden Rites"] [--class <cls>] [--ascendancy <asc>] [--skill <sk>] [--support <sup>] [--unique <item>] [--keystone <ks>] [--weapon <w>] [--min-dps <n>] [--min-ehp <n>] [--sort dps\|ehp\|level\|es\|life] [--limit 15] [--refresh-live 0] --json` | Multi-facet `Forbidden Rites` `poe.ninja` build search with skill/support/unique/keystone/weapon facets and DPS/EHP/Life/ES distributions. |
+| **Ninja** | `poe2_ninja_character` | `poe2 ninja character <account_or_url> [--name <char>] [--league "Forbidden Rites"] [--timemachine <lbl>] [--load-pob] [--slot main] [--audit] --json` | Import live `poe.ninja` character or PoB2 share URL, inspect XML, and optionally load + persist into PoB2 `--slot` and audit. |
+| **Filter** | `poe2_filter_presets` | `poe2 filter presets --json` | List all 8 WCAG visual theme presets, 6 strictness tiers, 6 custom soundpack styles + musical keys/scales, and local PoE2 filter dir. |
+| **Filter** | `poe2_filter_generate` | `poe2 filter generate [--strictness semi_strict] [--theme forbidden_abyss] [--look "<prompt>"] [--sound-style <style>] [--musical-key D] [--scale lydian] [--pob <code>] [--slot <slot>] [--out <path>] [--sound-dir <dir>] [--preview-html <html_path>] [--install] --json` | Compile a validated `0.5.5` `.filter` with live economy + PoB2 build context, custom look, `.wav`/`.mp3` soundpack, and HTML preview. |
+| **Filter** | `poe2_filter_restyle` | `poe2 filter restyle <source_path_or_neversink_strictness> [--theme <preset>] [--look "<prompt>"] [--sound-style <style>] [--pob <code>] [--slot <slot>] [--out <path>] [--sound-dir <dir>] [--preview-html <html_path>] [--install] --json` | Auto-heal `0.5.5` stale `BaseType`s on local or MIT NeverSink `.filter` files, inject economy/PoB2 overrides, and restyle look & sounds. |
+| **Filter** | `poe2_filter_validate` | `poe2 filter validate <filter_file_or_text> [--sound-dir <dir>] --json` | Validate any `.filter` file or text against PoE2 `0.5.5` `ItemClasses`, `BaseItemTypes`, grammar bounds, and custom sound files. |
 
 ### Additional CLI Utility Subcommands
 
@@ -114,11 +123,12 @@ Every MCP tool maps 1:1 to a `poe2 ... --json` CLI command over the exact same d
 ## Development & Verification
 
 ```bash
-# Rebuild deterministic Patch 0.5.5 SQLite + FTS5 database
+# Rebuild deterministic Patch 0.5.5 SQLite + FTS5 database & poe.ninja corpus
 uv run python scripts/sync_gamedata.py
+uv run python scripts/sync_ninja_corpus.py
 
 # Lint & run unit + integration test suites
-uv run ruff check .
+uv run ruff check . scripts
 uv run pytest -v
 
 # Include live Forbidden Rites network round-trip tests
@@ -129,5 +139,5 @@ POE2_LIVE_TESTS=1 uv run pytest -v
 
 ## Clean-Room Licensing & GGG ToS Boundary
 
-- **MIT Licensed**: See [LICENSE](LICENSE). Bundled lookup data in `data/` derives strictly from MIT-licensed upstream projects (`PathOfBuildingCommunity/PathOfBuilding-PoE2`, `Kvan7/Exiled-Exchange-2` in [data/ee2/LICENSE.Exiled-Exchange-2](data/ee2/LICENSE.Exiled-Exchange-2), and `repoe-fork/poe2`).
-- **Strictly Out-of-Game & Unauthenticated**: `poe2brain` never reads `POESESSID` or auth cookies, never inspects game memory or screen frames, never injects inputs into the Path of Exile 2 client, and paces all public `trade2` requests through `GGGRateLimiter`.
+- **MIT Licensed**: See [LICENSE](LICENSE). Bundled lookup data in `data/` derives strictly from MIT-licensed upstream projects (`PathOfBuildingCommunity/PathOfBuilding-PoE2`, `Kvan7/Exiled-Exchange-2` in [data/ee2/LICENSE.Exiled-Exchange-2](data/ee2/LICENSE.Exiled-Exchange-2), `ackness/pobr` in [data/ninja/LICENSE.pobr](data/ninja/LICENSE.pobr), `repoe-fork/poe2` & `thmsndk/vscode.poe2-filter` in [data/filter/LICENSE.filter-data](data/filter/LICENSE.filter-data), plus optional MIT `NeverSinkDev/NeverSink-Filter-for-PoE2` base filter healing).
+- **Strictly Out-of-Game & Unauthenticated**: `poe2brain` never reads `POESESSID` or auth cookies, never calls Cloudflare-gated `/api/protected/` routes, never inspects game memory or screen frames, never injects inputs into the Path of Exile 2 client, and paces all public `trade2` requests through `GGGRateLimiter`.
