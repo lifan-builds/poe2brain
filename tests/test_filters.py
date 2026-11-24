@@ -157,6 +157,19 @@ def test_builtin_themes_and_agentic_composer_wcag_and_hierarchy() -> None:
     fonts = [composed.tiers[k].font_size for k in ("s_plus", "s", "a", "b", "c", "d")]
     assert fonts == sorted(fonts, reverse=True)
 
+    # Regression: "obsidian" dark swatch must set background (#0e1017), NOT displace magenta/cyan!
+    cyber_obs = compose_theme(
+        "cyberpunk neon magenta and cyan on deep obsidian, huge divine labels"
+    )
+    assert cyber_obs.base_preset == "cyberpunk_neon"
+    assert cyber_obs.tiers["s_plus"].font_size == 45
+    assert cyber_obs.tiers["s_plus"].border_color.to_hex() == "#ff0099"
+    assert cyber_obs.tiers["s"].border_color.to_hex() == "#00f5ff"
+    assert cyber_obs.tiers["s"].beam is not None and cyber_obs.tiers["s"].beam.color == "Pink"
+    assert cyber_obs.tiers["a"].beam is not None and cyber_obs.tiers["a"].beam.color == "Cyan"
+    s_bg = cyber_obs.tiers["s"].background_color
+    assert (s_bg.r, s_bg.g, s_bg.b) == (14, 16, 23)
+
 
 def test_soundpack_generator_synth_and_voice_callout(tmp_path: Path) -> None:
     gen = SoundPackGenerator()
@@ -353,6 +366,45 @@ Show # $type->exoticmods $tier->cmranged
         )
         assert full_healed.validation.error_count == 0
         assert "Fist of Kalguur" in full_healed.healed_basetypes
+
+    # Remote NeverSink strictness fetch via Poe2HttpClient.get_text (mocked + live GitHub)
+    import os
+
+    import httpx
+
+    from poe2brain.http import Poe2HttpClient
+
+    seen_ns_urls: list[str] = []
+
+    def ns_mock_handler(request: httpx.Request) -> httpx.Response:
+        seen_ns_urls.append(str(request.url))
+        assert "3-STRICT.filter" in str(request.url)
+        return httpx.Response(200, text=stale_neversink_sample)
+
+    mock_http = Poe2HttpClient(sync_transport=httpx.MockTransport(ns_mock_handler))
+    try:
+        remote_mock_adapter = NeverSinkAdapter(http_client=mock_http)
+        remote_healed = remote_mock_adapter.restyle_and_heal(
+            strictness=StrictnessTier.STRICT,
+            style_prompt="cyberpunk neon magenta and cyan on deep obsidian",
+        )
+        assert len(seen_ns_urls) == 1
+        assert remote_healed.validation.valid
+        assert remote_healed.validation.error_count == 0
+        assert "Fist of Kalguur" in remote_healed.healed_basetypes
+    finally:
+        mock_http.close()
+
+    if os.environ.get("POE2_LIVE_TESTS") == "1":
+        live_healed = adapter.restyle_and_heal(
+            strictness=StrictnessTier.SEMI_STRICT,
+            style_prompt="cyberpunk neon magenta and cyan on deep obsidian, huge divine labels",
+        )
+        assert live_healed.validation.valid
+        assert live_healed.validation.error_count == 0
+        assert {"Fist of Kalguur", "Fragments of the Past"}.issubset(
+            set(live_healed.healed_basetypes)
+        )
 
 
 def test_preview_html_and_bundle_installer(tmp_path: Path) -> None:

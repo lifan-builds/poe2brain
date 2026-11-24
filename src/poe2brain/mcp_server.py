@@ -1530,14 +1530,27 @@ def _resolve_strictness_tier(raw: str) -> StrictnessTier:
     raise ValueError(f"Unsupported strictness {raw!r} (expected one of: {valid}).")
 
 
-def _resolve_visual_theme(theme: str | None, look: str | None) -> VisualThemeSpec | None:
+def _resolve_visual_theme(
+    theme: str | None,
+    look: str | None,
+    *,
+    default_preset: str | None = "forbidden_abyss",
+) -> VisualThemeSpec | None:
     if look is not None and look.strip():
-        norm_base = theme.strip().lower().replace("-", "_") if theme else None
+        norm_base = (
+            theme.strip().lower().replace("-", "_")
+            if (theme and theme.strip() and theme.strip().lower() != "none")
+            else None
+        )
         base_p = norm_base if norm_base in BUILTIN_THEME_PRESETS else None
         return compose_theme(look.strip(), base_preset=base_p)
-    if theme is None or not theme.strip() or theme.strip().lower() == "none":
-        return None
-    return get_visual_theme(theme)
+    if theme is not None and theme.strip():
+        if theme.strip().lower() == "none":
+            return None
+        return get_visual_theme(theme)
+    if default_preset is not None:
+        return get_visual_theme(default_preset)
+    return None
 
 
 def _resolve_build_filter_context(
@@ -1678,7 +1691,7 @@ def execute_filter_presets() -> dict[str, Any]:
 def execute_filter_generate(
     *,
     strictness: str = "semi_strict",
-    theme: str = "forbidden_abyss",
+    theme: str | None = None,
     look: str | None = None,
     sound_style: str | None = None,
     musical_key: str = "D",
@@ -1727,7 +1740,7 @@ def execute_filter_generate(
         output_path=resolved_out,
     )
 
-    if sound_pack is not None and sound_dir is not None:
+    if sound_pack is not None:
         result.validation = gen.validator.validate_text(
             result.filter_text,
             filter_dir=Path(sound_pack.pack_dir).parent,
@@ -1759,7 +1772,7 @@ def execute_filter_generate(
 def execute_filter_restyle(
     *,
     source: str,
-    theme: str | None = "forbidden_abyss",
+    theme: str | None = None,
     look: str | None = None,
     sound_style: str | None = None,
     musical_key: str = "D",
@@ -1845,7 +1858,7 @@ def execute_filter_restyle(
         output_path=resolved_out,
     )
 
-    if sound_pack is not None and sound_dir is not None:
+    if sound_pack is not None:
         result.validation = adapter.validator.validate_text(
             result.filter_text,
             filter_dir=Path(sound_pack.pack_dir).parent,
@@ -1993,7 +2006,7 @@ def poe2_filter_presets() -> dict[str, Any]:
 @mcp.tool()
 def poe2_filter_generate(
     strictness: str = "semi_strict",
-    theme: str = "forbidden_abyss",
+    theme: str | None = None,
     look: str | None = None,
     sound_style: str | None = None,
     musical_key: str = "D",
@@ -2035,7 +2048,7 @@ def poe2_filter_generate(
 @mcp.tool()
 def poe2_filter_restyle(
     source: str,
-    theme: str | None = "forbidden_abyss",
+    theme: str | None = None,
     look: str | None = None,
     sound_style: str | None = None,
     musical_key: str = "D",

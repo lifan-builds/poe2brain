@@ -1249,14 +1249,24 @@ def get_visual_theme(theme_id: str) -> VisualThemeSpec:
 
 
 def _extract_colors_from_clause(clause: str) -> list[RgbaColor]:
-    found: list[RgbaColor] = []
+    positioned: list[tuple[int, int, RgbaColor]] = []
+
+    def _overlaps(start: int, end: int) -> bool:
+        return any(not (end <= ps or start >= pe) for ps, pe, _ in positioned)
+
     for hex_m in re.finditer(r"#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?\b", clause):
-        found.append(RgbaColor.from_any(hex_m.group(0)))
+        s, e = hex_m.span()
+        positioned.append((s, e, RgbaColor.from_any(hex_m.group(0))))
+
     lower = clause.lower()
     for name in sorted(_NAMED_SWATCHES, key=len, reverse=True):
-        if re.search(rf"\b{re.escape(name)}\b", lower):
-            found.append(RgbaColor.from_any(_NAMED_SWATCHES[name]))
-    return found
+        for m in re.finditer(rf"\b{re.escape(name)}\b", lower):
+            s, e = m.span()
+            if not _overlaps(s, e):
+                positioned.append((s, e, RgbaColor.from_any(_NAMED_SWATCHES[name])))
+
+    positioned.sort(key=lambda item: item[0])
+    return [col for _, _, col in positioned]
 
 
 def compose_theme(
@@ -1300,8 +1310,11 @@ def compose_theme(
     bg_override: RgbaColor | None = (
         RgbaColor.from_any(background_color) if background_color is not None else None
     )
-    if bg_override is None and ("pitch black" in prompt_lower or "pure black" in prompt_lower):
-        bg_override = RgbaColor(r=6, g=7, b=11, a=250)
+    if bg_override is None:
+        if "pitch black" in prompt_lower or "pure black" in prompt_lower:
+            bg_override = RgbaColor(r=6, g=7, b=11, a=250)
+        elif "obsidian" in prompt_lower:
+            bg_override = RgbaColor(r=14, g=16, b=23, a=250)
 
     if bg_override is not None:
         for t_key, style in theme.tiers.items():
@@ -1323,7 +1336,7 @@ def compose_theme(
         swatches = [
             c
             for c in _extract_colors_from_clause(first_clause)
-            if (c.r + c.g + c.b) > 45  # skip pitch-black swatch as foreground
+            if (c.r + c.g + c.b) > 70  # skip pitch-black / obsidian swatches as foreground
         ]
         if prim is None and len(swatches) >= 1:
             prim = swatches[0]
@@ -1356,7 +1369,7 @@ def compose_theme(
             if matched_tier and matched_tier in theme.tiers:
                 st = theme.tiers[matched_tier]
                 clause_colors = [
-                    c for c in _extract_colors_from_clause(clause) if (c.r + c.g + c.b) > 45
+                    c for c in _extract_colors_from_clause(clause) if (c.r + c.g + c.b) > 70
                 ]
                 if clause_colors:
                     col = clause_colors[0]

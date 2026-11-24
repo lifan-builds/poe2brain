@@ -688,9 +688,12 @@ def test_cli_ninja_and_filter_commands_and_structured_errors(
     gen_data = json.loads(gen_res.stdout)
     assert gen_data["validation"]["valid"] is True
     assert gen_data["validation"]["error_count"] == 0
+    assert gen_data["validation"]["warning_count"] == 0
     assert filter_file.is_file()
     assert preview_file.is_file()
-    assert "data:audio/" in preview_file.read_text(encoding="utf-8")
+    preview_txt = preview_file.read_text(encoding="utf-8")
+    assert "data:audio/" in preview_txt
+    assert "Agent-composed theme from &#x27;cyberpunk_neon&#x27;" in preview_txt
     assert (install_target / "cyber_strict.filter").is_file()
     assert (install_target / "poe2brain_cyber_synth" / "s_plus.wav").is_file()
 
@@ -742,6 +745,38 @@ def test_cli_ninja_and_filter_commands_and_structured_errors(
     assert "Fist of Kalguur" in restyle_data["healed_basetypes"]
     assert "Fragments of the Past" in restyle_data["healed_basetypes"]
     assert restyle_data["injected_override_blocks"] >= 1
+
+    # Also test `poe2 filter restyle strict` remote NeverSink fetch via Poe2HttpClient.get_text
+    from poe2brain.filters import NeverSinkAdapter
+
+    ns_http = Poe2HttpClient(
+        sync_transport=httpx.MockTransport(
+            lambda req: httpx.Response(200, text=stale_ns.read_text(encoding="utf-8"))
+        )
+    )
+    monkeypatch.setattr(
+        mcp_mod,
+        "_NEVERSINK_ADAPTER",
+        NeverSinkAdapter(generator=mcp_mod.get_filter_generator(), http_client=ns_http),
+    )
+    restyle_remote = runner.invoke(
+        app,
+        [
+            "filter",
+            "restyle",
+            "strict",
+            "--look",
+            "cyberpunk neon magenta and cyan on deep obsidian, huge divine labels",
+            "--offline",
+            "--json",
+        ],
+    )
+    assert restyle_remote.exit_code == 0, restyle_remote.stdout
+    restyle_remote_data = json.loads(restyle_remote.stdout)
+    assert restyle_remote_data["strictness"] == "strict"
+    assert restyle_remote_data["validation"]["valid"] is True
+    assert restyle_remote_data["validation"]["error_count"] == 0
+    assert "Fist of Kalguur" in restyle_remote_data["healed_basetypes"]
 
     val_ok = runner.invoke(app, ["filter", "validate", str(healed_out), "--json"])
     assert val_ok.exit_code == 0
@@ -981,8 +1016,10 @@ async def test_mcp_server_stdio_roundtrip(
             fg_json = json.loads(fg_res.content[0].text)  # type: ignore[union-attr]
             assert fg_json["validation"]["valid"] is True
             assert fg_json["validation"]["error_count"] == 0
+            assert fg_json["validation"]["warning_count"] == 0
             assert mcp_filter_path.is_file()
             assert mcp_html_path.is_file()
+            assert "cyberpunk_neon" in mcp_html_path.read_text(encoding="utf-8")
 
             fv_res = await session.call_tool(
                 "poe2_filter_validate",
@@ -1026,6 +1063,19 @@ async def test_mcp_server_stdio_roundtrip(
                 nc_json = json.loads(nc_res.content[0].text)  # type: ignore[union-attr]
                 assert nc_json["loaded_into_pob"] is True
                 assert nc_json["pob_stats"]["level"] >= 90
+
+                fr_res = await session.call_tool(
+                    "poe2_filter_restyle",
+                    {
+                        "source": "semi_strict",
+                        "look": "cyberpunk neon magenta and cyan on deep obsidian",
+                        "offline": True,
+                    },
+                )
+                fr_json = json.loads(fr_res.content[0].text)  # type: ignore[union-attr]
+                assert fr_json["validation"]["valid"] is True
+                assert fr_json["validation"]["error_count"] == 0
+                assert "Fist of Kalguur" in fr_json["healed_basetypes"]
 
             err_res = await session.call_tool(
                 "poe2_craft_odds",

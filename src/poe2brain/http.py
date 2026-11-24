@@ -473,6 +473,69 @@ class Poe2HttpClient:
     ) -> Any:
         return self.request_json("GET", url, params=params, headers=headers)
 
+    def get_text(
+        self,
+        url: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
+        ttl_seconds: float | None = None,
+        cache_dir: Path | None = None,
+        force_refresh: bool = False,
+        retry_on_429: bool = True,
+    ) -> str:
+        req_headers = {"Accept": "text/plain, */*"}
+        if headers:
+            req_headers.update(headers)
+
+        def _fetch_text() -> str:
+            is_ggg = _is_ggg_url(url)
+            bucket = infer_ggg_bucket(url) if is_ggg else ""
+            attempts = 2 if retry_on_429 else 1
+            for attempt in range(attempts):
+                if is_ggg:
+                    self.rate_limiter.acquire_sync(bucket)
+                try:
+                    resp = self.sync_client.request(
+                        "GET",
+                        url,
+                        params=params,
+                        headers=req_headers,
+                    )
+                except (httpx.TimeoutException, httpx.RemoteProtocolError):
+                    if attempt + 1 < attempts:
+                        self.rate_limiter._sleep_sync(0.5)
+                        continue
+                    raise
+                if is_ggg:
+                    self.rate_limiter.update_from_headers(resp.headers, url=url, bucket=bucket)
+                if resp.status_code == 429 and attempt + 1 < attempts:
+                    if not is_ggg:
+                        wait_s = compute_rate_limit_delay(
+                            resp.headers, safety_buffer=self.rate_limiter.safety_buffer
+                        )
+                        if wait_s > 0:
+                            self.rate_limiter._sleep_sync(wait_s)
+                    continue
+                resp.raise_for_status()
+                return resp.text
+            raise RuntimeError(f"Unreachable HTTP retry state for {url}")
+
+        if ttl_seconds is not None and (self._sync_transport is None or cache_dir is not None):
+            envelope = get_cached_json(
+                url,
+                params=params,
+                ttl_seconds=ttl_seconds,
+                fetcher=lambda: {"text": _fetch_text()},
+                cache_dir=cache_dir,
+                client=self,
+                force_refresh=force_refresh,
+            )
+            if isinstance(envelope, Mapping) and isinstance(envelope.get("text"), str):
+                return envelope["text"]
+
+        return _fetch_text()
+
     def post_json(
         self,
         url: str,

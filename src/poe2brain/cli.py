@@ -1934,8 +1934,12 @@ def filter_generate_cmd(
         ),
     ] = "semi_strict",
     theme: Annotated[
-        str, typer.Option("--theme", help="Visual theme preset ID (e.g. forbidden_abyss).")
-    ] = "forbidden_abyss",
+        str | None,
+        typer.Option(
+            "--theme",
+            help="Visual theme preset ID (defaults to forbidden_abyss unless --look is set).",
+        ),
+    ] = None,
     look: Annotated[
         str | None,
         typer.Option("--look", help="Natural-language visual theme customization prompt."),
@@ -2031,8 +2035,12 @@ def filter_restyle_cmd(
         ),
     ],
     theme: Annotated[
-        str | None, typer.Option("--theme", help="Visual theme preset ID (or 'none').")
-    ] = "forbidden_abyss",
+        str | None,
+        typer.Option(
+            "--theme",
+            help="Visual theme preset ID, or 'none' (defaults to forbidden_abyss unless --look).",
+        ),
+    ] = None,
     look: Annotated[
         str | None,
         typer.Option("--look", help="Natural-language visual theme customization prompt."),
