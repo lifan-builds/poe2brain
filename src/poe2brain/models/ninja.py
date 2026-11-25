@@ -100,6 +100,19 @@ class NinjaBuildEntry(Poe2Model):
     energy_shield: float = 0.0
     mana: float = 0.0
     spirit: int = 0
+    dewatered_dps: float | None = None
+    dps_inflation_pct: float | None = None
+    dewatered_ehp: float | None = None
+    phys_max_hit: float | None = None
+    chaos_max_hit: float | None = None
+    chaos_immune: bool = False
+    movement_speed_mod: float | None = None
+    movement_speed_while_using_skill: float | None = None
+    ascendancy_share_pct: float | None = None
+    corpus_skill_count: int | None = None
+    mobility_tags: list[str] = Field(default_factory=list)
+    t0_chase_uniques: list[str] = Field(default_factory=list)
+    sleeper_score: float | None = None
     ninja_url: str
     source: str = "poeninja_corpus"
     live_refreshed: bool = False
@@ -113,7 +126,8 @@ class NinjaBuildSearchReport(Poe2Model):
     corpus_total_builds: int = 0
     matched_builds: int = 0
     returned_builds: int = 0
-    sort_by: Literal["dps", "ehp", "level", "es", "life"] = "dps"
+    preset: str | None = None
+    sort_by: Literal["dps", "ehp", "level", "es", "life", "sleeper", "mobility"] = "dps"
     applied_filters: dict[str, str | float] = Field(default_factory=dict)
     top_ascendancies: list[NinjaFacetCount] = Field(default_factory=list)
     top_skills: list[NinjaFacetCount] = Field(default_factory=list)

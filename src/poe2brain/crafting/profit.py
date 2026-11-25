@@ -182,6 +182,9 @@ class CraftProfitEvaluation(Poe2Model):
     success_probability_per_base: float
     breakeven_hit_rate: float
     risk_adjusted_score_ex: float
+    competition_level: Literal["low", "medium", "high"] = "medium"
+    niche_score: float = 0.0
+    margin_tier: Literal["high_margin", "solid", "thin", "negative"] = "solid"
     base_market_quote: MarketQuoteSummary
     exit_market_quote: MarketQuoteSummary
     planner_naive_cost_ex: float | None = None
@@ -2408,6 +2411,30 @@ class CraftProfitScanner:
             2,
         )
 
+        if active_cnt <= 5:
+            competition_level: Literal["low", "medium", "high"] = "low"
+            comp_mult = 1.35 if active_cnt >= 1 else 0.35
+        elif active_cnt <= 25:
+            competition_level = "medium"
+            comp_mult = 1.0
+        else:
+            competition_level = "high"
+            comp_mult = 0.7
+
+        if profit_ex <= 0:
+            margin_tier: Literal["high_margin", "solid", "thin", "negative"] = "negative"
+        elif roi_pct >= 60.0:
+            margin_tier = "high_margin"
+        elif roi_pct >= 20.0:
+            margin_tier = "solid"
+        else:
+            margin_tier = "thin"
+
+        niche_score = round(
+            max(0.0, roi_pct * comp_mult * liq_mult) if profit_ex > 0 else 0.0,
+            2,
+        )
+
         all_warnings = [*sim_warnings, *exit_quote.fixer_warnings]
         if recipe.notes:
             all_warnings.append(f"Playbook: {recipe.notes}")
@@ -2444,6 +2471,9 @@ class CraftProfitScanner:
             success_probability_per_base=round(p_base, 6),
             breakeven_hit_rate=breakeven_rate,
             risk_adjusted_score_ex=risk_score,
+            competition_level=competition_level,
+            niche_score=niche_score,
+            margin_tier=margin_tier,
             base_market_quote=base_quote,
             exit_market_quote=exit_quote,
             planner_naive_cost_ex=round(naive_ex, 2) if naive_ex is not None else None,

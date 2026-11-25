@@ -198,19 +198,154 @@ def build_ninja_corpus(
     return out_path
 
 
+T0_CHASE_UNIQUES: frozenset[str] = frozenset(
+    {
+        "Mageblood",
+        "Headhunter",
+        "Temporalis",
+        "Kalandra's Touch",
+        "Astramentis",
+        "Ingenuity",
+    }
+)
+
+MOBILITY_SKILL_TAGS: dict[str, str] = {
+    "Blink": "blink_teleport",
+    "Lightning Warp": "blink_teleport",
+    "Shattering Palm": "dash_melee",
+    "Flicker Strike": "dash_melee",
+    "Whirling Slash": "dash_melee",
+    "Leap Slam": "dash_melee",
+    "Shield Charge": "dash_melee",
+    "Thunderous Leap": "dash_melee",
+    "Pounce": "dash_melee",
+    "Stampede": "dash_melee",
+    "Herald of Ice": "herald_chain",
+    "Herald of Thunder": "herald_chain",
+    "Herald of Ash": "herald_chain",
+    "Herald of Plague": "herald_chain",
+    "Herald of Blood": "herald_chain",
+    "Cast on Critical": "trigger_clear",
+    "Cast on Elemental Ailment": "trigger_clear",
+    "Cast on Freeze": "trigger_clear",
+    "Cast on Dodge": "trigger_clear",
+    "Mirage Archer": "auto_clear",
+    "Mirage Deadeye": "auto_clear",
+    "Wind Dancer": "evade_speed",
+    "Ghost Dance": "evade_speed",
+}
+
+
+def compute_mobility_and_chase_tags(rec: dict[str, Any]) -> tuple[list[str], list[str]]:
+    tags: set[str] = set()
+    for sk in rec.get("active_skills") or ():
+        tag = MOBILITY_SKILL_TAGS.get(str(sk))
+        if tag:
+            tags.add(tag)
+    uniques = [str(u) for u in (rec.get("unique_items") or ())]
+    if "Temporalis" in uniques:
+        tags.add("temporalis_zero_cd")
+    if "Queen of the Forest" in uniques:
+        tags.add("qotf_speed")
+    if "The Fall of the Axe" in uniques:
+        tags.add("onslaught_speed")
+    chase = sorted(u for u in uniques if u in T0_CHASE_UNIQUES)
+    return sorted(tags), chase
+
+
+def enrich_corpus_with_pob2(corpus_path: Path) -> Path:
+    """Enrich every build in an existing corpus bundle with headless PoB2 audit + move speed."""
+    from poe2brain.pob.service import BuildService
+
+    with gzip.open(corpus_path, "rt", encoding="utf-8") as handle:
+        payload = json.load(handle)
+
+    records: list[dict[str, Any]] = payload.get("builds") or []
+    code_cache: dict[str, dict[str, Any]] = {}
+    svc = BuildService()
+    try:
+        for idx, rec in enumerate(records, start=1):
+            mob_tags, chase_uniques = compute_mobility_and_chase_tags(rec)
+            rec["mobility_tags"] = mob_tags
+            rec["t0_chase_uniques"] = chase_uniques
+
+            code = str(rec.get("pob_code") or "").strip()
+            if not code:
+                continue
+            cached = code_cache.get(code)
+            if cached is None:
+                try:
+                    svc.load_build(code, slot="corpus_enrich")
+                    audit = svc.audit_build(slot="corpus_enrich")
+                    sus = audit.sustainable_pinnacle_stats
+                    cached = {
+                        "dewatered_dps": round(float(sus.effective_dps), 2),
+                        "dps_inflation_pct": round(float(audit.dps_inflation_pct), 2),
+                        "dewatered_ehp": round(float(sus.total_ehp), 2),
+                        "phys_max_hit": round(float(sus.phys_max_hit), 1),
+                        "chaos_max_hit": round(float(sus.chaos_max_hit), 1),
+                        "chaos_immune": bool(sus.chaos_immune),
+                        "movement_speed_mod": round(float(sus.movement_speed_mod), 4),
+                        "movement_speed_while_using_skill": round(
+                            float(sus.movement_speed_while_using_skill), 4
+                        ),
+                    }
+                except Exception:
+                    cached = {}
+                code_cache[code] = cached
+
+            for k, v in cached.items():
+                rec[k] = v
+
+            if idx % 50 == 0 or idx == len(records):
+                print(
+                    f"[sync_ninja_corpus] Enriched {idx}/{len(records)} builds "
+                    f"({len(code_cache)} unique PoB2 audits)...",
+                    flush=True,
+                )
+    finally:
+        svc.close()
+
+    payload["pob2_enriched"] = True
+    raw_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    buf = io.BytesIO()
+    with gzip.GzipFile(filename="", mode="wb", fileobj=buf, compresslevel=9, mtime=0) as gz:
+        gz.write(raw_json)
+    corpus_path.write_bytes(buf.getvalue())
+    return corpus_path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pobr-dir", type=Path, default=None)
     parser.add_argument("--out-dir", type=Path, default=None)
+    parser.add_argument(
+        "--enrich-pob",
+        action="store_true",
+        help="Run headless PoB2 dewatering audit + movement speed extraction across corpus builds.",
+    )
+    parser.add_argument(
+        "--enrich-existing",
+        action="store_true",
+        help="Enrich the existing bundled forbidden_rites_0.5.5_builds.json.gz in place.",
+    )
     args = parser.parse_args()
-    out_path = build_ninja_corpus(pobr_dir=args.pobr_dir, out_dir=args.out_dir)
+    if args.enrich_existing:
+        target_dir = args.out_dir if args.out_dir is not None else (BUNDLED_DATA_DIR / "ninja")
+        out_path = target_dir / f"forbidden_rites_{POE2_PATCH}_builds.json.gz"
+        enrich_corpus_with_pob2(out_path)
+    else:
+        out_path = build_ninja_corpus(pobr_dir=args.pobr_dir, out_dir=args.out_dir)
+        if args.enrich_pob:
+            enrich_corpus_with_pob2(out_path)
     with gzip.open(out_path, "rt", encoding="utf-8") as handle:
         data = json.load(handle)
     print(
         f"Wrote {out_path} ({out_path.stat().st_size / 1024:.1f} KB): "
         f"{data['fixture_count']} fixtures, "
         f"{data['unique_character_count']} unique characters, "
-        f"{data['ascendancy_count']} ascendancies."
+        f"{data['ascendancy_count']} ascendancies, "
+        f"pob2_enriched={bool(data.get('pob2_enriched'))}."
     )
 
 

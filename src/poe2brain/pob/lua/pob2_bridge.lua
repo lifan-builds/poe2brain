@@ -693,7 +693,7 @@ local CORE_STAT_KEYS = {
 	-- Attributes & Mobility
 	"Str", "Dex", "Int", "TotalAttr", "ReqStr", "ReqDex", "ReqInt",
 	"ReqStrString", "ReqDexString", "ReqIntString",
-	"MovementSpeedMod", "EffectiveMovementSpeedMod",
+	"MovementSpeedMod", "EffectiveMovementSpeedMod", "MovementSpeedWhileUsingSkill",
 }
 
 local function extractStatsTable(out, extraFields)

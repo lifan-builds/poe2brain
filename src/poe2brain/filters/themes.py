@@ -1791,3 +1791,60 @@ def compose_theme(
         st.contrast_ratio = actual_ratio
 
     return theme
+
+
+def parse_look_intent(look: str | None) -> dict[str, Any]:
+    """Extract optional accessibility (`cvd_safe`) and audio (`warm_night_mode`, `sound_style`)
+    directives embedded inside a natural-language `--look` prompt.
+    """
+    if not look or not look.strip():
+        return {"cvd_safe": None, "warm_night_mode": False, "sound_style": None}
+
+    low = look.strip().lower()
+
+    cvd_safe: str | bool | None = None
+    if any(k in low for k in ("deuteranopia", "deutan", "red-green", "red green")):
+        cvd_safe = "deuteranopia"
+    elif any(k in low for k in ("protanopia", "protan")):
+        cvd_safe = "protanopia"
+    elif any(k in low for k in ("tritanopia", "tritan", "blue-yellow", "blue yellow")):
+        cvd_safe = "tritanopia"
+    elif any(k in low for k in ("colorblind", "colourblind", "color-blind", "cvd")):
+        cvd_safe = True
+
+    warm_night_mode = any(
+        k in low
+        for k in (
+            "2am",
+            "2 am",
+            "late night",
+            "late-night",
+            "warm night",
+            "warm-night",
+            "tinnitus",
+            "soft audio",
+            "no harsh highs",
+            "ear safe",
+            "ear-safe",
+        )
+    )
+
+    sound_style: str | None = None
+    if any(k in low for k in ("voice", "callout", "spoken", "tts")):
+        sound_style = "voice_callout"
+    elif any(k in low for k in ("gong", "ritual gong", "bronze bell")):
+        sound_style = "ritual_gong"
+    elif any(k in low for k in ("synthwave", "cyber synth", "cyber_synth", "synth audio")):
+        sound_style = "cyber_synth"
+    elif any(k in low for k in ("arcade", "chiptune", "8-bit", "8bit", "retro audio")):
+        sound_style = "arcade_retro"
+    elif any(k in low for k in ("zen minimal", "zen_minimal", "rhodes", "piano", "soft chime")):
+        sound_style = "zen_minimal"
+    elif any(k in low for k in ("chime", "celestial", "bell")):
+        sound_style = "celestial_chime"
+
+    return {
+        "cvd_safe": cvd_safe,
+        "warm_night_mode": warm_night_mode,
+        "sound_style": sound_style,
+    }

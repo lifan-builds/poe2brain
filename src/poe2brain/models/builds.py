@@ -77,6 +77,9 @@ class BuildStats(Poe2Model):
     chaos_resist: float = Field(
         default=0.0, validation_alias=AliasChoices("chaos_resist", "ChaosResist")
     )
+    chaos_immune: bool = Field(
+        default=False, validation_alias=AliasChoices("chaos_immune", "ChaosInoculation")
+    )
 
     phys_max_hit: float = Field(
         default=0.0,
@@ -143,6 +146,28 @@ class BuildStats(Poe2Model):
     req_int: int = Field(default=0, validation_alias=AliasChoices("req_int", "ReqInt"))
     attributes_met: bool = True
 
+    movement_speed_mod: float = Field(
+        default=1.0,
+        validation_alias=AliasChoices(
+            "movement_speed_mod", "EffectiveMovementSpeedMod", "MovementSpeedMod"
+        ),
+    )
+    movement_speed_while_using_skill: float = Field(
+        default=0.0,
+        validation_alias=AliasChoices(
+            "movement_speed_while_using_skill", "MovementSpeedWhileUsingSkill"
+        ),
+    )
+    attack_cast_speed: float = Field(
+        default=0.0, validation_alias=AliasChoices("attack_cast_speed", "Speed")
+    )
+    crit_chance: float = Field(
+        default=0.0, validation_alias=AliasChoices("crit_chance", "CritChance")
+    )
+    crit_multiplier: float = Field(
+        default=0.0, validation_alias=AliasChoices("crit_multiplier", "CritMultiplier")
+    )
+
     allocated_nodes: int = 0
     active_skills: list[str] = Field(default_factory=list)
     keystones: list[str] = Field(default_factory=list)
@@ -174,6 +199,7 @@ class DewateredAudit(Poe2Model):
     ehp_inflation_pct: float = 0.0
     stripped_flags: list[StrippedPobFlag] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    bottlenecks: list[str] = Field(default_factory=list)
     hc_rip_risks: list[HcRipRisk] = Field(default_factory=list)
     pinnacle_ready: bool = True
 
@@ -293,6 +319,8 @@ class CharacterTimelineReport(Poe2Model):
     probed_points: list[CharacterTimelinePoint] = Field(default_factory=list)
     earliest_available_label: str | None = None
     latest_available_label: str | None = None
+    stepping_stone_label: str | None = None
+    stepping_stone_note: str | None = None
     notes: list[str] = Field(default_factory=list)
 
 

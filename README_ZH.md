@@ -91,7 +91,10 @@ uv run poe2 wiki ascendancy "风暴编织者"
 uv run poe2 wiki mechanic "能量护盾"
 uv run poe2 wiki gem "拉基亚塔的流光"
 
-# 去水审计 + 词缀溯源 + 找最强辅助宝石 + 找最佳可控蜕变孔位
+# 一键挖掘冷门高伤高速黑马 BD（预去水 DPS + 移速 + 稀有度综合打分）
+uv run poe2 ninja search --preset sleeper --limit 5
+
+# 去水审计（含瓶颈诊断）+ 词缀溯源 + 找最强辅助宝石 + 找最佳可控蜕变孔位
 uv run poe2 pob audit --slot main
 uv run poe2 pob calc-breakdown EnergyShield --slot main
 uv run poe2 pob supports --slot main --max-tier 2 --no-lineage
@@ -100,11 +103,14 @@ uv run poe2 pob radius-jewels --jewel "Controlled Metamorphosis" --slot main
 # 市集自动找 50E 以内一口价最大提升（自动模拟补满 20% 品质与符文）
 uv run poe2 trade upgrades --equip-slot "Weapon 1" --max-exalted 50 --securable-only --slot main
 
+# 统一预算/金币参数扫描藏身处套利（支持 500 崇高或 5d 神圣写法）
+uv run poe2 econ arbitrage --budget 5d --gold 50000
+
 # 生成 <=50 字符防翻车异界引路石正则
 uv run poe2 wiki regex --slot main
 
-# 为当前 BD 生成护耳、暗黑、防崩客户端的严格过滤器
-uv run poe2 filter generate --slot main --strictness strict --theme darkmode_obsidian --warm-night --out my_build.filter
+# 自然语言一句话生成护耳、色盲友好、暗黑防崩客户端的严格过滤器
+uv run poe2 filter generate --slot main --strictness strict --look "obsidian gold colorblind 2am chime" --out my_build.filter
 ```
 
 ---

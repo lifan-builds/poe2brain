@@ -330,6 +330,8 @@ def wiki_gem_cmd(
             console.print(f"  • {ln}")
         for w in data.get("warnings", []):
             console.print(f"  [yellow]Warning:[/yellow] {w}")
+        for bn in data.get("bottlenecks", []):
+            console.print(f"  [magenta]Bottleneck:[/magenta] {bn}")
 
     _run_cli(json_output, _compute, _render)
 
@@ -676,15 +678,28 @@ def _render_build_stats(data: dict[str, Any], title: str = "PoB2 Build Stats") -
         f"Mana {data['mana']:,.0f} | "
         f"Spirit {data['spirit_unreserved']}/{data['spirit_total']} unreserved"
     )
+    chaos_lbl = "Immune (CI)" if data.get("chaos_immune") else f"{data['chaos_resist']:.0f}%"
     console.print(
         f"  Resists: Fire {data['fire_resist']:.0f}% | Cold {data['cold_resist']:.0f}% | "
-        f"Light {data['lightning_resist']:.0f}% | Chaos {data['chaos_resist']:.0f}%"
+        f"Light {data['lightning_resist']:.0f}% | Chaos {chaos_lbl}"
     )
     console.print(
         f"  Mitig. : Block {data['block_chance']:.1f}% | "
         f"Deflect {data['deflection_chance']:.1f}% | "
         f"Evasion {data['evasion']:,.0f} | Armour {data['armour']:,.0f}"
     )
+    ms_mod = data.get("movement_speed_mod")
+    ms_skill = data.get("movement_speed_while_using_skill")
+    atk_spd = data.get("attack_cast_speed")
+    if ms_mod or atk_spd:
+        parts = []
+        if ms_mod:
+            parts.append(f"Move {ms_mod:.2f}x")
+        if ms_skill:
+            parts.append(f"WhileSkill {ms_skill:.2f}x")
+        if atk_spd:
+            parts.append(f"Speed {atk_spd:.2f}/s")
+        console.print(f"  Tempo  : {' | '.join(parts)}")
 
 
 @pob_app.command("load")
@@ -777,6 +792,8 @@ def pob_audit_cmd(
             )
         for w in data.get("warnings", []):
             console.print(f"  [yellow]Warning:[/yellow] {w}")
+        for bn in data.get("bottlenecks", []):
+            console.print(f"  [magenta]Bottleneck:[/magenta] {bn}")
 
     _run_cli(json_output, _compute, _render)
 
@@ -1074,6 +1091,8 @@ def pob_calc_breakdown_cmd(
         )
         for w in data.get("warnings", []):
             console.print(f"  [yellow]Warning:[/yellow] {w}")
+        for bn in data.get("bottlenecks", []):
+            console.print(f"  [magenta]Bottleneck:[/magenta] {bn}")
         for st in data.get("matched_stats", [])[:6]:
             console.print(f"  • [bold]{st['key']}[/bold] = {st['value']}")
             for ln in st.get("lines", [])[:4]:
@@ -1858,6 +1877,23 @@ def econ_scan_cmd(
 
 @econ_app.command("arbitrage")
 def econ_arbitrage_cmd(
+    budget: Annotated[
+        str | None,
+        typer.Option(
+            "--budget",
+            help=(
+                "Unified capital budget: e.g. '500' (Exalted) or '5d' (Divines). "
+                "Caps scan investment or sets starting bankroll in ladder mode."
+            ),
+        ),
+    ] = None,
+    gold: Annotated[
+        int | None,
+        typer.Option(
+            "--gold",
+            help="Unified Gold cap (max/cycle in scan mode, or total Gold in ladder mode).",
+        ),
+    ] = None,
     min_volume_divine: Annotated[
         float,
         typer.Option("--min-volume-divine", help="Minimum leg liquidity in Divines."),
@@ -1912,6 +1948,8 @@ def econ_arbitrage_cmd(
 
     def _compute() -> dict[str, Any]:
         return execute_scan_arbitrage(
+            budget=budget,
+            gold=gold,
             min_volume_divine=min_volume_divine,
             min_roi_pct=min_roi_pct,
             max_investment_divine=max_investment_divine,
@@ -2514,6 +2552,7 @@ def craft_profit_cmd(
         table.add_column("Exit (Div)", justify="right")
         table.add_column("Net (Div)", justify="right", style="green")
         table.add_column("ROI %", justify="right")
+        table.add_column("Comp")
         for ev in data.get("evaluations", []):
             table.add_row(
                 str(ev["rank"]),
@@ -2523,6 +2562,7 @@ def craft_profit_cmd(
                 f"{ev['exit_price_divine']:.2f}",
                 f"{ev['profit_divine']:+.2f}",
                 f"{ev['expected_roi_pct']:+.1f}%",
+                str(ev.get("competition_level") or "-"),
             )
         console.print(table)
 
@@ -2576,20 +2616,32 @@ def ninja_snapshots_cmd(
 @ninja_app.command("search")
 def ninja_search_cmd(
     league: Annotated[str, typer.Option("--league", help="PoE2 league name.")] = DEFAULT_LEAGUE,
+    preset: Annotated[
+        str | None,
+        typer.Option(
+            "--preset",
+            help="Intent preset: sleeper, zoom_mapper, league_start, boss_killer, or hc_tank.",
+        ),
+    ] = None,
     class_name: Annotated[
-        str | None, typer.Option("--class", help="Base class or Ascendancy filter.")
+        str | None,
+        typer.Option("--class", help="Base class or Ascendancy filter (supports !Negation)."),
     ] = None,
     ascendancy: Annotated[
-        str | None, typer.Option("--ascendancy", help="Ascendancy name or alias filter.")
+        str | None,
+        typer.Option("--ascendancy", help="Ascendancy filter (CSV, supports !Negation)."),
     ] = None,
     skill: Annotated[
-        str | None, typer.Option("--skill", help="Main or active skill gem filter.")
+        str | None,
+        typer.Option("--skill", help="Main or active skill gem filter (supports !Negation)."),
     ] = None,
     support: Annotated[
-        str | None, typer.Option("--support", help="Support or Lineage Support gem filter.")
+        str | None,
+        typer.Option("--support", help="Support or Lineage gem filter (supports !Negation)."),
     ] = None,
     unique: Annotated[
-        str | None, typer.Option("--unique", help="Equipped Unique item filter.")
+        str | None,
+        typer.Option("--unique", help="Equipped Unique filter (CSV, supports !Negation)."),
     ] = None,
     exclude_unique: Annotated[
         list[str] | None,
@@ -2603,10 +2655,12 @@ def ninja_search_cmd(
         typer.Option("--max-uniques", help="Maximum total equipped Uniques per build."),
     ] = None,
     keystone: Annotated[
-        str | None, typer.Option("--keystone", help="Allocated Keystone or Ascendancy notable.")
+        str | None,
+        typer.Option("--keystone", help="Allocated Keystone or notable (supports !Negation)."),
     ] = None,
     weapon: Annotated[
-        str | None, typer.Option("--weapon", help="Weapon/offhand type filter (e.g. Quarterstaff).")
+        str | None,
+        typer.Option("--weapon", help="Weapon/offhand filter (e.g. Quarterstaff, !Bow)."),
     ] = None,
     min_dps: Annotated[
         float | None, typer.Option("--min-dps", help="Minimum Effective DPS floor.")
@@ -2615,8 +2669,12 @@ def ninja_search_cmd(
         float | None, typer.Option("--min-ehp", help="Minimum Total EHP floor.")
     ] = None,
     sort_by: Annotated[
-        str, typer.Option("--sort", help="Sort metric: dps, ehp, level, es, or life.")
-    ] = "dps",
+        str | None,
+        typer.Option(
+            "--sort",
+            help="Sort metric: dps, ehp, level, es, life, sleeper, or mobility.",
+        ),
+    ] = None,
     ssf_viable: Annotated[
         bool,
         typer.Option("--ssf-viable", help="Prioritize SSF-achievable low-unique builds first."),
@@ -2634,11 +2692,12 @@ def ninja_search_cmd(
     ] = False,
     json_output: JsonOpt = False,
 ) -> None:
-    """Search PoE2 Forbidden Rites poe.ninja builds across class/ascendancy/skill/unique/SSF."""
+    """Search PoE2 Forbidden Rites poe.ninja builds with presets, !negation, and PoB2 metrics."""
 
     def _compute() -> dict[str, Any]:
         return execute_ninja_search(
             league=league,
+            preset=preset,
             class_name=class_name,
             ascendancy=ascendancy,
             skill=skill,
@@ -2658,11 +2717,12 @@ def ninja_search_cmd(
         )
 
     def _render(data: dict[str, Any]) -> None:
+        preset_tag = f" | preset={data['preset']}" if data.get("preset") else ""
         table = Table(
             title=(
                 f"poe.ninja Builds — {data['league']} "
-                f"(matched {data['matched_builds']}/{data['corpus_total_builds']} | "
-                f"sort={data['sort_by']})"
+                f"(matched {data['matched_builds']}/{data['corpus_total_builds']}"
+                f"{preset_tag} | sort={data['sort_by']})"
             )
         )
         table.add_column("Character", style="bold cyan")
@@ -2671,16 +2731,19 @@ def ninja_search_cmd(
         table.add_column("Main Skill")
         table.add_column("DPS", justify="right", style="green")
         table.add_column("EHP", justify="right")
-        table.add_column("ES / Life", justify="right")
+        table.add_column("Move", justify="right")
         for b in data.get("builds", []):
+            dps_v = b.get("dewatered_dps") or b["effective_dps"]
+            ehp_v = b.get("dewatered_ehp") or b["total_ehp"]
+            ms_v = f"{b['movement_speed_mod']:.2f}x" if b.get("movement_speed_mod") else "-"
             table.add_row(
                 f"{b['character']} ({b['account']})",
                 str(b.get("ascendancy_name") or b["class_name"]),
                 str(b["level"]),
                 str(b.get("main_skill") or "-"),
-                f"{b['effective_dps']:,.0f}",
-                f"{b['total_ehp']:,.0f}",
-                f"{b['energy_shield']:,.0f} / {b['life']:,.0f}",
+                f"{dps_v:,.0f}",
+                f"{ehp_v:,.0f}",
+                ms_v,
             )
         console.print(table)
 
@@ -2756,6 +2819,8 @@ def ninja_character_cmd(
                     else f"[dim]absent ({pt.get('http_status')})[/dim]"
                 )
                 console.print(f"  • {pt['label']:<10}: {status_s}")
+            if data.get("stepping_stone_note"):
+                console.print(f"  [yellow]Stepping Stone:[/yellow] {data['stepping_stone_note']}")
             return
         cls_lbl = f"{data['class_name']}/{data.get('ascendancy_name') or 'None'}"
         ident = (
@@ -2866,7 +2931,13 @@ def filter_generate_cmd(
     ] = None,
     look: Annotated[
         str | None,
-        typer.Option("--look", help="Natural-language visual theme customization prompt."),
+        typer.Option(
+            "--look",
+            help=(
+                "Natural-language theme/audio/CVD prompt "
+                "(e.g. 'obsidian gold colorblind 2am chime')."
+            ),
+        ),
     ] = None,
     cvd_safe: Annotated[
         str | None,
@@ -3001,7 +3072,13 @@ def filter_restyle_cmd(
     ] = None,
     look: Annotated[
         str | None,
-        typer.Option("--look", help="Natural-language visual theme customization prompt."),
+        typer.Option(
+            "--look",
+            help=(
+                "Natural-language theme/audio/CVD prompt "
+                "(e.g. 'obsidian gold colorblind 2am chime')."
+            ),
+        ),
     ] = None,
     cvd_safe: Annotated[
         str | None,

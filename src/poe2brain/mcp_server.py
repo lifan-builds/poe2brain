@@ -58,6 +58,7 @@ from poe2brain.filters import (
     render_filter_preview_html,
 )
 from poe2brain.filters.soundpacks import SCALE_INTERVALS
+from poe2brain.filters.themes import parse_look_intent
 from poe2brain.knowledge import KnowledgeService, MetaService, build_waystone_regex_plan
 from poe2brain.models.common import AffixSide, EngineStatus
 from poe2brain.models.filters import (
@@ -1736,8 +1737,43 @@ def poe2_market_scan(
     return _safe_tool_call(_run)
 
 
+_BUDGET_AMOUNT_RE = re.compile(
+    r"^\s*([0-9]+(?:\.[0-9]+)?)\s*(d|div|divine|divines|ex|exalt|exalted|exalteds)?\s*$",
+    re.IGNORECASE,
+)
+
+
+def parse_unified_budget(
+    raw: str | float | int | None,
+) -> tuple[float, Literal["ex", "div"]] | None:
+    """Parse a unified budget (`'500'`, `'500ex'`, `'5d'`, `'5div'`) into `(amount, unit)`."""
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        val = float(raw)
+        if val <= 0:
+            raise ValueError(f"Budget must be positive, got {raw!r}.")
+        return val, "ex"
+    cleaned = str(raw).strip()
+    if not cleaned:
+        return None
+    m = _BUDGET_AMOUNT_RE.match(cleaned)
+    if not m:
+        raise ValueError(
+            f"Unsupported budget format {raw!r} (expected e.g. '500', '500ex', '5d', or '5div')."
+        )
+    val = float(m.group(1))
+    if val <= 0:
+        raise ValueError(f"Budget must be positive, got {raw!r}.")
+    unit_raw = (m.group(2) or "ex").lower()
+    unit: Literal["ex", "div"] = "div" if unit_raw.startswith("d") else "ex"
+    return val, unit
+
+
 def execute_scan_arbitrage(
     *,
+    budget: str | float | None = None,
+    gold: int | None = None,
     min_volume_divine: float = 2.0,
     min_roi_pct: float = 5.0,
     max_investment_divine: float | None = None,
@@ -1752,9 +1788,28 @@ def execute_scan_arbitrage(
     league: str = DEFAULT_LEAGUE,
 ) -> dict[str, Any]:
     scanner = get_arbitrage_scanner()
-    if starting_exalted is not None or gold_budget is not None or target_divine is not None:
-        eff_start_ex = starting_exalted if starting_exalted is not None else 250.0
-        eff_gold = gold_budget if gold_budget is not None else 80_000
+    parsed_budget = parse_unified_budget(budget)
+    is_ladder = (
+        starting_exalted is not None or gold_budget is not None or target_divine is not None
+    )
+
+    if is_ladder:
+        eff_start_ex = starting_exalted
+        if eff_start_ex is None and parsed_budget is not None:
+            amt, unit = parsed_budget
+            if unit == "div":
+                rates = scanner.economy.get_reference_rates(league)
+                div_ex = float(rates.divine_exalted) if rates.divine_exalted > 0 else 450.0
+                eff_start_ex = amt * div_ex
+            else:
+                eff_start_ex = amt
+        if eff_start_ex is None:
+            eff_start_ex = 250.0
+        eff_gold = (
+            gold_budget
+            if gold_budget is not None
+            else (gold if gold is not None else 80_000)
+        )
         eff_target_div = target_divine if target_divine is not None else 50.0
         ladder = scanner.build_compounding_ladder(
             starting_exalted=eff_start_ex,
@@ -1767,12 +1822,24 @@ def execute_scan_arbitrage(
         )
         return ladder.model_dump(mode="json")
 
+    eff_max_inv_div = max_investment_divine
+    if eff_max_inv_div is None and parsed_budget is not None:
+        amt, unit = parsed_budget
+        if unit == "div":
+            eff_max_inv_div = amt
+        else:
+            rates = scanner.economy.get_reference_rates(league)
+            div_ex = float(rates.divine_exalted) if rates.divine_exalted > 0 else 450.0
+            eff_max_inv_div = round(amt / div_ex, 4)
+
+    eff_max_gold = max_gold_per_cycle if max_gold_per_cycle is not None else gold
+
     report = scanner.scan_all(
         league=league,
         min_volume_divine=min_volume_divine,
         min_roi_pct=min_roi_pct,
-        max_investment_divine=max_investment_divine,
-        max_gold_per_cycle=max_gold_per_cycle,
+        max_investment_divine=eff_max_inv_div,
+        max_gold_per_cycle=eff_max_gold,
         include_live_exchange=live_books,
         include_encounter_gated=include_encounter_gated,
         limit=limit,
@@ -1783,6 +1850,8 @@ def execute_scan_arbitrage(
 
 @mcp.tool()
 def poe2_scan_arbitrage(
+    budget: str | float | None = None,
+    gold: int | None = None,
     min_volume_divine: float = 2.0,
     min_roi_pct: float = 5.0,
     max_investment_divine: float | None = None,
@@ -1795,9 +1864,11 @@ def poe2_scan_arbitrage(
     limit: int = 25,
     league: str = DEFAULT_LEAGUE,
 ) -> dict[str, Any]:
-    """Scan PoE2 0.5.5 arbitrage plays or build a starting_exalted -> target_divine Gold ladder."""
+    """Scan PoE2 0.5.5 arbitrage plays or build a Gold ladder (unified budget '500'/'5d' + gold)."""
     return _safe_tool_call(
         lambda: execute_scan_arbitrage(
+            budget=budget,
+            gold=gold,
             min_volume_divine=min_volume_divine,
             min_roi_pct=min_roi_pct,
             max_investment_divine=max_investment_divine,
@@ -2050,6 +2121,7 @@ def execute_ninja_snapshots(
 def execute_ninja_search(
     *,
     league: str = DEFAULT_LEAGUE,
+    preset: str | None = None,
     class_name: str | None = None,
     ascendancy: str | None = None,
     skill: str | None = None,
@@ -2061,21 +2133,25 @@ def execute_ninja_search(
     weapon_type: str | None = None,
     min_dps: float | None = None,
     min_ehp: float | None = None,
-    sort_by: str = "dps",
+    sort_by: str | None = None,
     ssf_viable_first: bool = False,
     limit: int = 15,
     refresh_live_top: int = 0,
     include_pob_code: bool = False,
     force_refresh: bool = False,
 ) -> dict[str, Any]:
-    norm_sort = sort_by.strip().lower()
-    if norm_sort not in ("dps", "ehp", "level", "es", "life"):
-        raise ValueError(
-            f"Unsupported sort_by {sort_by!r} (expected 'dps', 'ehp', 'level', 'es', or 'life')."
-        )
+    norm_sort: str | None = None
+    if sort_by is not None and sort_by.strip():
+        norm_sort = sort_by.strip().lower()
+        if norm_sort not in ("dps", "ehp", "level", "es", "life", "sleeper", "mobility"):
+            raise ValueError(
+                f"Unsupported sort_by {sort_by!r} "
+                "(expected 'dps', 'ehp', 'level', 'es', 'life', 'sleeper', or 'mobility')."
+            )
     excl_list = _coerce_csv_or_list(exclude_uniques) or None
     report = get_ninja_service().search_builds(
         league=league,
+        preset=preset,  # type: ignore[arg-type]
         class_name=class_name,
         ascendancy=ascendancy,
         skill=skill,
@@ -2488,16 +2564,19 @@ def execute_filter_generate(
     offline: bool = False,
 ) -> dict[str, Any]:
     strict_tier = _resolve_strictness_tier(strictness)
-    eff_cvd = _normalize_cvd_flag(cvd_safe)
+    look_intent = parse_look_intent(look)
+    eff_cvd = _normalize_cvd_flag(cvd_safe if cvd_safe is not None else look_intent["cvd_safe"])
+    eff_warm_night = bool(warm_night_mode or look_intent["warm_night_mode"])
+    eff_sound_style = sound_style if sound_style is not None else look_intent["sound_style"]
     resolved_theme = _resolve_visual_theme(theme, look, cvd_safe=eff_cvd) or get_visual_theme(
         "forbidden_abyss"
     )
     build_ctx = _resolve_build_filter_context(pob=pob, slot=slot, slots=slots)
     sound_pack = _maybe_synthesize_sound_pack(
-        sound_style=sound_style,
+        sound_style=eff_sound_style,
         musical_key=musical_key,
         scale=scale,
-        warm_night_mode=warm_night_mode,
+        warm_night_mode=eff_warm_night,
         lowpass_hz=lowpass_hz,
         custom_callouts=custom_callouts,
         sound_dir=sound_dir,
@@ -2621,14 +2700,17 @@ def execute_filter_restyle(
             else:
                 inferred_strictness = _resolve_strictness_tier(raw_src)
 
-    eff_cvd = _normalize_cvd_flag(cvd_safe)
+    look_intent = parse_look_intent(look)
+    eff_cvd = _normalize_cvd_flag(cvd_safe if cvd_safe is not None else look_intent["cvd_safe"])
+    eff_warm_night = bool(warm_night_mode or look_intent["warm_night_mode"])
+    eff_sound_style = sound_style if sound_style is not None else look_intent["sound_style"]
     resolved_theme = _resolve_visual_theme(theme, look, cvd_safe=eff_cvd)
     build_ctx = _resolve_build_filter_context(pob=pob, slot=slot, slots=slots)
     sound_pack = _maybe_synthesize_sound_pack(
-        sound_style=sound_style,
+        sound_style=eff_sound_style,
         musical_key=musical_key,
         scale=scale,
-        warm_night_mode=warm_night_mode,
+        warm_night_mode=eff_warm_night,
         lowpass_hz=lowpass_hz,
         custom_callouts=custom_callouts,
         sound_dir=sound_dir,
@@ -2790,6 +2872,8 @@ def poe2_ninja_snapshots(
 @mcp.tool()
 def poe2_ninja_search(
     league: str = DEFAULT_LEAGUE,
+    preset: Literal["sleeper", "zoom_mapper", "league_start", "boss_killer", "hc_tank"]
+    | None = None,
     class_name: str | None = None,
     ascendancy: str | None = None,
     skill: str | None = None,
@@ -2801,16 +2885,17 @@ def poe2_ninja_search(
     weapon_type: str | None = None,
     min_dps: float | None = None,
     min_ehp: float | None = None,
-    sort_by: Literal["dps", "ehp", "level", "es", "life"] = "dps",
+    sort_by: Literal["dps", "ehp", "level", "es", "life", "sleeper", "mobility"] | None = None,
     ssf_viable_first: bool = False,
     limit: int = 15,
     refresh_live_top: int = 0,
     include_pob_code: bool = False,
 ) -> dict[str, Any]:
-    """Search PoE2 Forbidden Rites poe.ninja builds across class/ascendancy/skill/unique/SSF."""
+    """Search PoE2 Forbidden Rites builds with presets, !negation, and pre-audited PoB2 metrics."""
     return _safe_tool_call(
         lambda: execute_ninja_search(
             league=league,
+            preset=preset,
             class_name=class_name,
             ascendancy=ascendancy,
             skill=skill,

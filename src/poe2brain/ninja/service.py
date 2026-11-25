@@ -226,7 +226,135 @@ _T0_TRADE_CHASE_UNIQUES: tuple[str, ...] = (
     "Astramentis",
     "The Adorned",
     "Voices",
+    "Ingenuity",
 )
+
+_MOBILITY_SKILL_TAGS: dict[str, str] = {
+    "Blink": "blink_teleport",
+    "Lightning Warp": "blink_teleport",
+    "Shattering Palm": "dash_melee",
+    "Flicker Strike": "dash_melee",
+    "Whirling Slash": "dash_melee",
+    "Leap Slam": "dash_melee",
+    "Shield Charge": "dash_melee",
+    "Thunderous Leap": "dash_melee",
+    "Pounce": "dash_melee",
+    "Stampede": "dash_melee",
+    "Herald of Ice": "herald_chain",
+    "Herald of Thunder": "herald_chain",
+    "Herald of Ash": "herald_chain",
+    "Herald of Plague": "herald_chain",
+    "Herald of Blood": "herald_chain",
+    "Cast on Critical": "trigger_clear",
+    "Cast on Elemental Ailment": "trigger_clear",
+    "Cast on Freeze": "trigger_clear",
+    "Cast on Dodge": "trigger_clear",
+    "Mirage Archer": "auto_clear",
+    "Mirage Deadeye": "auto_clear",
+    "Wind Dancer": "evade_speed",
+    "Ghost Dance": "evade_speed",
+}
+
+NINJA_SEARCH_PRESETS: tuple[str, ...] = (
+    "sleeper",
+    "zoom_mapper",
+    "league_start",
+    "boss_killer",
+    "hc_tank",
+)
+
+
+def _split_include_exclude(raw_value: str | None) -> tuple[list[str], list[str]]:
+    """Split a comma-separated filter value into `(includes, excludes)` supporting `!Term`."""
+    if not raw_value:
+        return [], []
+    includes: list[str] = []
+    excludes: list[str] = []
+    for part in raw_value.split(","):
+        cleaned = part.strip()
+        if not cleaned:
+            continue
+        if cleaned.startswith("!"):
+            term = cleaned[1:].strip()
+            if term:
+                excludes.append(term)
+        else:
+            includes.append(cleaned)
+    return includes, excludes
+
+
+def _derive_mobility_and_chase(rec: Mapping[str, Any]) -> tuple[list[str], list[str]]:
+    existing_mob = rec.get("mobility_tags")
+    existing_chase = rec.get("t0_chase_uniques")
+    if isinstance(existing_mob, list) and isinstance(existing_chase, list):
+        return [str(x) for x in existing_mob], [str(x) for x in existing_chase]
+    tags: set[str] = set()
+    for sk in rec.get("active_skills") or ():
+        tag = _MOBILITY_SKILL_TAGS.get(str(sk))
+        if tag:
+            tags.add(tag)
+    uniques = [str(u) for u in (rec.get("unique_items") or ())]
+    if "Temporalis" in uniques:
+        tags.add("temporalis_zero_cd")
+    if "Queen of the Forest" in uniques:
+        tags.add("qotf_speed")
+    if "The Fall of the Axe" in uniques:
+        tags.add("onslaught_speed")
+    t0_set = set(_T0_TRADE_CHASE_UNIQUES)
+    chase = sorted(u for u in uniques if u in t0_set)
+    return sorted(tags), chase
+
+
+def _compute_sleeper_score(
+    rec: Mapping[str, Any],
+    *,
+    ascendancy_share_pct: float | None,
+    corpus_skill_count: int,
+    mobility_tags: Sequence[str],
+    t0_chase_uniques: Sequence[str],
+) -> float:
+    dew_dps = rec.get("dewatered_dps")
+    real_dps = (
+        float(dew_dps)
+        if (dew_dps is not None and float(dew_dps) > 0.0)
+        else float(rec.get("effective_dps") or 0.0)
+    )
+    dps_term = math.log10(max(real_dps, 1.0))
+    ms_raw = rec.get("movement_speed_mod")
+    ms = float(ms_raw) if (ms_raw is not None and float(ms_raw) > 0.0) else 1.0
+    skill_ms_raw = rec.get("movement_speed_while_using_skill")
+    skill_ms = (
+        float(skill_ms_raw) if (skill_ms_raw is not None and float(skill_ms_raw) > 0.0) else 0.0
+    )
+    mob_bonus = (
+        (ms - 1.0) * 1.8
+        + min(skill_ms, 1.5) * 0.5
+        + min(len(mobility_tags), 3) * 0.25
+    )
+    asc_share = float(ascendancy_share_pct) if ascendancy_share_pct is not None else 1.2
+    rarity_bonus = (
+        max(0.0, (8.0 - asc_share) / 8.0) * 1.6
+        + (1.0 / math.sqrt(max(1, corpus_skill_count))) * 1.2
+    )
+    dew_ehp = rec.get("dewatered_ehp")
+    ehp_val = (
+        float(dew_ehp)
+        if (dew_ehp is not None and float(dew_ehp) > 0.0)
+        else float(rec.get("total_ehp") or 0.0)
+    )
+    ehp_penalty = 0.0 if ehp_val >= 20000.0 else -1.5
+    infl = rec.get("dps_inflation_pct")
+    inflation_penalty = -0.8 if (infl is not None and float(infl) >= 50.0) else 0.0
+    chase_penalty = -0.35 * len(t0_chase_uniques)
+    raw_score = (
+        (dps_term - 4.0) * 2.5
+        + mob_bonus
+        + rarity_bonus
+        + ehp_penalty
+        + inflation_penalty
+        + chase_penalty
+    )
+    return round(max(0.0, raw_score), 2)
 
 
 def _time_machine_age_hours(label: str) -> float:
@@ -694,6 +822,7 @@ class NinjaBuildsService:
         *,
         include_pob_code: bool = False,
     ) -> NinjaBuildEntry:
+        mob_tags, chase_uniques = _derive_mobility_and_chase(rec)
         return NinjaBuildEntry(
             account=str(rec["account"]),
             character=str(rec["character"]),
@@ -719,6 +848,49 @@ class NinjaBuildsService:
             energy_shield=float(rec.get("energy_shield") or 0.0),
             mana=float(rec.get("mana") or 0.0),
             spirit=int(rec.get("spirit") or 0),
+            dewatered_dps=(
+                float(rec["dewatered_dps"]) if rec.get("dewatered_dps") is not None else None
+            ),
+            dps_inflation_pct=(
+                float(rec["dps_inflation_pct"])
+                if rec.get("dps_inflation_pct") is not None
+                else None
+            ),
+            dewatered_ehp=(
+                float(rec["dewatered_ehp"]) if rec.get("dewatered_ehp") is not None else None
+            ),
+            phys_max_hit=(
+                float(rec["phys_max_hit"]) if rec.get("phys_max_hit") is not None else None
+            ),
+            chaos_max_hit=(
+                float(rec["chaos_max_hit"]) if rec.get("chaos_max_hit") is not None else None
+            ),
+            chaos_immune=bool(rec.get("chaos_immune", False)),
+            movement_speed_mod=(
+                float(rec["movement_speed_mod"])
+                if rec.get("movement_speed_mod") is not None
+                else None
+            ),
+            movement_speed_while_using_skill=(
+                float(rec["movement_speed_while_using_skill"])
+                if rec.get("movement_speed_while_using_skill") is not None
+                else None
+            ),
+            ascendancy_share_pct=(
+                float(rec["ascendancy_share_pct"])
+                if rec.get("ascendancy_share_pct") is not None
+                else None
+            ),
+            corpus_skill_count=(
+                int(rec["corpus_skill_count"])
+                if rec.get("corpus_skill_count") is not None
+                else None
+            ),
+            mobility_tags=mob_tags,
+            t0_chase_uniques=chase_uniques,
+            sleeper_score=(
+                float(rec["sleeper_score"]) if rec.get("sleeper_score") is not None else None
+            ),
             ninja_url=str(rec.get("ninja_url") or ""),
             source=str(rec.get("source") or "poeninja_corpus"),
             live_refreshed=bool(rec.get("live_refreshed", False)),
@@ -729,6 +901,8 @@ class NinjaBuildsService:
         self,
         league: str = DEFAULT_LEAGUE,
         *,
+        preset: Literal["sleeper", "zoom_mapper", "league_start", "boss_killer", "hc_tank"]
+        | None = None,
         class_name: str | None = None,
         ascendancy: str | None = None,
         skill: str | None = None,
@@ -740,18 +914,42 @@ class NinjaBuildsService:
         weapon_type: str | None = None,
         min_dps: float | None = None,
         min_ehp: float | None = None,
-        sort_by: Literal["dps", "ehp", "level", "es", "life"] = "dps",
+        sort_by: Literal["dps", "ehp", "level", "es", "life", "sleeper", "mobility"] | None = None,
         ssf_viable_first: bool = False,
         limit: int = 15,
         refresh_live_top: int = 0,
         include_pob_code: bool = False,
         force_refresh: bool = False,
     ) -> NinjaBuildSearchReport:
-        """Filter and aggregate PoE2 `Forbidden Rites` `poe.ninja` builds across class,
-        ascendancy, skill, support gem, unique item, keystone, weapon type, and DPS/EHP floors.
+        """Filter and aggregate PoE2 `Forbidden Rites` `poe.ninja` builds across presets,
+        class, ascendancy, skill, support gem, unique item (`!Term` negation supported),
+        keystone, weapon type, and DPS/EHP floors.
         """
-        self._validate_not_poe1_trap(class_name)
-        self._validate_not_poe1_trap(ascendancy)
+        norm_preset: (
+            Literal["sleeper", "zoom_mapper", "league_start", "boss_killer", "hc_tank"] | None
+        ) = None
+        if preset is not None and str(preset).strip():
+            cand_p = str(preset).strip().lower().replace("-", "_")
+            if cand_p not in NINJA_SEARCH_PRESETS:
+                valid_p = ", ".join(NINJA_SEARCH_PRESETS)
+                raise ValueError(f"Unsupported preset {preset!r} (expected one of: {valid_p}).")
+            norm_preset = cand_p  # type: ignore[assignment]
+
+        cls_inc_raw, cls_exc_raw = _split_include_exclude(class_name)
+        asc_inc_raw, asc_exc_raw = _split_include_exclude(ascendancy)
+        sk_inc, sk_exc = _split_include_exclude(skill)
+        sup_inc, sup_exc = _split_include_exclude(support_gem)
+        uniq_inc, uniq_exc = _split_include_exclude(unique_item)
+        ks_inc, ks_exc = _split_include_exclude(keystone)
+        weap_inc, weap_exc = _split_include_exclude(weapon_type)
+
+        for tok in (*cls_inc_raw, *cls_exc_raw, *asc_inc_raw, *asc_exc_raw):
+            self._validate_not_poe1_trap(tok)
+
+        cls_inc = [self._resolve_ascendancy_alias(t) for t in cls_inc_raw]
+        cls_exc = [self._resolve_ascendancy_alias(t) for t in cls_exc_raw]
+        asc_inc = [self._resolve_ascendancy_alias(t) for t in asc_inc_raw]
+        asc_exc = [self._resolve_ascendancy_alias(t) for t in asc_exc_raw]
 
         snap_report = self.get_snapshot_state(league, force_refresh=force_refresh)
         primary_snap = snap_report.primary
@@ -766,19 +964,22 @@ class NinjaBuildsService:
 
         _, corpus = self._ensure_corpus_loaded()
 
-        # Build normalized vocabularies for typo-tolerant matching
+        # Build normalized vocabularies, corpus main-skill rarity counts, and live ladder shares
         skill_vocab: dict[str, str] = {}
         supp_vocab: dict[str, str] = {}
         uniq_vocab: dict[str, str] = {}
         ks_vocab: dict[str, str] = {}
         asc_vocab: dict[str, str] = {}
+        corpus_skill_counts: dict[str, int] = defaultdict(int)
         for r in corpus:
             if r.get("ascendancy_name"):
                 asc_vocab[_norm_token(r["ascendancy_name"])] = r["ascendancy_name"]
             for s in r.get("active_skills") or ():
                 skill_vocab[_norm_token(s)] = s
-            if r.get("main_skill"):
-                skill_vocab[_norm_token(r["main_skill"])] = r["main_skill"]
+            ms_r = r.get("main_skill")
+            if ms_r:
+                skill_vocab[_norm_token(ms_r)] = ms_r
+                corpus_skill_counts[_norm_token(str(ms_r))] += 1
             for g in r.get("support_gems") or ():
                 supp_vocab[_norm_token(g)] = g
             for u in r.get("unique_items") or ():
@@ -786,88 +987,239 @@ class NinjaBuildsService:
             for k in r.get("keystones") or ():
                 ks_vocab[_norm_token(k)] = k
 
-        applied_filters: dict[str, str | float] = {}
-        resolved_cls = self._resolve_ascendancy_alias(class_name) if class_name else None
-        resolved_asc = self._resolve_ascendancy_alias(ascendancy) if ascendancy else None
+        live_asc_share: dict[str, float] = {}
+        for st in primary_snap.class_statistics:
+            key_name = st.ascendancy_name or st.class_name
+            if key_name:
+                live_asc_share[_norm_token(key_name)] = round(float(st.share_pct), 2)
 
+        # Resolve preset defaults without overriding explicit caller arguments
+        eff_sort: Literal["dps", "ehp", "level", "es", "life", "sleeper", "mobility"]
+        if sort_by is not None:
+            eff_sort = sort_by
+        elif norm_preset == "sleeper":
+            eff_sort = "sleeper"
+        elif norm_preset == "zoom_mapper":
+            eff_sort = "mobility"
+        elif norm_preset == "hc_tank":
+            eff_sort = "ehp"
+        else:
+            eff_sort = "dps"
+
+        eff_ssf_first = ssf_viable_first or (norm_preset == "league_start")
+        eff_max_uniques = max_uniques
+        eff_min_dps = min_dps
+        eff_min_ehp = min_ehp
+
+        excl_terms = [u.strip() for u in (exclude_uniques or ()) if u and u.strip()]
+        excl_terms.extend(uniq_exc)
+
+        uniq_inc_norms = {_norm_token(u) for u in uniq_inc}
+        if norm_preset == "sleeper" and "temporalis" not in uniq_inc_norms:
+            excl_terms.append("Temporalis")
+        elif norm_preset == "league_start":
+            for chase_u in (
+                "Temporalis",
+                "Mageblood",
+                "Headhunter",
+                "Kalandra's Touch",
+                "Astramentis",
+            ):
+                if _norm_token(chase_u) not in uniq_inc_norms:
+                    excl_terms.append(chase_u)
+        # Deduplicate excl_terms preserving order
+        excl_terms = list(dict.fromkeys(excl_terms))
+
+        applied_filters: dict[str, str | float] = {}
+        if norm_preset:
+            applied_filters["preset"] = norm_preset
         if class_name:
             applied_filters["class_name"] = class_name.strip()
         if ascendancy:
-            applied_filters["ascendancy"] = resolved_asc or ascendancy.strip()
+            applied_filters["ascendancy"] = (
+                asc_inc[0] if (len(asc_inc) == 1 and not asc_exc) else ascendancy.strip()
+            )
         if skill:
             applied_filters["skill"] = skill.strip()
         if support_gem:
             applied_filters["support_gem"] = support_gem.strip()
         if unique_item:
             applied_filters["unique_item"] = unique_item.strip()
-        if exclude_uniques:
-            applied_filters["exclude_uniques"] = ", ".join(
-                u.strip() for u in exclude_uniques if u and u.strip()
-            )
-        if max_uniques is not None:
-            applied_filters["max_uniques"] = int(max_uniques)
+        if excl_terms:
+            applied_filters["exclude_uniques"] = ", ".join(excl_terms)
+        if eff_max_uniques is not None:
+            applied_filters["max_uniques"] = int(eff_max_uniques)
         if keystone:
             applied_filters["keystone"] = keystone.strip()
         if weapon_type:
             applied_filters["weapon_type"] = weapon_type.strip()
-        if min_dps is not None:
-            applied_filters["min_dps"] = float(min_dps)
-        if min_ehp is not None:
-            applied_filters["min_ehp"] = float(min_ehp)
-
-        excl_terms = [u.strip() for u in (exclude_uniques or ()) if u and u.strip()]
+        if eff_min_dps is not None:
+            applied_filters["min_dps"] = float(eff_min_dps)
+        if eff_min_ehp is not None:
+            applied_filters["min_ehp"] = float(eff_min_ehp)
 
         matched: list[dict[str, Any]] = []
-        for rec in corpus:
-            if resolved_cls:
-                cls_candidates = [str(rec.get("class_name") or "")]
-                if rec.get("ascendancy_name"):
-                    cls_candidates.append(str(rec["ascendancy_name"]))
-                if not self._matches_term_in_list(resolved_cls, cls_candidates, asc_vocab):
-                    continue
-            if resolved_asc:
-                asc_val = str(rec.get("ascendancy_name") or "")
-                if not self._matches_term_in_list(resolved_asc, [asc_val], asc_vocab):
-                    continue
-            if skill:
-                sk_cands = list(rec.get("active_skills") or [])
-                if rec.get("main_skill") and rec["main_skill"] not in sk_cands:
-                    sk_cands.insert(0, rec["main_skill"])
-                if not self._matches_term_in_list(skill, sk_cands, skill_vocab):
-                    continue
-            if support_gem and not self._matches_term_in_list(
-                support_gem, rec.get("support_gems") or (), supp_vocab
+        for raw_rec in corpus:
+            cls_candidates = [str(raw_rec.get("class_name") or "")]
+            if raw_rec.get("ascendancy_name"):
+                cls_candidates.append(str(raw_rec["ascendancy_name"]))
+            if cls_inc and not any(
+                self._matches_term_in_list(t, cls_candidates, asc_vocab) for t in cls_inc
             ):
                 continue
-            if unique_item and not self._matches_term_in_list(
-                unique_item, rec.get("unique_items") or (), uniq_vocab
+            if cls_exc and any(
+                self._matches_term_in_list(t, cls_candidates, asc_vocab) for t in cls_exc
             ):
                 continue
-            if excl_terms:
-                rec_uniques = rec.get("unique_items") or ()
-                if any(
-                    self._matches_term_in_list(ex_u, rec_uniques, uniq_vocab) for ex_u in excl_terms
-                ):
-                    continue
-            if max_uniques is not None and len(rec.get("unique_items") or ()) > max_uniques:
+
+            asc_val = str(raw_rec.get("ascendancy_name") or "")
+            if asc_inc and not any(
+                self._matches_term_in_list(t, [asc_val], asc_vocab) for t in asc_inc
+            ):
                 continue
-            if keystone:
-                ks_and_notables = list(rec.get("keystones") or []) + list(
-                    rec.get("ascendancy_notables") or []
+            if asc_exc and any(
+                self._matches_term_in_list(t, [asc_val], asc_vocab) for t in asc_exc
+            ):
+                continue
+
+            sk_cands = list(raw_rec.get("active_skills") or [])
+            if raw_rec.get("main_skill") and raw_rec["main_skill"] not in sk_cands:
+                sk_cands.insert(0, raw_rec["main_skill"])
+            if sk_inc and not any(
+                self._matches_term_in_list(t, sk_cands, skill_vocab) for t in sk_inc
+            ):
+                continue
+            if sk_exc and any(
+                self._matches_term_in_list(t, sk_cands, skill_vocab) for t in sk_exc
+            ):
+                continue
+
+            rec_supps = raw_rec.get("support_gems") or ()
+            if sup_inc and not any(
+                self._matches_term_in_list(t, rec_supps, supp_vocab) for t in sup_inc
+            ):
+                continue
+            if sup_exc and any(
+                self._matches_term_in_list(t, rec_supps, supp_vocab) for t in sup_exc
+            ):
+                continue
+
+            rec_uniques = raw_rec.get("unique_items") or ()
+            if uniq_inc and not any(
+                self._matches_term_in_list(t, rec_uniques, uniq_vocab) for t in uniq_inc
+            ):
+                continue
+            if excl_terms and any(
+                self._matches_term_in_list(ex_u, rec_uniques, uniq_vocab) for ex_u in excl_terms
+            ):
+                continue
+            if eff_max_uniques is not None and len(rec_uniques) > eff_max_uniques:
+                continue
+
+            ks_and_notables = list(raw_rec.get("keystones") or []) + list(
+                raw_rec.get("ascendancy_notables") or []
+            )
+            if ks_inc and not any(
+                self._matches_term_in_list(t, ks_and_notables, ks_vocab) for t in ks_inc
+            ):
+                continue
+            if ks_exc and any(
+                self._matches_term_in_list(t, ks_and_notables, ks_vocab) for t in ks_exc
+            ):
+                continue
+
+            rec_weapons = raw_rec.get("weapon_types") or ()
+            rec_keystones = raw_rec.get("keystones") or ()
+            if weap_inc and not any(
+                self._matches_weapon(t, rec_weapons, rec_keystones) for t in weap_inc
+            ):
+                continue
+            if weap_exc and any(
+                self._matches_weapon(t, rec_weapons, rec_keystones) for t in weap_exc
+            ):
+                continue
+
+            dew_dps = raw_rec.get("dewatered_dps")
+            real_dps = (
+                float(dew_dps)
+                if (dew_dps is not None and float(dew_dps) > 0.0)
+                else float(raw_rec.get("effective_dps") or 0.0)
+            )
+            dew_ehp = raw_rec.get("dewatered_ehp")
+            real_ehp = (
+                float(dew_ehp)
+                if (dew_ehp is not None and float(dew_ehp) > 0.0)
+                else float(raw_rec.get("total_ehp") or 0.0)
+            )
+            if eff_min_dps is not None and float(raw_rec.get("effective_dps") or 0.0) < eff_min_dps:
+                continue
+            if eff_min_ehp is not None and float(raw_rec.get("total_ehp") or 0.0) < eff_min_ehp:
+                continue
+
+            mob_tags, chase_uniques = _derive_mobility_and_chase(raw_rec)
+            asc_key = _norm_token(asc_val or str(raw_rec.get("class_name") or ""))
+            asc_share = live_asc_share.get(asc_key)
+            ms_val = raw_rec.get("movement_speed_mod")
+            ms_f = float(ms_val) if (ms_val is not None and float(ms_val) > 0.0) else 1.0
+            phys_mh = raw_rec.get("phys_max_hit")
+            chaos_mh = raw_rec.get("chaos_max_hit")
+            chaos_imm = bool(raw_rec.get("chaos_immune", False))
+
+            # Apply intent preset gates
+            has_fast_move = ms_f >= 1.25 or (
+                ms_f >= 1.15
+                and bool(
+                    set(mob_tags)
+                    & {
+                        "blink_teleport",
+                        "dash_melee",
+                        "qotf_speed",
+                        "onslaught_speed",
+                        "herald_chain",
+                        "auto_clear",
+                    }
                 )
-                if not self._matches_term_in_list(keystone, ks_and_notables, ks_vocab):
+            )
+            if norm_preset == "sleeper":
+                if not cls_inc and not asc_inc and asc_share is not None and asc_share >= 5.0:
                     continue
-            if weapon_type and not self._matches_weapon(
-                weapon_type,
-                rec.get("weapon_types") or (),
-                rec.get("keystones") or (),
-            ):
-                continue
-            if min_dps is not None and float(rec.get("effective_dps") or 0.0) < min_dps:
-                continue
-            if min_ehp is not None and float(rec.get("total_ehp") or 0.0) < min_ehp:
-                continue
-            matched.append(rec)
+                if eff_min_dps is None and real_dps < 400_000.0:
+                    continue
+                if eff_min_ehp is None and real_ehp < 15_000.0:
+                    continue
+                if not has_fast_move:
+                    continue
+            elif norm_preset == "zoom_mapper":
+                if not has_fast_move:
+                    continue
+            elif norm_preset == "boss_killer":
+                if eff_min_ehp is None and real_ehp < 22_000.0:
+                    continue
+                if phys_mh is not None and float(phys_mh) < 5_500.0:
+                    continue
+            elif norm_preset == "hc_tank":
+                if phys_mh is not None and float(phys_mh) < 6_500.0:
+                    continue
+                if not chaos_imm and chaos_mh is not None and float(chaos_mh) < 6_000.0:
+                    continue
+
+            ms_main = raw_rec.get("main_skill")
+            c_skill_cnt = corpus_skill_counts.get(_norm_token(str(ms_main)), 1) if ms_main else 1
+            s_score = _compute_sleeper_score(
+                raw_rec,
+                ascendancy_share_pct=asc_share,
+                corpus_skill_count=c_skill_cnt,
+                mobility_tags=mob_tags,
+                t0_chase_uniques=chase_uniques,
+            )
+
+            enriched = dict(raw_rec)
+            enriched["ascendancy_share_pct"] = asc_share
+            enriched["corpus_skill_count"] = c_skill_cnt
+            enriched["mobility_tags"] = mob_tags
+            enriched["t0_chase_uniques"] = chase_uniques
+            enriched["sleeper_score"] = s_score
+            matched.append(enriched)
 
         # Facet aggregations across all matched builds
         denom = len(matched)
@@ -893,8 +1245,8 @@ class NinjaBuildsService:
             for w in set(r.get("weapon_types") or ()):
                 weap_counts[str(w)] += 1
 
-        q_skill_norm = _norm_token(skill) if skill else ""
-        q_uniq_norm = _norm_token(unique_item) if unique_item else ""
+        q_skill_norm = _norm_token(sk_inc[0]) if len(sk_inc) == 1 else ""
+        q_uniq_norm = _norm_token(uniq_inc[0]) if len(uniq_inc) == 1 else ""
         t0_norms = {
             _norm_token(u): u for u in _T0_TRADE_CHASE_UNIQUES if _norm_token(u) != q_uniq_norm
         }
@@ -928,36 +1280,66 @@ class NinjaBuildsService:
                 else 0.0
             )
             ssf_prefix: tuple[float, ...] = ()
-            if ssf_viable_first:
+            if eff_ssf_first:
                 r_uniques = list(r.get("unique_items") or ())
                 t0_count = sum(1 for u in r_uniques if _norm_token(u) in t0_norms)
                 ssf_prefix = (-float(t0_count), -float(len(r_uniques)))
 
-            if sort_by == "ehp":
+            r_dew_dps = r.get("dewatered_dps")
+            r_real_dps = (
+                float(r_dew_dps)
+                if (r_dew_dps is not None and float(r_dew_dps) > 0.0)
+                else float(r.get("effective_dps") or 0.0)
+            )
+            r_dew_ehp = r.get("dewatered_ehp")
+            r_real_ehp = (
+                float(r_dew_ehp)
+                if (r_dew_ehp is not None and float(r_dew_ehp) > 0.0)
+                else float(r.get("total_ehp") or 0.0)
+            )
+
+            if eff_sort == "sleeper":
                 base_k: tuple[float, ...] = (
                     main_bonus,
-                    float(r.get("total_ehp") or 0.0),
-                    float(r.get("effective_dps") or 0.0),
+                    float(r.get("sleeper_score") or 0.0),
+                    r_real_dps,
                 )
-            elif sort_by == "level":
+            elif eff_sort == "mobility":
+                ms_v = float(r.get("movement_speed_mod") or 1.0)
+                sk_ms = float(r.get("movement_speed_while_using_skill") or 0.0)
+                m_tags = r.get("mobility_tags") or ()
+                mob_rank = ms_v * (1.0 + 0.35 * min(sk_ms, 1.5)) + 0.12 * len(m_tags)
+                base_k = (main_bonus, mob_rank, r_real_dps)
+            elif eff_sort == "ehp":
+                base_k = (
+                    main_bonus,
+                    r_real_ehp if norm_preset == "hc_tank" else float(r.get("total_ehp") or 0.0),
+                    r_real_dps,
+                )
+            elif eff_sort == "level":
                 rnk = int(r["rank_within_ascendancy"]) if r.get("rank_within_ascendancy") else 999
                 base_k = (main_bonus, float(r.get("level") or 0), -float(rnk))
-            elif sort_by == "es":
+            elif eff_sort == "es":
                 base_k = (
                     main_bonus,
                     float(r.get("energy_shield") or 0.0),
                     float(r.get("total_ehp") or 0.0),
                 )
-            elif sort_by == "life":
+            elif eff_sort == "life":
                 base_k = (
                     main_bonus,
                     float(r.get("life") or 0.0),
                     float(r.get("total_ehp") or 0.0),
                 )
             else:
+                dps_metric = (
+                    r_real_dps
+                    if norm_preset == "boss_killer"
+                    else float(r.get("effective_dps") or 0.0)
+                )
                 base_k = (
                     main_bonus,
-                    float(r.get("effective_dps") or 0.0),
+                    dps_metric,
                     float(r.get("total_ehp") or 0.0),
                 )
             return (*ssf_prefix, *base_k)
@@ -1031,7 +1413,8 @@ class NinjaBuildsService:
             corpus_total_builds=len(corpus),
             matched_builds=denom,
             returned_builds=len(entries),
-            sort_by=sort_by,
+            preset=norm_preset,
+            sort_by=eff_sort,
             applied_filters=applied_filters,
             top_ascendancies=_top_facets(asc_counts, denom),
             top_skills=_top_facets(skill_counts, denom),
@@ -1371,9 +1754,48 @@ class NinjaBuildsService:
             points_by_label.values(),
             key=lambda p: (_time_machine_age_hours(p.label), p.label.lower()),
         )
-        avail_labels = [p.label for p in ordered_points if p.available]
+        avail_points = [p for p in ordered_points if p.available]
+        avail_labels = [p.label for p in avail_points]
         earliest_lbl = avail_labels[0] if avail_labels else None
         latest_lbl = avail_labels[-1] if avail_labels else None
+
+        stepping_stone_label: str | None = None
+        stepping_stone_note: str | None = None
+        if len(avail_points) >= 2:
+            t0_norms = {_norm_token(u) for u in _T0_TRADE_CHASE_UNIQUES}
+            cur_pt = next(
+                (p for p in avail_points if p.label.lower() == "current"),
+                avail_points[-1],
+            )
+            earlier_pts = [p for p in avail_points if p is not cur_pt]
+            if earlier_pts:
+
+                def _t0_list(pt: CharacterTimelinePoint) -> list[str]:
+                    return [u for u in pt.unique_items if _norm_token(u) in t0_norms]
+
+                best_step = min(
+                    earlier_pts,
+                    key=lambda p: (
+                        len(_t0_list(p)),
+                        len(p.unique_items),
+                        -int(p.level or 0),
+                    ),
+                )
+                stepping_stone_label = best_step.label
+                t0_step = _t0_list(best_step)
+                t0_cur = _t0_list(cur_pt)
+                if len(t0_step) < len(t0_cur):
+                    stepping_stone_note = (
+                        f"Use {best_step.label!r} (Lv{best_step.level or '?'}) as budget stepping "
+                        f"stone: {len(t0_step)} T0 chase uniques vs {len(t0_cur)} in "
+                        f"{cur_pt.label!r} ({', '.join(t0_cur)})."
+                    )
+                else:
+                    stepping_stone_note = (
+                        f"Budget stepping stone {best_step.label!r} "
+                        f"(Lv{best_step.level or '?'}, {len(best_step.unique_items)} uniques vs "
+                        f"{len(cur_pt.unique_items)} in {cur_pt.label!r})."
+                    )
 
         if earliest_lbl and ordered_points and not ordered_points[0].available:
             notes.append(
@@ -1390,6 +1812,8 @@ class NinjaBuildsService:
             probed_points=ordered_points,
             earliest_available_label=earliest_lbl,
             latest_available_label=latest_lbl,
+            stepping_stone_label=stepping_stone_label,
+            stepping_stone_note=stepping_stone_note,
             notes=notes,
         )
 

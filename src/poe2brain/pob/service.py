@@ -428,8 +428,40 @@ def _to_build_stats(
     )
     attrs_met = (str_tot >= req_str) and (dex_tot >= req_dex) and (int_tot >= req_int)
 
+    chaos_immune = (stats_dict.get("ChaosInoculation") is True) or (
+        "Chaos Inoculation" in keystones
+    )
+    ms_mod = float(
+        stats_dict.get(
+            "movement_speed_mod",
+            stats_dict.get(
+                "EffectiveMovementSpeedMod",
+                stats_dict.get("MovementSpeedMod", 1.0),
+            ),
+        )
+        or 1.0
+    )
+    ms_skill = float(
+        stats_dict.get(
+            "movement_speed_while_using_skill",
+            stats_dict.get("MovementSpeedWhileUsingSkill", 0.0),
+        )
+        or 0.0
+    )
+    atk_cast_spd = float(stats_dict.get("attack_cast_speed", stats_dict.get("Speed", 0.0)) or 0.0)
+    crit_ch = float(stats_dict.get("crit_chance", stats_dict.get("CritChance", 0.0)) or 0.0)
+    crit_mult = float(
+        stats_dict.get("crit_multiplier", stats_dict.get("CritMultiplier", 0.0)) or 0.0
+    )
+
     payload: dict[str, Any] = {
         **dict(stats_dict),
+        "chaos_immune": chaos_immune,
+        "movement_speed_mod": round(ms_mod, 4),
+        "movement_speed_while_using_skill": round(ms_skill, 4),
+        "attack_cast_speed": round(atk_cast_spd, 4),
+        "crit_chance": round(crit_ch, 2),
+        "crit_multiplier": round(crit_mult, 4),
         "class_name": character.get("className") if isinstance(character, Mapping) else None,
         "ascendancy_name": (
             character.get("ascendancyName") if isinstance(character, Mapping) else None
@@ -1911,6 +1943,58 @@ class BuildService:
             ):
                 warnings.append(f"[{risk.severity.upper()}] {risk.title}")
 
+        bottlenecks: list[str] = []
+        uncapped_ele = [
+            f"{rn} {val:.0f}%"
+            for rn, val in (
+                ("Fire", sust_stats.fire_resist),
+                ("Cold", sust_stats.cold_resist),
+                ("Lightning", sust_stats.lightning_resist),
+            )
+            if sust_stats.level >= 65 and val < 75.0
+        ]
+        if uncapped_ele:
+            bottlenecks.append(
+                f"Cap Elemental Resistances first ({', '.join(uncapped_ele)} < 75%) "
+                "via Rings/Boots/Runes."
+            )
+        if (
+            not sust_stats.chaos_immune
+            and sust_stats.level >= 75
+            and sust_stats.chaos_resist < 50.0
+        ):
+            bottlenecks.append(
+                f"Low Chaos Resistance ({sust_stats.chaos_resist:.0f}%) — Chaos deals 2x to ES; "
+                "prioritize Chaos Res on Amethyst Ring / Belt / Soul Cores."
+            )
+        if sust_stats.spirit_unreserved < 0:
+            bottlenecks.append(
+                f"Over-reserved Spirit ({sust_stats.spirit_reserved}/{sust_stats.spirit_total}) — "
+                "add Spirit on Body Armour/Amulet/Sceptre or disable a secondary aura."
+            )
+        if not sust_stats.mana_sustainable and sust_stats.mana_per_second_cost > 0:
+            bottlenecks.append(
+                f"Unsustainable Mana ({sust_stats.mana_regen:.0f}/s vs "
+                f"{sust_stats.mana_per_second_cost:.0f}/s cost) — check `poe2 pob calc-breakdown "
+                "ManaCost` or Mana Remnants / Efficiency support."
+            )
+        if sust_stats.level >= 75 and sust_stats.phys_max_hit < 6000.0:
+            bottlenecks.append(
+                f"Low Pinnacle Physical Max Hit ({sust_stats.phys_max_hit:,.0f} < 6,000) — "
+                "run `poe2 pob hc-audit` for highest-EHP defensive passives/gear."
+            )
+        if sust_stats.level >= 70 and 0.0 < sust_stats.movement_speed_mod < 1.2:
+            bottlenecks.append(
+                f"Slow map mobility ({(sust_stats.movement_speed_mod - 1.0) * 100:+.0f}% MS) — "
+                "upgrade Boots MS (30–35%) or add a travel skill (Blink/Shattering Palm/Pounce)."
+            )
+        if total_dps_inf >= 30.0:
+            top_culprit = stripped[0].flag if stripped else "config"
+            bottlenecks.append(
+                f"High PoB inflation (+{total_dps_inf:.0f}%, top culprit: {top_culprit}) — "
+                "evaluate upgrades against sustainable Pinnacle DPS rather than padded tooltip."
+            )
+
         return DewateredAudit(
             slot_name=slot,
             raw_stats=raw_stats,
@@ -1919,6 +2003,7 @@ class BuildService:
             ehp_inflation_pct=round(total_ehp_inf, 2),
             stripped_flags=stripped,
             warnings=warnings,
+            bottlenecks=bottlenecks[:5],
             hc_rip_risks=hc_risks,
             pinnacle_ready=pinnacle_ready,
         )
