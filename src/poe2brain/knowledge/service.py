@@ -765,9 +765,14 @@ class KnowledgeService:
                 for t in tokens
                 if t.lower() not in FTS_STOPWORDS and t.lower() not in rf_noise
             ]
-            if doc_type_filter == "runeforge_recipe" or any(
-                w in q_norm for w in ("runeforge", "runemaster", "verisium", "remnant", "kalguur")
-            ) or rf_terms:
+            if (
+                doc_type_filter == "runeforge_recipe"
+                or any(
+                    w in q_norm
+                    for w in ("runeforge", "runemaster", "verisium", "remnant", "kalguur")
+                )
+                or rf_terms
+            ):
                 probe = rf_terms[0] if rf_terms else q_norm
                 if len(probe) >= 3:
                     rf_rows = self.db.query_all(
@@ -999,8 +1004,7 @@ class KnowledgeService:
             exps, _ = _clean_unique_lines(json.loads(row["explicits_json"]))
             imps = json.loads(row["implicits_json"])
             summary = _truncate_text(
-                f"{row['base_type']} ({row['slot_category']}): "
-                + "; ".join([*imps, *exps[:4]]),
+                f"{row['base_type']} ({row['slot_category']}): " + "; ".join([*imps, *exps[:4]]),
                 280,
             )
             return KnowledgeRecord(
@@ -1082,9 +1086,7 @@ class KnowledgeService:
                 else ""
             )
             max_str = (
-                f", max_ilvl={row['max_item_level']}"
-                if row["max_item_level"] is not None
-                else ""
+                f", max_ilvl={row['max_item_level']}" if row["max_item_level"] is not None else ""
             )
             return KnowledgeRecord(
                 id=str(row["lever_id"]),
@@ -1121,8 +1123,7 @@ class KnowledgeService:
                 summary = f"Verisium Anvil: {rf.source_base} -> {rf.output_item}{imp_part}"
             else:
                 summary = (
-                    f"Kalguuran Remnant ({rf.output_item}): "
-                    f"rune sequence {rf.rune_sequence_ids}"
+                    f"Kalguuran Remnant ({rf.output_item}): rune sequence {rf.rune_sequence_ids}"
                 )
             return KnowledgeRecord(
                 id=rf.recipe_id,
@@ -1551,9 +1552,7 @@ class KnowledgeService:
                 "In Patch 0.5.5 it is a Spirit-reserving Minion Revival remnant skill."
             )
         elif resolved_from and resolved_from.lower() != name.lower():
-            warning = (
-                f"Resolved query '{resolved_from}' to live Patch {POE2_PATCH} gem '{name}'."
-            )
+            warning = f"Resolved query '{resolved_from}' to live Patch {POE2_PATCH} gem '{name}'."
 
         stat_lines = [copy_rule]
         if spirit_energy_rule:

@@ -604,9 +604,7 @@ def test_journey10_broken_legacy_80_line_filter_doctor_and_auto_healer() -> None
     assert len(heal_rep.fixes_applied) >= 12
 
     healed = heal_rep.healed_text
-    healed_code = "\n".join(
-        ln for ln in healed.splitlines() if not ln.lstrip().startswith("#")
-    )
+    healed_code = "\n".join(ln for ln in healed.splitlines() if not ln.lstrip().startswith("#"))
     # MapTier -> WaystoneTier, PoE1 SocketGroup & LinkedSockets removed
     assert "WaystoneTier >= 15" in healed_code
     assert "MapTier" not in healed_code

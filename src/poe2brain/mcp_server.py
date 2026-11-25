@@ -70,7 +70,6 @@ from poe2brain.ninja import NinjaBuildsService, decode_pob2_code_to_xml
 from poe2brain.pob import (
     BuildService,
     LiveSlotUpgradeReport,
-    LiveUpgradeCandidate,
     Pob2BridgeError,
     close_default_pob2_bridge,
     get_default_pob2_bridge,
@@ -83,8 +82,6 @@ from poe2brain.trade import (
     TradeAdvisor,
     parse_clipboard_item,
     parsed_item_to_pob2_text,
-    resolve_natural_stat,
-    resolve_slot_or_category,
 )
 
 mcp = FastMCP("poe2brain")
@@ -369,9 +366,7 @@ def _parse_callouts_arg(
             )
         tier_k, phrase = s.split("=", 1)
         if not tier_k.strip() or not phrase.strip():
-            raise ValueError(
-                f"Expected non-empty tier=text for custom callout, got {entry!r}"
-            )
+            raise ValueError(f"Expected non-empty tier=text for custom callout, got {entry!r}")
         parsed[tier_k.strip()] = phrase.strip()
     return parsed
 
@@ -811,6 +806,7 @@ def execute_find_upgrades(
     objective: str = "FullDPS",
     stat_filters: list[str] | None = None,
     no_pob: bool = False,
+    normalize_craft_topoff: bool = True,
     limit: int = 10,
     league: str = DEFAULT_LEAGUE,
 ) -> dict[str, Any]:
@@ -823,101 +819,18 @@ def execute_find_upgrades(
 
     if has_build and not stat_filters:
         metric = normalize_pob_objective(objective)
-        if min_spirit <= 0:
-            report: LiveSlotUpgradeReport = svc.find_live_slot_upgrades(
-                equip_slot,
-                build_slot=slot,
-                metric=metric,
-                league=league,
-                max_price_exalted=max_exalted,
-                securable_only=securable_only,
-                candidate_limit=limit,
-            )
-            return report.model_dump(mode="json")
-
-        # Inject min_spirit filter onto PoB2 weighted search payload before fetching & scoring
-        slot_weights = svc.compute_slot_trade_weights(
+        report: LiveSlotUpgradeReport = svc.find_live_slot_upgrades(
             equip_slot,
             build_slot=slot,
             metric=metric,
             league=league,
             max_price_exalted=max_exalted,
+            min_spirit=min_spirit,
             securable_only=securable_only,
+            candidate_limit=limit,
+            normalize_craft_topoff=normalize_craft_topoff,
         )
-        payload = dict(slot_weights.trade2_weighted_filter)
-        query_block = dict(payload.get("query") or {})
-        cat = resolve_slot_or_category(equip_slot) or ""
-        if cat == "weapon.sceptre":
-            filters_block = dict(query_block.get("filters") or {})
-            eq_block = dict(filters_block.get("equipment_filters") or {})
-            eq_filters = dict(eq_block.get("filters") or {})
-            eq_filters["spirit"] = {"min": min_spirit}
-            eq_block["filters"] = eq_filters
-            filters_block["equipment_filters"] = eq_block
-            query_block["filters"] = filters_block
-        else:
-            spirit_cands = resolve_natural_stat(
-                "spirit", category=cat or "accessory.amulet", limit=1
-            )
-            if spirit_cands and spirit_cands[0].trade_ids:
-                stats_list = list(query_block.get("stats") or [])
-                stats_list.append(
-                    {
-                        "type": "count",
-                        "value": {"min": 1},
-                        "filters": [
-                            {"id": tid, "value": {"min": min_spirit}}
-                            for tid in spirit_cands[0].trade_ids
-                        ],
-                    }
-                )
-                query_block["stats"] = stats_list
-        payload["query"] = query_block
-
-        query_id, trade_url, total_matches, listings = svc._execute_trade2_weighted_search(
-            league=league,
-            payload=payload,
-            limit=limit,
-        )
-        batch_inputs = [
-            {
-                "id": lst.listing_id or f"cand_{idx}",
-                "label": f"{lst.item_name + ' ' if lst.item_name else ''}{lst.base_type}".strip(),
-                "targetSlot": equip_slot,
-                "itemText": lst.pob_item_text or "",
-                "price_exalted": lst.price_exalted,
-            }
-            for idx, lst in enumerate(listings, start=1)
-        ]
-        diffs = svc.diff_items_batch(batch_inputs, target_slot=equip_slot, slot=slot)
-        listings_by_txt = {lst.pob_item_text: lst for lst in listings if lst.pob_item_text}
-        cands: list[LiveUpgradeCandidate] = []
-        for idx, diff in enumerate(diffs, start=1):
-            matched_lst = listings_by_txt.get(diff.candidate_item_text) or listings[idx - 1]
-            cands.append(
-                LiveUpgradeCandidate(
-                    rank=idx,
-                    listing=matched_lst,
-                    upgrade_diff=diff,
-                    dps_gain_per_exalted=diff.dps_per_exalted,
-                )
-            )
-        cands.sort(key=lambda c: c.upgrade_diff.full_dps_delta, reverse=True)
-        for rank_idx, c in enumerate(cands, start=1):
-            c.rank = rank_idx
-        return LiveSlotUpgradeReport(
-            league=league,
-            build_slot=slot,
-            equipment_slot=equip_slot,
-            metric=metric,
-            max_price_exalted=max_exalted,
-            securable_only=securable_only,
-            query_id=query_id,
-            trade_url=trade_url,
-            total_market_matches=total_matches,
-            slot_weights=slot_weights,
-            candidates=cands,
-        ).model_dump(mode="json")
+        return report.model_dump(mode="json")
 
     advisor = get_trade_advisor()
     pc_res = advisor.find_trade_candidates(
@@ -1381,6 +1294,258 @@ def poe2_pob_hc_audit(
     )
 
 
+def parse_config_kv_pairs(
+    pairs: Mapping[str, Any] | Sequence[str] | str | None,
+) -> dict[str, Any]:
+    if pairs is None:
+        return {}
+    if isinstance(pairs, Mapping):
+        return {str(k): v for k, v in pairs.items()}
+    items = [pairs] if isinstance(pairs, str) else list(pairs)
+    out: dict[str, Any] = {}
+    for pair in items:
+        if "=" not in pair:
+            raise ValueError(f"Expected key=value config override, got {pair!r}")
+        k, raw_v = pair.split("=", 1)
+        low_v = raw_v.strip().lower()
+        if low_v == "true":
+            out[k.strip()] = True
+        elif low_v == "false":
+            out[k.strip()] = False
+        else:
+            try:
+                out[k.strip()] = int(raw_v.strip()) if "." not in raw_v else float(raw_v.strip())
+            except ValueError:
+                out[k.strip()] = raw_v.strip()
+    return out
+
+
+def execute_pob_calc_breakdown(
+    *,
+    query: str,
+    slot: str = "main",
+    skill_group: int | None = None,
+    max_mods: int = 40,
+) -> dict[str, Any]:
+    svc = get_build_service()
+    ensure_pob_slot_loaded(svc, slot=slot, require_existing=True)
+    report = svc.explain_calc(
+        query,
+        slot=slot,
+        skill_group=skill_group,
+        max_mods=max_mods,
+    )
+    return report.model_dump(mode="json")
+
+
+def execute_pob_supports(
+    *,
+    slot: str = "main",
+    group_index: int | None = None,
+    replace_gem_slot: int | None = None,
+    replace_gem: str | None = None,
+    max_tier: int | None = None,
+    include_lineage: bool = True,
+    exclude_lineage_conflicts: bool = False,
+    top_n: int = 15,
+) -> dict[str, Any]:
+    svc = get_build_service()
+    ensure_pob_slot_loaded(svc, slot=slot, require_existing=True)
+    report = svc.rank_support_gems(
+        slot=slot,
+        group_index=group_index,
+        replace_gem_slot=replace_gem_slot,
+        replace_gem=replace_gem,
+        max_tier=max_tier,
+        include_lineage=include_lineage,
+        exclude_lineage_conflicts=exclude_lineage_conflicts,
+        top_n=top_n,
+    )
+    return report.model_dump(mode="json")
+
+
+def execute_pob_radius_jewels(
+    *,
+    jewel_name: str = "Controlled Metamorphosis",
+    slot: str = "main",
+    stat: str = "FullDPS",
+    max_path_dist: int = 10,
+    top_n: int = 10,
+) -> dict[str, Any]:
+    svc = get_build_service()
+    ensure_pob_slot_loaded(svc, slot=slot, require_existing=True)
+    report = svc.rank_radius_jewels(
+        jewel_name=jewel_name,
+        slot=slot,
+        stat=stat,
+        max_path_dist=max_path_dist,
+        top_n=top_n,
+    )
+    return report.model_dump(mode="json")
+
+
+def execute_pob_what_if(
+    *,
+    slot: str = "main",
+    equip_items: Mapping[str, str] | Sequence[str] | None = None,
+    edit_slot: str | None = None,
+    add_mod_lines: Sequence[str] | str | None = None,
+    remove_mod_substrings: Sequence[str] | str | None = None,
+    set_quality: int | None = None,
+    alloc_node_ids: Sequence[int] | None = None,
+    dealloc_node_ids: Sequence[int] | None = None,
+    set_config: Mapping[str, Any] | Sequence[str] | str | None = None,
+    borrow_from_slot: str | None = None,
+    borrow_slots: Sequence[str] | str | None = None,
+    borrow_main_skill: bool = False,
+    include_scenario_matrix: bool = False,
+    apply: bool = False,
+) -> dict[str, Any]:
+    svc = get_build_service()
+    ensure_pob_slot_loaded(svc, slot=slot, require_existing=True)
+    if borrow_from_slot:
+        ensure_pob_slot_loaded(svc, slot=borrow_from_slot, require_existing=True)
+
+    resolved_equips: dict[str, str] = {}
+    if isinstance(equip_items, Mapping):
+        for eq_s, raw_txt in equip_items.items():
+            resolved_equips[str(eq_s)] = normalize_item_text_for_pob2(str(raw_txt))
+    elif equip_items:
+        for entry in equip_items:
+            if "=" not in entry:
+                raise ValueError(f"Expected 'Slot=ItemTextOrPath' for equip_items, got {entry!r}")
+            eq_s, rhs = entry.split("=", 1)
+            rhs_str = rhs.strip()
+            cand_p = Path(rhs_str).expanduser()
+            if "\n" not in rhs_str and cand_p.is_file():
+                rhs_str = cand_p.read_text(encoding="utf-8")
+            resolved_equips[eq_s.strip()] = normalize_item_text_for_pob2(
+                rhs_str.replace("\\n", "\n")
+            )
+
+    report = svc.what_if(
+        slot=slot,
+        equip_items=resolved_equips or None,
+        edit_slot=edit_slot,
+        add_mod_lines=_coerce_str_list(add_mod_lines) or None,
+        remove_mod_substrings=_coerce_str_list(remove_mod_substrings) or None,
+        set_quality=set_quality,
+        alloc_node_ids=list(alloc_node_ids) if alloc_node_ids else None,
+        dealloc_node_ids=list(dealloc_node_ids) if dealloc_node_ids else None,
+        set_config=parse_config_kv_pairs(set_config) or None,
+        borrow_from_slot=borrow_from_slot,
+        borrow_slots=_coerce_csv_or_list(borrow_slots) or None,
+        borrow_main_skill=borrow_main_skill,
+        include_scenario_matrix=include_scenario_matrix,
+        apply=apply,
+    )
+    if apply:
+        save_pob_slot_snapshot(svc, slot)
+    return report.model_dump(mode="json")
+
+
+@mcp.tool()
+def poe2_pob_calc_breakdown(
+    query: str = "FullDPS",
+    slot: str = "main",
+    skill_group: int | None = None,
+    max_mods: int = 40,
+) -> dict[str, Any]:
+    """Explain exact PoB2 calculation formulas & modifier provenance (BASE/INC/MORE/FLAG)."""
+    return _safe_tool_call(
+        lambda: execute_pob_calc_breakdown(
+            query=query,
+            slot=slot,
+            skill_group=skill_group,
+            max_mods=max_mods,
+        )
+    )
+
+
+@mcp.tool()
+def poe2_pob_supports(
+    slot: str = "main",
+    group_index: int | None = None,
+    replace_gem_slot: int | None = None,
+    replace_gem: str | None = None,
+    max_tier: int | None = None,
+    include_lineage: bool = True,
+    exclude_lineage_conflicts: bool = False,
+    top_n: int = 15,
+) -> dict[str, Any]:
+    """Rank compatible PoE2 0.5.5 Support Gems (Tier I-III + Lineage) with Mana/Spirit checks."""
+    return _safe_tool_call(
+        lambda: execute_pob_supports(
+            slot=slot,
+            group_index=group_index,
+            replace_gem_slot=replace_gem_slot,
+            replace_gem=replace_gem,
+            max_tier=max_tier,
+            include_lineage=include_lineage,
+            exclude_lineage_conflicts=exclude_lineage_conflicts,
+            top_n=top_n,
+        )
+    )
+
+
+@mcp.tool()
+def poe2_pob_radius_jewels(
+    jewel_name: str = "Controlled Metamorphosis",
+    slot: str = "main",
+    stat: str = "FullDPS",
+    max_path_dist: int = 10,
+    top_n: int = 10,
+) -> dict[str, Any]:
+    """Rank Passive Tree Jewel Sockets & rings for Controlled Metamorphosis / Against Darkness."""
+    return _safe_tool_call(
+        lambda: execute_pob_radius_jewels(
+            jewel_name=jewel_name,
+            slot=slot,
+            stat=stat,
+            max_path_dist=max_path_dist,
+            top_n=top_n,
+        )
+    )
+
+
+@mcp.tool()
+def poe2_pob_what_if(
+    slot: str = "main",
+    equip_items: dict[str, str] | list[str] | None = None,
+    edit_slot: str | None = None,
+    add_mod_lines: list[str] | str | None = None,
+    remove_mod_substrings: list[str] | str | None = None,
+    set_quality: int | None = None,
+    alloc_node_ids: list[int] | None = None,
+    dealloc_node_ids: list[int] | None = None,
+    set_config: dict[str, Any] | list[str] | str | None = None,
+    borrow_from_slot: str | None = None,
+    borrow_slots: list[str] | str | None = None,
+    borrow_main_skill: bool = False,
+    include_scenario_matrix: bool = False,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """Run compound PoB2 what-if simulations (multi-slot, mod edits, nodes, ref borrowing)."""
+    return _safe_tool_call(
+        lambda: execute_pob_what_if(
+            slot=slot,
+            equip_items=equip_items,
+            edit_slot=edit_slot,
+            add_mod_lines=add_mod_lines,
+            remove_mod_substrings=remove_mod_substrings,
+            set_quality=set_quality,
+            alloc_node_ids=alloc_node_ids,
+            dealloc_node_ids=dealloc_node_ids,
+            set_config=set_config,
+            borrow_from_slot=borrow_from_slot,
+            borrow_slots=borrow_slots,
+            borrow_main_skill=borrow_main_skill,
+            include_scenario_matrix=include_scenario_matrix,
+            apply=apply,
+        )
+    )
+
+
 def export_pob_slot(
     slot: str = "main",
     fmt: Literal["code", "xml", "ggg_json"] = "code",
@@ -1482,11 +1647,7 @@ def execute_scan_arbitrage(
     league: str = DEFAULT_LEAGUE,
 ) -> dict[str, Any]:
     scanner = get_arbitrage_scanner()
-    if (
-        starting_exalted is not None
-        or gold_budget is not None
-        or target_divine is not None
-    ):
+    if starting_exalted is not None or gold_budget is not None or target_divine is not None:
         eff_start_ex = starting_exalted if starting_exalted is not None else 250.0
         eff_gold = gold_budget if gold_budget is not None else 80_000
         eff_target_div = target_divine if target_divine is not None else 50.0
@@ -1592,6 +1753,7 @@ def poe2_find_upgrades(
     league: str = DEFAULT_LEAGUE,
     limit: int = 10,
     no_pob: bool = False,
+    normalize_craft_topoff: bool = True,
     stat_filters: list[str] | None = None,
 ) -> dict[str, Any]:
     """Find live trade2 slot upgrades and rank via headless PoB2 GetMiscCalculator()."""
@@ -1605,6 +1767,7 @@ def poe2_find_upgrades(
             objective=objective,
             stat_filters=stat_filters,
             no_pob=no_pob,
+            normalize_craft_topoff=normalize_craft_topoff,
             limit=limit,
             league=league,
         )
@@ -1954,9 +2117,7 @@ def _resolve_visual_theme(
         base_p: str | None = None
         if theme and theme.strip() and theme.strip().lower() != "none":
             norm_base = theme.strip().lower().replace("-", "_")
-            base_p = (
-                norm_base if norm_base in BUILTIN_THEME_PRESETS else get_visual_theme(theme).id
-            )
+            base_p = norm_base if norm_base in BUILTIN_THEME_PRESETS else get_visual_theme(theme).id
         return compose_theme(
             look.strip() if (look and look.strip()) else None,
             base_preset=base_p,
@@ -2008,9 +2169,7 @@ def _extract_slot_filter_context_fast(s_name: str) -> BuildFilterContext:
         if "<PlayerStat" in xml_text:
             return extract_build_filter_context_from_xml(xml_text)
 
-    if _BUILD_SVC is not None and (
-        _BUILD_SVC.bridge.is_running or _BUILD_SVC.bridge.is_hibernated
-    ):
+    if _BUILD_SVC is not None and (_BUILD_SVC.bridge.is_running or _BUILD_SVC.bridge.is_hibernated):
         ensure_pob_slot_loaded(_BUILD_SVC, slot=s_name, require_existing=True)
         return extract_build_filter_context(_BUILD_SVC, slot=s_name)
 
@@ -2035,9 +2194,7 @@ def _resolve_build_filter_context(
     extra_slots = _coerce_csv_or_list(slots)
 
     if pob is not None and pob.strip():
-        target_slot = (
-            slot.strip() if (slot and slot.strip() and "," not in slot) else "main"
-        )
+        target_slot = slot.strip() if (slot and slot.strip() and "," not in slot) else "main"
         fast_xml = _try_decode_pob_source_to_xml_fast(pob.strip())
         if fast_xml is not None and "<PlayerStat" in fast_xml:
             _write_pob_slot_xml_atomic(fast_xml, slot=target_slot)
@@ -2054,9 +2211,7 @@ def _resolve_build_filter_context(
                 continue
             contexts.append(_extract_slot_filter_context_fast(s_name))
     else:
-        combined_slots = list(
-            dict.fromkeys([*_coerce_csv_or_list(slot), *extra_slots])
-        )
+        combined_slots = list(dict.fromkeys([*_coerce_csv_or_list(slot), *extra_slots]))
         for s_name in combined_slots:
             contexts.append(_extract_slot_filter_context_fast(s_name))
 

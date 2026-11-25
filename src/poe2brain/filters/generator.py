@@ -529,9 +529,7 @@ def extract_build_filter_context_from_xml(
     ins = inspect_pob2_xml_or_code(raw_input)
     xs = ins.xml_stats
     base_names = [
-        it.base_type
-        for it in ins.equipped_items
-        if it.base_type and it.base_type != "Unknown"
+        it.base_type for it in ins.equipped_items if it.base_type and it.base_type != "Unknown"
     ]
     return _build_filter_context_from_parts(
         class_name=ins.class_name if ins.class_name != "Unknown" else None,
@@ -586,9 +584,7 @@ def extract_build_filter_context(
                 return extract_build_filter_context_from_xml(xml_text, index=idx)
 
         if build_service is None:
-            raise ValueError(
-                "build_service is required to evaluate non-XML or remote PoB2 inputs."
-            )
+            raise ValueError("build_service is required to evaluate non-XML or remote PoB2 inputs.")
         build_service.load_build(pob_code, slot=slot)
     elif bridge_idle:
         safe_slot = _SAFE_SLOT_FILENAME_RE.sub("_", slot.strip()) or "main"

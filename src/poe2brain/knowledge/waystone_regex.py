@@ -223,9 +223,7 @@ _KNOWN_HAZARDS: dict[str, _HazardDefinition] = {
         mod_types=("MapMonsterDamageAsChaos",),
         synthetic_samples=(),
         default_severity="brick",
-        reason=(
-            "Monsters deal Extra Chaos Damage (Chaos deals 2x damage to non-CI ES in 0.5.5)."
-        ),
+        reason=("Monsters deal Extra Chaos Damage (Chaos deals 2x damage to non-CI ES in 0.5.5)."),
     ),
     "bleed_on_hit": _HazardDefinition(
         hazard_id="bleed_on_hit",

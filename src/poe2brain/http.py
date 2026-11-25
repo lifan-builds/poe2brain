@@ -619,11 +619,18 @@ def get_cached_json(
     allow_stale_on_error: bool = True,
     now_fn: Callable[[], float] = time.time,
 ) -> Any:
+    use_disk_cache = cache_dir is not None or (
+        client is None or (client._sync_transport is None and client._async_transport is None)
+    )
     cache_key = _canonical_cache_key(key_or_url, params)
-    cache_path = _cache_file_path(cache_key, cache_dir=cache_dir)
+    cache_path = _cache_file_path(cache_key, cache_dir=cache_dir) if use_disk_cache else None
     now_epoch = now_fn()
 
-    existing = None if force_refresh else _read_cache_envelope(cache_path)
+    existing = (
+        None
+        if (force_refresh or cache_path is None)
+        else _read_cache_envelope(cache_path)
+    )
     if existing is not None:
         cached_at, data = existing
         if now_epoch - cached_at <= ttl_seconds:
@@ -641,13 +648,14 @@ def get_cached_json(
                 if owned:
                     http_client.close()
     except Exception:
-        if allow_stale_on_error:
+        if allow_stale_on_error and cache_path is not None:
             stale = _read_cache_envelope(cache_path)
             if stale is not None:
                 return stale[1]
         raise
 
-    _write_cache_envelope(cache_path, cache_key, fresh, now_fn())
+    if cache_path is not None:
+        _write_cache_envelope(cache_path, cache_key, fresh, now_fn())
     return fresh
 
 
@@ -663,11 +671,18 @@ async def aget_cached_json(
     allow_stale_on_error: bool = True,
     now_fn: Callable[[], float] = time.time,
 ) -> Any:
+    use_disk_cache = cache_dir is not None or (
+        client is None or (client._sync_transport is None and client._async_transport is None)
+    )
     cache_key = _canonical_cache_key(key_or_url, params)
-    cache_path = _cache_file_path(cache_key, cache_dir=cache_dir)
+    cache_path = _cache_file_path(cache_key, cache_dir=cache_dir) if use_disk_cache else None
     now_epoch = now_fn()
 
-    existing = None if force_refresh else _read_cache_envelope(cache_path)
+    existing = (
+        None
+        if (force_refresh or cache_path is None)
+        else _read_cache_envelope(cache_path)
+    )
     if existing is not None:
         cached_at, data = existing
         if now_epoch - cached_at <= ttl_seconds:
@@ -685,11 +700,12 @@ async def aget_cached_json(
                 if owned:
                     await http_client.aclose()
     except Exception:
-        if allow_stale_on_error:
+        if allow_stale_on_error and cache_path is not None:
             stale = _read_cache_envelope(cache_path)
             if stale is not None:
                 return stale[1]
         raise
 
-    _write_cache_envelope(cache_path, cache_key, fresh, now_fn())
+    if cache_path is not None:
+        _write_cache_envelope(cache_path, cache_key, fresh, now_fn())
     return fresh

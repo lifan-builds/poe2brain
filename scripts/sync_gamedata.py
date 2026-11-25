@@ -1281,9 +1281,7 @@ def build_database(
                 },
                 ensure_ascii=False,
             )
-            rf_rows.append(
-                (f"remnant:{rkey}", payload, output_reward, "kalguuran_remnant_recipe")
-            )
+            rf_rows.append((f"remnant:{rkey}", payload, output_reward, "kalguuran_remnant_recipe"))
     cur.executemany("INSERT OR REPLACE INTO runeforge_recipes VALUES (?, ?, ?, ?)", rf_rows)
 
     cur.executemany("INSERT INTO knowledge_fts VALUES (?, ?, ?, ?, ?)", fts_rows)

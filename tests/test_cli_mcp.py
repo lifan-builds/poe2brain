@@ -74,7 +74,7 @@ def test_skill_readme_mcp_and_cli_1_to_1_parity() -> None:
 
     skill_tools = set(re.findall(r"\|\s*`?(poe2_[a-z0-9_]+)`?\s*\|", skill_text))
     readme_tools = set(re.findall(r"\|\s*`?(poe2_[a-z0-9_]+)`?\s*\|", readme_text))
-    assert len(skill_tools) == 36
+    assert len(skill_tools) == 40
     assert skill_tools == readme_tools
 
     registered_tools = {t.name for t in mcp_mod.mcp._tool_manager.list_tools()}
@@ -99,6 +99,10 @@ def test_skill_readme_mcp_and_cli_1_to_1_parity() -> None:
         ["wiki", "regex", "--help"],
         ["pob", "compare", "--help"],
         ["pob", "hc-audit", "--help"],
+        ["pob", "calc-breakdown", "--help"],
+        ["pob", "supports", "--help"],
+        ["pob", "radius-jewels", "--help"],
+        ["pob", "what-if", "--help"],
         ["trade", "triage", "--help"],
         ["ninja", "snapshots", "--help"],
         ["ninja", "search", "--help"],
@@ -798,8 +802,9 @@ def test_cli_ninja_and_filter_commands_and_structured_errors(
     assert len(srch_data["builds"]) == 5
     assert srch_data["dps_distribution"]["max"] >= srch_data["dps_distribution"]["median"] > 0
     assert (
-        runner.invoke(app, ["ninja", "search", "--ascendancy", "Martial Artist", "--limit", "3"])
-        .exit_code
+        runner.invoke(
+            app, ["ninja", "search", "--ascendancy", "Martial Artist", "--limit", "3"]
+        ).exit_code
         == 0
     )
 
@@ -939,13 +944,13 @@ def test_cli_ninja_and_filter_commands_and_structured_errors(
         "\n".join(
             [
                 "# [[0100]] OVERRIDE AREA 1",
-                'Show # $type->currency $tier->s',
+                "Show # $type->currency $tier->s",
                 '\tBaseType == "Divine Orb" "Fist of Kalguur" "Fragments of the Past"',
                 "\tSetFontSize 45",
                 "\tSetTextColor 255 0 0 255",
                 "\tSetBorderColor 255 0 0 255",
                 "\tSetBackgroundColor 255 255 255 255",
-                'Show # $type->rare $tier->t1',
+                "Show # $type->rare $tier->t1",
                 '\tClass == "Wands"',
                 "\tRarity Rare",
                 '\tHasExplicitMod >= 2 "Merciless"',
@@ -1078,9 +1083,7 @@ def test_cli_ninja_and_filter_commands_and_structured_errors(
     assert cvd_warm_data["validation"]["error_count"] == 0
     assert cvd_warm_data["cvd_audit"]["cvd_safe"] is True
     assert cvd_warm_data["sound_pack"]["params"]["warm_night_mode"] is True
-    assert (
-        cvd_warm_data["sound_pack"]["clips"]["s_plus"]["hf_energy_ratio_above_2500hz"] < 0.015
-    )
+    assert cvd_warm_data["sound_pack"]["clips"]["s_plus"]["hf_energy_ratio_above_2500hz"] < 0.015
 
 
 def test_cross_process_ninja_character_to_pob_and_filter_generate(
@@ -1223,9 +1226,7 @@ def test_cross_process_ninja_character_to_pob_and_filter_generate(
     assert validated["error_count"] == 0
 
 
-async def test_mcp_server_stdio_roundtrip(
-    isolated_cli_env: dict[str, str], tmp_path: Path
-) -> None:
+async def test_mcp_server_stdio_roundtrip(isolated_cli_env: dict[str, str], tmp_path: Path) -> None:
     params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "poe2brain.mcp_server"],
@@ -1237,7 +1238,7 @@ async def test_mcp_server_stdio_roundtrip(
             await session.initialize()
             tools_resp = await session.list_tools()
             names = {t.name for t in tools_resp.tools}
-            assert len(names) == 36
+            assert len(names) == 40
             assert {
                 "poe2_status",
                 "poe2_inspect_ascendancy",
@@ -1245,6 +1246,10 @@ async def test_mcp_server_stdio_roundtrip(
                 "poe2_waystone_regex",
                 "poe2_pob_compare",
                 "poe2_pob_hc_audit",
+                "poe2_pob_calc_breakdown",
+                "poe2_pob_supports",
+                "poe2_pob_radius_jewels",
+                "poe2_pob_what_if",
                 "poe2_triage_dump",
                 "poe2_scan_craft_profit",
                 "poe2_scan_arbitrage",
@@ -1356,7 +1361,7 @@ async def test_mcp_server_stdio_roundtrip(
                     "filter_file_or_text": (
                         'Show\n\tClass == "Body Armour"\n'
                         '\tBaseType "Expert Hexer\'s Robe" "Orb of Alteration"\n'
-                        '\tMapTier >= 15\n\tSetFontSize 50'
+                        "\tMapTier >= 15\n\tSetFontSize 50"
                     )
                 },
             )

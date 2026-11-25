@@ -339,3 +339,149 @@ class SlotStatWeights(Poe2Model):
     objective: str = "balanced"
     weights: list[StatWeightEntry] = Field(default_factory=list)
     trade2_weighted_filter: dict[str, Any] = Field(default_factory=dict)
+
+
+class CalcStatMatch(Poe2Model):
+    key: str
+    value: Any = None
+    lines: list[str] = Field(default_factory=list)
+    slots: list[dict[str, Any]] = Field(default_factory=list)
+    reservations: list[dict[str, Any]] = Field(default_factory=list)
+    damage_types: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class CalcModProvenanceRow(Poe2Model):
+    stat_name: str
+    mod_type: str
+    value: Any = None
+    source_type: str = "Other"
+    source_label: str = ""
+    flags: str = ""
+
+
+class CalcSourceTotal(Poe2Model):
+    source_type: str
+    base_total: float = 0.0
+    inc_total: float = 0.0
+    more_pct: float = 0.0
+    mod_count: int = 0
+
+
+class CalcBreakdownReport(Poe2Model):
+    slot: str = "main"
+    query: str
+    skill_group: int = 1
+    active_skill_name: str = "None"
+    matched_stats: list[CalcStatMatch] = Field(default_factory=list)
+    modifier_count_total: int = 0
+    source_totals: list[CalcSourceTotal] = Field(default_factory=list)
+    modifiers: list[CalcModProvenanceRow] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class SupportGemCandidate(Poe2Model):
+    gem_id: str
+    name: str
+    gem_family: str | None = None
+    support_tier: int | None = None
+    is_lineage: bool = False
+    lineage_conflict_skill: str | None = None
+    replaces_gem: str | None = None
+    already_socketed: bool = False
+    dps_before: float = 0.0
+    dps_after: float = 0.0
+    dps_delta: float = 0.0
+    dps_pct: float = 0.0
+    ehp_delta: float = 0.0
+    mana_cost_before: float = 0.0
+    mana_cost_after: float = 0.0
+    mana_sustainable_after: bool = True
+    spirit_unreserved_before: int = 0
+    spirit_unreserved_after: int = 0
+    spirit_overflow: bool = False
+    attributes_met_after: bool = True
+
+
+class SupportGemRankingReport(Poe2Model):
+    slot: str = "main"
+    group_index: int = 1
+    replace_gem_slot: int | None = None
+    active_skill_label: str = ""
+    current_supports: list[str] = Field(default_factory=list)
+    max_tier: int | None = None
+    include_lineage: bool = True
+    total_valid: int = 0
+    candidates: list[SupportGemCandidate] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class RadiusJewelCandidate(Poe2Model):
+    rank: int = 1
+    jewel_name: str
+    socket_node_id: int
+    socket_name: str
+    socket_allocated: bool = False
+    socket_path_dist: int = 0
+    ring_index: int = 1
+    ring_label: str = ""
+    allocated_notables_in_radius: int = 0
+    allocated_smalls_in_radius: int = 0
+    ring_notables: list[str] = Field(default_factory=list)
+    nearby_unallocated_notables: list[str] = Field(default_factory=list)
+    total_points_spent: int = 1
+    normal_points_saved: int = 0
+    stat: str = "FullDPS"
+    before: float = 0.0
+    after: float = 0.0
+    delta: float = 0.0
+    pct: float = 0.0
+    per_point_delta: float = 0.0
+    per_point_pct: float = 0.0
+
+
+class RadiusJewelRankingReport(Poe2Model):
+    slot: str = "main"
+    jewel_name: str
+    stat: str = "FullDPS"
+    base_value: float = 0.0
+    candidates: list[RadiusJewelCandidate] = Field(default_factory=list)
+
+
+class WhatIfPieceAttribution(Poe2Model):
+    label: str
+    kind: Literal["equipment_slot", "main_skill_group", "edited_item", "passive_tree"]
+    effective_dps_delta: float = 0.0
+    effective_dps_pct: float = 0.0
+    total_ehp_delta: float = 0.0
+    total_ehp_pct: float = 0.0
+    spirit_unreserved_after: int = 0
+    mana_sustainable_after: bool = True
+
+
+class WhatIfScenarioPoint(Poe2Model):
+    scenario: str
+    effective_dps: float = 0.0
+    effective_dps_delta_vs_baseline: float = 0.0
+    effective_dps_pct_vs_baseline: float = 0.0
+    total_ehp: float = 0.0
+    total_ehp_delta_vs_baseline: float = 0.0
+    mana_sustainable: bool = True
+    spirit_unreserved: int = 0
+
+
+class WhatIfReport(Poe2Model):
+    slot: str = "main"
+    applied: bool = False
+    rolled_back: bool = True
+    baseline_stats: BuildStats
+    after_stats: BuildStats
+    effective_dps_delta: float = 0.0
+    effective_dps_pct: float = 0.0
+    total_ehp_delta: float = 0.0
+    total_ehp_pct: float = 0.0
+    edited_equipment_slot: str | None = None
+    edited_item_text: str | None = None
+    borrowed_from_slot: str | None = None
+    piece_attributions: list[WhatIfPieceAttribution] = Field(default_factory=list)
+    scenario_matrix: list[WhatIfScenarioPoint] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)

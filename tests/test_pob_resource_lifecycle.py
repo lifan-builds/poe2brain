@@ -175,8 +175,7 @@ def test_idle_auto_hibernation_and_transparent_slot_rehydration(
 def test_timeout_triggers_hard_sigkill_and_reaps_child(tmp_path: Path) -> None:
     hang_lua = tmp_path / "hang_bridge.lua"
     hang_lua.write_text(
-        "local line = io.stdin:read('*l')\n"
-        "while true do end\n",
+        "local line = io.stdin:read('*l')\nwhile true do end\n",
         encoding="utf-8",
     )
     bridge = Pob2Bridge(

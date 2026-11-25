@@ -18,6 +18,10 @@ from poe2brain.http import Poe2HttpClient
 from poe2brain.models.builds import (
     BuildSlotComparison,
     BuildStats,
+    CalcBreakdownReport,
+    CalcModProvenanceRow,
+    CalcSourceTotal,
+    CalcStatMatch,
     DefensivePassiveRespecOption,
     DewateredAudit,
     EquipmentSlotDiff,
@@ -25,10 +29,17 @@ from poe2brain.models.builds import (
     HcRipAuditReport,
     HcRipRisk,
     ItemUpgradeDiff,
+    RadiusJewelCandidate,
+    RadiusJewelRankingReport,
     SkillGroupDiff,
     SlotStatWeights,
     StatWeightEntry,
     StrippedPobFlag,
+    SupportGemCandidate,
+    SupportGemRankingReport,
+    WhatIfPieceAttribution,
+    WhatIfReport,
+    WhatIfScenarioPoint,
 )
 from poe2brain.models.common import Poe2Model, SaleType
 from poe2brain.models.trade import TradeListing
@@ -256,6 +267,11 @@ class LiveUpgradeCandidate(Poe2Model):
     rank: int
     listing: TradeListing
     upgrade_diff: ItemUpgradeDiff
+    raw_full_dps_delta: float | None = None
+    raw_total_ehp_delta: float | None = None
+    top_off_applied: list[str] = Field(default_factory=list)
+    top_off_cost_exalted: float = 0.0
+    effective_total_cost_exalted: float | None = None
     dps_gain_per_exalted: float | None = None
     ehp_gain_per_exalted: float | None = None
     warnings: list[str] = Field(default_factory=list)
@@ -268,6 +284,7 @@ class LiveSlotUpgradeReport(Poe2Model):
     metric: str = "FullDPS"
     max_price_exalted: float | None = None
     securable_only: bool = False
+    normalize_craft_topoff: bool = True
     query_id: str | None = None
     trade_url: str | None = None
     total_market_matches: int = 0
@@ -524,6 +541,232 @@ def _to_item_upgrade_diff(
         dps_per_exalted=dps_per_ex,
         ehp_per_exalted=ehp_per_ex,
     )
+
+
+def _classify_topoff_slot_profile(
+    equipment_slot: str,
+    base_type: str,
+) -> tuple[int, str | None, str | None]:
+    """Return `(max_artificer_sockets, quality_currency, greater_iron_rune_mod_line)`."""
+    low_slot = equipment_slot.strip().lower()
+    low_base = base_type.strip().lower()
+
+    if any(
+        tok in low_slot or tok in low_base
+        for tok in ("ring", "amulet", "belt", "quiver", "flask", "charm", "jewel", "sceptre")
+    ):
+        return 0, None, None
+
+    if "body" in low_slot:
+        return 2, "Armourer's Scrap", "18% increased Armour, Evasion and Energy Shield"
+
+    if any(tok in low_slot for tok in ("helmet", "gloves", "boots")) or any(
+        tok in low_base for tok in ("shield", "buckler", "focus", "targe", "crest")
+    ):
+        return 1, "Armourer's Scrap", "18% increased Armour, Evasion and Energy Shield"
+
+    if "quarterstaff" in low_base or any(
+        tok in low_base
+        for tok in (
+            "bow",
+            "crossbow",
+            "greathammer",
+            "greatmace",
+            "two hand",
+            "maul",
+            "greatsword",
+            "longsword",
+            "greataxe",
+            "poleaxe",
+        )
+    ):
+        return 2, "Blacksmith's Whetstone", "18% increased Physical Damage"
+
+    if "staff" in low_base:
+        return 2, None, "30% increased Spell Damage"
+
+    if "wand" in low_base:
+        return 1, None, "30% increased Spell Damage"
+
+    if "weapon" in low_slot or any(
+        tok in low_base
+        for tok in ("mace", "spear", "sword", "axe", "dagger", "claw", "flail", "talon")
+    ):
+        return 1, "Blacksmith's Whetstone", "18% increased Physical Damage"
+
+    return 0, None, None
+
+
+def _synthesize_topoff_pob_item_text(
+    pob_text: str,
+    *,
+    equipment_slot: str,
+    base_type: str,
+    corrupted: bool,
+    resolve_price_fn: Any,
+) -> tuple[str, list[str], float]:
+    """Virtually top off an uncorrupted (or empty-socket corrupted) PoB2 item with
+    `Quality: 20` and `Greater Iron Rune` sockets so raw market listings compete fairly
+    against pre-qualitied/pre-socketed listings.
+    """
+    if not pob_text.strip():
+        return pob_text, [], 0.0
+
+    max_sockets, qual_currency, rune_mod_line = _classify_topoff_slot_profile(
+        equipment_slot, base_type
+    )
+    if max_sockets == 0 and qual_currency is None:
+        return pob_text, [], 0.0
+
+    lines = pob_text.splitlines()
+    cur_quality = 0
+    quality_line_idx: int | None = None
+    cur_sockets = 0
+    sockets_line_idx: int | None = None
+    implicits_line_idx: int | None = None
+    implicits_count = 0
+    rune_spec_indices: list[int] = []
+    rune_mod_count = 0
+
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("Quality:"):
+            quality_line_idx = idx
+            m_q = re.search(r"\d+", stripped)
+            if m_q:
+                cur_quality = int(m_q.group(0))
+        elif stripped.startswith("Sockets:"):
+            sockets_line_idx = idx
+            cur_sockets = stripped.split(":", 1)[1].count("S")
+        elif stripped.startswith("Rune:"):
+            rune_spec_indices.append(idx)
+        elif stripped.startswith("Implicits:"):
+            implicits_line_idx = idx
+            m_imp = re.search(r"\d+", stripped)
+            if m_imp:
+                implicits_count = int(m_imp.group(0))
+        elif stripped.startswith("{rune}"):
+            rune_mod_count += 1
+
+    existing_filled_runes = max(len(rune_spec_indices), rune_mod_count)
+    applied: list[str] = []
+    total_cost_ex = 0.0
+    out_lines = list(lines)
+
+    header_insert_idx = (
+        implicits_line_idx if implicits_line_idx is not None else min(3, len(out_lines))
+    )
+
+    if not corrupted and qual_currency is not None and cur_quality < 20:
+        qual_needed = 20 - cur_quality
+        if quality_line_idx is not None:
+            out_lines[quality_line_idx] = "Quality: 20"
+        else:
+            out_lines.insert(header_insert_idx, "Quality: 20")
+            header_insert_idx += 1
+            if sockets_line_idx is not None and sockets_line_idx >= header_insert_idx - 1:
+                sockets_line_idx += 1
+            if implicits_line_idx is not None:
+                implicits_line_idx += 1
+            rune_spec_indices = [
+                ri + 1 if ri >= header_insert_idx - 1 else ri for ri in rune_spec_indices
+            ]
+        total_cost_ex += float(resolve_price_fn(qual_currency, float(qual_needed)))
+        applied.append(f"Quality {cur_quality}% -> 20% ({qual_needed}x {qual_currency})")
+
+    target_sockets = cur_sockets if corrupted else max(cur_sockets, max_sockets)
+    artificers_needed = 0 if corrupted else max(0, target_sockets - cur_sockets)
+    empty_rune_slots = max(0, target_sockets - existing_filled_runes) if rune_mod_line else 0
+
+    if artificers_needed > 0:
+        total_cost_ex += float(resolve_price_fn("Artificer's Orb", float(artificers_needed)))
+        applied.append(f"+{artificers_needed}x Artificer's Orb")
+
+    if empty_rune_slots > 0 and rune_mod_line:
+        sock_line = "Sockets: " + " ".join(["S"] * target_sockets)
+        if sockets_line_idx is not None:
+            out_lines[sockets_line_idx] = sock_line
+            rune_insert_at = (
+                rune_spec_indices[-1] + 1 if rune_spec_indices else sockets_line_idx + 1
+            )
+        else:
+            ins_at = implicits_line_idx if implicits_line_idx is not None else header_insert_idx
+            out_lines.insert(ins_at, sock_line)
+            if implicits_line_idx is not None:
+                implicits_line_idx += 1
+            rune_insert_at = ins_at + 1
+
+        if rune_mod_count > 0 and not rune_spec_indices and implicits_line_idx is not None:
+            out_lines[implicits_line_idx] = f"Implicits: {implicits_count + empty_rune_slots}"
+            for _ in range(empty_rune_slots):
+                out_lines.insert(implicits_line_idx + 1, f"{{rune}}{rune_mod_line}")
+        else:
+            for _ in range(empty_rune_slots):
+                out_lines.insert(rune_insert_at, "Rune: Greater Iron Rune")
+                rune_insert_at += 1
+
+        total_cost_ex += float(resolve_price_fn("Greater Iron Rune", float(empty_rune_slots)))
+        applied.append(f"+{empty_rune_slots}x Greater Iron Rune ({rune_mod_line})")
+
+    if not applied:
+        return pob_text, [], 0.0
+
+    return "\n".join(out_lines), applied, round(total_cost_ex, 2)
+
+
+def _edit_pob_item_text(
+    raw_text: str,
+    *,
+    add_mod_lines: Sequence[str] | None = None,
+    remove_mod_substrings: Sequence[str] | None = None,
+    set_quality: int | None = None,
+) -> str:
+    """Apply surgical mod-line additions, substring removals, or Quality edits to a PoB2 item."""
+    lines = raw_text.splitlines()
+    if not lines:
+        raise Pob2BridgeError("Cannot edit empty PoB2 item text")
+
+    implicits_idx: int | None = None
+    implicit_count = 0
+    quality_idx: int | None = None
+    for idx, ln in enumerate(lines):
+        s = ln.strip()
+        if s.startswith("Quality:"):
+            quality_idx = idx
+        elif s.startswith("Implicits:"):
+            implicits_idx = idx
+            m = re.search(r"\d+", s)
+            if m:
+                implicit_count = int(m.group(0))
+            break
+
+    if set_quality is not None:
+        q_line = f"Quality: {int(set_quality)}"
+        if quality_idx is not None:
+            lines[quality_idx] = q_line
+        else:
+            ins_at = implicits_idx if implicits_idx is not None else min(3, len(lines))
+            lines.insert(ins_at, q_line)
+            if implicits_idx is not None:
+                implicits_idx += 1
+
+    explicit_start = (
+        (implicits_idx + 1 + implicit_count) if implicits_idx is not None else min(3, len(lines))
+    )
+    remove_subs = [s.strip().lower() for s in (remove_mod_substrings or ()) if s.strip()]
+    if remove_subs:
+        kept_head = lines[:explicit_start]
+        kept_tail = [
+            ln for ln in lines[explicit_start:] if not any(sub in ln.lower() for sub in remove_subs)
+        ]
+        lines = kept_head + kept_tail
+
+    for mod_ln in add_mod_lines or ():
+        cleaned = str(mod_ln).strip()
+        if cleaned:
+            lines.append(cleaned)
+
+    return "\n".join(lines)
 
 
 def _fallback_fetch_entry_to_pob2_text(entry: Mapping[str, Any]) -> str:
@@ -2050,7 +2293,17 @@ class BuildService:
             except Exception:
                 pass
         # Conservative fallback ratios if offline
-        fallback = {"divine": 450.0, "chaos": 35.0, "regal": 0.25, "vaal": 1.0, "alch": 0.5}
+        fallback = {
+            "divine": 450.0,
+            "chaos": 35.0,
+            "regal": 0.25,
+            "vaal": 1.0,
+            "alch": 0.5,
+            "armourer's scrap": 0.05,
+            "blacksmith's whetstone": 0.08,
+            "artificer's orb": 0.5,
+            "greater iron rune": 0.5,
+        }
         return amount * fallback.get(cur, 1.0)
 
     def _execute_trade2_weighted_search(
@@ -2198,10 +2451,12 @@ class BuildService:
         metric: Literal["FullDPS", "TotalEHP", "balanced"] = "FullDPS",
         league: str = DEFAULT_LEAGUE,
         max_price_exalted: float | None = None,
+        min_spirit: int = 0,
         securable_only: bool = False,
         min_rune_sockets: int = 0,
         candidate_limit: int = 10,
         sort_by_value: bool = False,
+        normalize_craft_topoff: bool = True,
     ) -> LiveSlotUpgradeReport:
         slot_weights = self.compute_slot_trade_weights(
             slot_name,
@@ -2218,6 +2473,38 @@ class BuildService:
                 f"PoB2 could not generate a weighted trade2 query for slot {slot_name!r}"
             )
 
+        if min_spirit > 0:
+            from poe2brain.trade.stat_matcher import resolve_natural_stat, resolve_slot_or_category
+
+            query_block = dict(payload.get("query") or {})
+            cat = resolve_slot_or_category(slot_name) or ""
+            if cat == "weapon.sceptre":
+                filters_block = dict(query_block.get("filters") or {})
+                eq_block = dict(filters_block.get("equipment_filters") or {})
+                eq_filters = dict(eq_block.get("filters") or {})
+                eq_filters["spirit"] = {"min": min_spirit}
+                eq_block["filters"] = eq_filters
+                filters_block["equipment_filters"] = eq_block
+                query_block["filters"] = filters_block
+            else:
+                spirit_cands = resolve_natural_stat(
+                    "spirit", category=cat or "accessory.amulet", limit=1
+                )
+                if spirit_cands and spirit_cands[0].trade_ids:
+                    stats_list = list(query_block.get("stats") or [])
+                    stats_list.append(
+                        {
+                            "type": "count",
+                            "value": {"min": 1},
+                            "filters": [
+                                {"id": tid, "value": {"min": min_spirit}}
+                                for tid in spirit_cands[0].trade_ids
+                            ],
+                        }
+                    )
+                    query_block["stats"] = stats_list
+            payload["query"] = query_block
+
         query_id, trade_url, total_matches, listings = self._execute_trade2_weighted_search(
             league=league,
             payload=payload,
@@ -2231,6 +2518,7 @@ class BuildService:
                 metric=metric,
                 max_price_exalted=max_price_exalted,
                 securable_only=securable_only,
+                normalize_craft_topoff=normalize_craft_topoff,
                 query_id=query_id,
                 trade_url=trade_url,
                 total_market_matches=total_matches,
@@ -2240,44 +2528,116 @@ class BuildService:
 
         batch_inputs: list[dict[str, Any]] = []
         listings_by_id: dict[str, TradeListing] = {}
+        topoff_meta_by_id: dict[str, tuple[str, list[str], float]] = {}
+        unit_price_cache: dict[str, float | None] = {}
+
+        def _cached_price(cur: str, amt: float) -> float | None:
+            if cur not in unit_price_cache:
+                unit_price_cache[cur] = self._resolve_currency_to_exalted(cur, 1.0, league)
+            unit = unit_price_cache[cur]
+            return unit * amt if unit is not None else None
+
         for idx, lst in enumerate(listings, start=1):
             lid = lst.listing_id or f"cand_{idx}"
             listings_by_id[lid] = lst
             cand_label = f"{lst.item_name + ' ' if lst.item_name else ''}{lst.base_type}".strip()
+            raw_txt = lst.pob_item_text or ""
             batch_inputs.append(
                 {
                     "id": lid,
                     "label": cand_label,
                     "targetSlot": slot_name,
-                    "itemText": lst.pob_item_text or "",
+                    "itemText": raw_txt,
                 }
             )
+            if normalize_craft_topoff:
+                top_txt, top_applied, top_cost = _synthesize_topoff_pob_item_text(
+                    raw_txt,
+                    equipment_slot=slot_name,
+                    base_type=lst.base_type,
+                    corrupted=lst.corrupted,
+                    resolve_price_fn=_cached_price,
+                )
+                if top_applied and top_txt != raw_txt:
+                    topoff_meta_by_id[lid] = (top_txt, top_applied, top_cost)
+                    batch_inputs.append(
+                        {
+                            "id": f"__topoff__{lid}",
+                            "label": f"{cand_label} (20% Qual + Runes)",
+                            "targetSlot": slot_name,
+                            "itemText": top_txt,
+                        }
+                    )
 
         raw_batch = self.bridge.call(
             "diff_items_batch",
             {"slot": build_slot, "items": batch_inputs},
         )
+        results_by_id: dict[str, Mapping[str, Any]] = {}
+        for raw_res in raw_batch.get("results") or []:
+            if isinstance(raw_res, Mapping) and raw_res.get("ok") and raw_res.get("id"):
+                results_by_id[str(raw_res["id"])] = raw_res
 
         scored: list[tuple[float, LiveUpgradeCandidate]] = []
-        for raw_res in raw_batch.get("results") or []:
-            if not isinstance(raw_res, Mapping) or not raw_res.get("ok"):
+        for lid, lst in listings_by_id.items():
+            raw_res = results_by_id.get(lid)
+            if raw_res is None:
                 continue
-            lid = str(raw_res.get("id") or "")
-            lst = listings_by_id.get(lid)
-            if lst is None:
-                continue
-            price_ex = lst.price_exalted if lst.price_exalted > 0 else None
-            diff_model = _to_item_upgrade_diff(
-                raw_res,
-                item_text=lst.pob_item_text,
-                price_exalted=price_ex,
-            )
-            ehp_per_ex = (
-                round(diff_model.total_ehp_delta / price_ex, 4)
-                if price_ex is not None and price_ex > 0
+            raw_delta_block = raw_res.get("delta") or {}
+            raw_dps_delta = float(raw_delta_block.get("FullDPS") or 0.0)
+            raw_ehp_delta = float(raw_delta_block.get("TotalEHP") or 0.0)
+
+            base_price_ex = lst.price_exalted if lst.price_exalted > 0 else None
+            chosen_res = raw_res
+            chosen_text = lst.pob_item_text
+            top_applied: list[str] = []
+            top_cost = 0.0
+            if lid in topoff_meta_by_id and f"__topoff__{lid}" in results_by_id:
+                top_res = results_by_id[f"__topoff__{lid}"]
+                top_txt, cand_applied, cand_cost = topoff_meta_by_id[lid]
+                within_budget = (
+                    max_price_exalted is None
+                    or base_price_ex is None
+                    or (base_price_ex + cand_cost) <= max_price_exalted
+                )
+                top_delta_block = top_res.get("delta") or {}
+                top_dps_delta = float(top_delta_block.get("FullDPS") or 0.0)
+                top_ehp_delta = float(top_delta_block.get("TotalEHP") or 0.0)
+                adopt_topoff = within_budget and (
+                    top_dps_delta > raw_dps_delta + 1e-6 or top_ehp_delta > raw_ehp_delta + 1e-6
+                )
+                if adopt_topoff and sort_by_value and base_price_ex is not None:
+                    all_in_ex = base_price_ex + cand_cost
+                    if metric == "TotalEHP":
+                        adopt_topoff = (top_ehp_delta / all_in_ex) >= (
+                            raw_ehp_delta / base_price_ex
+                        )
+                    else:
+                        adopt_topoff = (top_dps_delta / all_in_ex) >= (
+                            raw_dps_delta / base_price_ex
+                        )
+                if adopt_topoff:
+                    chosen_res = top_res
+                    chosen_text = top_txt
+                    top_applied = cand_applied
+                    top_cost = cand_cost
+
+            effective_price_ex = (
+                round(base_price_ex + top_cost, 2)
+                if base_price_ex is not None and base_price_ex > 0
                 else None
             )
-            warns = [str(w) for w in (raw_res.get("warnings") or [])]
+            diff_model = _to_item_upgrade_diff(
+                chosen_res,
+                item_text=chosen_text,
+                price_exalted=effective_price_ex,
+            )
+            ehp_per_ex = (
+                round(diff_model.total_ehp_delta / effective_price_ex, 4)
+                if effective_price_ex is not None and effective_price_ex > 0
+                else None
+            )
+            warns = [str(w) for w in (chosen_res.get("warnings") or [])]
 
             if sort_by_value:
                 if metric == "TotalEHP" and ehp_per_ex is not None:
@@ -2300,6 +2660,11 @@ class BuildService:
                         rank=0,
                         listing=lst,
                         upgrade_diff=diff_model,
+                        raw_full_dps_delta=round(raw_dps_delta, 2),
+                        raw_total_ehp_delta=round(raw_ehp_delta, 2),
+                        top_off_applied=top_applied,
+                        top_off_cost_exalted=top_cost,
+                        effective_total_cost_exalted=effective_price_ex,
                         dps_gain_per_exalted=diff_model.dps_per_exalted,
                         ehp_gain_per_exalted=ehp_per_ex,
                         warnings=warns,
@@ -2320,12 +2685,591 @@ class BuildService:
             metric=metric,
             max_price_exalted=max_price_exalted,
             securable_only=securable_only,
+            normalize_craft_topoff=normalize_craft_topoff,
             query_id=query_id,
             trade_url=trade_url,
             total_market_matches=total_matches,
             slot_weights=slot_weights,
             candidates=ranked_candidates,
         )
+
+    # ------------------------------------------------------------------
+    # 8. Deep Calculation Breakdown, Support Sweeper, Radius Jewels & What-If
+    # ------------------------------------------------------------------
+
+    def explain_calc(
+        self,
+        query: str,
+        *,
+        slot: str = "main",
+        skill_group: int | None = None,
+        max_mods: int = 40,
+    ) -> CalcBreakdownReport:
+        """Return full PoB2 calculation breakdown & modifier provenance (`BASE`/`INC`/`MORE`/`FLAG`)
+        for any stat or damage/defense mechanic on `slot`.
+        """
+        params: dict[str, Any] = {
+            "slot": slot,
+            "query": query,
+            "limit": max_mods,
+        }
+        if skill_group is not None:
+            params["skillGroup"] = int(skill_group)
+
+        res = self.bridge.call("calc_breakdown", params)
+        breakdown_by_key: dict[str, Mapping[str, Any]] = {
+            str(fb.get("key")): fb
+            for fb in (res.get("formulaBreakdowns") or [])
+            if isinstance(fb, Mapping) and fb.get("key")
+        }
+        matched_map: dict[str, CalcStatMatch] = {}
+        for mo in res.get("matchedOutputs") or []:
+            if not isinstance(mo, Mapping) or not mo.get("key"):
+                continue
+            k = str(mo["key"])
+            fb = breakdown_by_key.get(k, {})
+            matched_map[k] = CalcStatMatch(
+                key=k,
+                value=mo.get("value"),
+                lines=[str(ln) for ln in (fb.get("lines") or [])],
+                slots=[dict(s) for s in (fb.get("slots") or []) if isinstance(s, Mapping)],
+                reservations=[
+                    dict(r) for r in (fb.get("reservations") or []) if isinstance(r, Mapping)
+                ],
+            )
+        for k, fb in breakdown_by_key.items():
+            if k not in matched_map:
+                matched_map[k] = CalcStatMatch(
+                    key=k,
+                    value=fb.get("outputValue"),
+                    lines=[str(ln) for ln in (fb.get("lines") or [])],
+                    slots=[dict(s) for s in (fb.get("slots") or []) if isinstance(s, Mapping)],
+                    reservations=[
+                        dict(r) for r in (fb.get("reservations") or []) if isinstance(r, Mapping)
+                    ],
+                )
+
+        src_totals: list[CalcSourceTotal] = []
+        raw_src_totals = res.get("sourceTotals")
+        if isinstance(raw_src_totals, Mapping):
+            for s_type, bucket in sorted(raw_src_totals.items()):
+                if not isinstance(bucket, Mapping):
+                    continue
+                src_totals.append(
+                    CalcSourceTotal(
+                        source_type=str(s_type),
+                        base_total=round(float(bucket.get("BASE") or 0.0), 4),
+                        inc_total=round(float(bucket.get("INC") or 0.0), 2),
+                        more_pct=round(float(bucket.get("MORE_PCT") or 0.0), 2),
+                        mod_count=int(bucket.get("count") or 0),
+                    )
+                )
+
+        mods = [
+            CalcModProvenanceRow(
+                stat_name=str(row.get("statName") or ""),
+                mod_type=str(row.get("modType") or "BASE"),
+                value=row.get("value"),
+                source_type=str(row.get("sourceType") or "Other"),
+                source_label=str(row.get("sourceLabel") or ""),
+                flags=str(row.get("flags") or ""),
+            )
+            for row in (res.get("modifiers") or [])
+            if isinstance(row, Mapping)
+        ]
+        return CalcBreakdownReport(
+            slot=str(res.get("slot") or slot),
+            query=str(res.get("query") or query),
+            skill_group=int(res.get("skillGroup") or 1),
+            active_skill_name=str(res.get("activeSkillName") or "None"),
+            matched_stats=list(matched_map.values()),
+            modifier_count_total=int(res.get("modifierCountTotal") or len(mods)),
+            source_totals=src_totals,
+            modifiers=mods,
+            warnings=[str(w) for w in (res.get("warnings") or [])],
+        )
+
+    def rank_support_gems(
+        self,
+        *,
+        slot: str = "main",
+        group_index: int | None = None,
+        replace_gem_slot: int | None = None,
+        replace_gem: str | None = None,
+        max_tier: int | None = None,
+        include_lineage: bool = True,
+        exclude_lineage_conflicts: bool = False,
+        top_n: int = 15,
+    ) -> SupportGemRankingReport:
+        """Rank every compatible PoE2 0.5.5 Support Gem (Tier I-III + Lineage) for `group_index`,
+        returning DPS/EHP deltas alongside Mana sustain, Spirit reservation, and Lineage conflicts.
+        """
+        params: dict[str, Any] = {
+            "slot": slot,
+            "includeLineage": include_lineage,
+            "excludeLineageConflicts": exclude_lineage_conflicts,
+            "rankByDps": True,
+            "topN": top_n,
+        }
+        if group_index is not None:
+            params["groupIndex"] = int(group_index)
+        if replace_gem_slot is not None:
+            params["gemSlot"] = int(replace_gem_slot)
+        if replace_gem:
+            params["replaceGem"] = str(replace_gem)
+        if max_tier is not None:
+            params["maxTier"] = int(max_tier)
+
+        res = self.bridge.call(
+            "list_valid_supports",
+            params,
+            timeout=max(self.bridge.request_timeout, 120.0),
+        )
+        cands: list[SupportGemCandidate] = []
+        for row in res.get("supports") or []:
+            if not isinstance(row, Mapping):
+                continue
+            tier_val = row.get("supportTier")
+            cands.append(
+                SupportGemCandidate(
+                    gem_id=str(row.get("gemId") or ""),
+                    name=str(row.get("name") or ""),
+                    gem_family=str(row["gemFamily"]) if row.get("gemFamily") else None,
+                    support_tier=int(tier_val) if isinstance(tier_val, (int, float)) else None,
+                    is_lineage=bool(row.get("isLineage")),
+                    lineage_conflict_skill=(
+                        str(row["lineageConflictSkill"])
+                        if row.get("lineageConflictSkill")
+                        else None
+                    ),
+                    replaces_gem=str(row["replacesGem"]) if row.get("replacesGem") else None,
+                    already_socketed=bool(row.get("alreadySocketed")),
+                    dps_before=float(row.get("dpsBefore") or 0.0),
+                    dps_after=float(row.get("dpsAfter") or 0.0),
+                    dps_delta=float(row.get("dpsDelta") or 0.0),
+                    dps_pct=float(row.get("dpsPct") or 0.0),
+                    ehp_delta=float(row.get("ehpDelta") or 0.0),
+                    mana_cost_before=float(row.get("manaCostBefore") or 0.0),
+                    mana_cost_after=float(row.get("manaCostAfter") or 0.0),
+                    mana_sustainable_after=bool(row.get("manaSustainableAfter", True)),
+                    spirit_unreserved_before=int(row.get("spiritUnreservedBefore") or 0),
+                    spirit_unreserved_after=int(row.get("spiritUnreservedAfter") or 0),
+                    spirit_overflow=bool(row.get("spiritOverflow")),
+                    attributes_met_after=bool(row.get("attributesMetAfter", True)),
+                )
+            )
+        current_supports = [
+            str(g.get("name"))
+            for g in (res.get("socketedGems") or [])
+            if isinstance(g, Mapping) and g.get("isSupport") and g.get("name")
+        ]
+        return SupportGemRankingReport(
+            slot=str(res.get("slot") or slot),
+            group_index=int(res.get("groupIndex") or (group_index or 1)),
+            replace_gem_slot=(
+                int(res["replacedSupportSlot"])
+                if isinstance(res.get("replacedSupportSlot"), (int, float))
+                else replace_gem_slot
+            ),
+            active_skill_label=str(res.get("activeSkillName") or ""),
+            current_supports=current_supports,
+            max_tier=max_tier,
+            include_lineage=include_lineage,
+            total_valid=int(res.get("totalValid") or res.get("count") or len(cands)),
+            candidates=cands,
+            warnings=[str(w) for w in (res.get("warnings") or [])],
+        )
+
+    def rank_radius_jewels(
+        self,
+        jewel_name: str = "Controlled Metamorphosis",
+        *,
+        slot: str = "main",
+        stat: str = "FullDPS",
+        max_path_dist: int = 10,
+        top_n: int = 10,
+    ) -> RadiusJewelRankingReport:
+        """Rank every Passive Tree jewel socket x radius ring for a PoE2 radius jewel
+        (`Controlled Metamorphosis` or `Against the Darkness`).
+        """
+        res = self.bridge.call(
+            "rank_radius_jewel_sockets",
+            {
+                "slot": slot,
+                "jewelName": jewel_name,
+                "stat": stat,
+                "maxPathDist": max_path_dist,
+                "topN": top_n,
+            },
+            timeout=max(self.bridge.request_timeout, 120.0),
+        )
+        cands: list[RadiusJewelCandidate] = []
+        for idx, row in enumerate(res.get("candidates") or [], start=1):
+            if not isinstance(row, Mapping):
+                continue
+            cands.append(
+                RadiusJewelCandidate(
+                    rank=idx,
+                    jewel_name=str(row.get("jewelName") or jewel_name),
+                    socket_node_id=int(row.get("socketNodeId") or 0),
+                    socket_name=str(row.get("socketName") or "Jewel Socket"),
+                    socket_allocated=bool(row.get("socketAllocated")),
+                    socket_path_dist=int(row.get("socketPathDist") or 0),
+                    ring_index=int(row.get("ringIndex") or 1),
+                    ring_label=str(row.get("ringLabel") or ""),
+                    allocated_notables_in_radius=int(row.get("allocatedNotablesInRadius") or 0),
+                    allocated_smalls_in_radius=int(row.get("allocatedSmallsInRadius") or 0),
+                    ring_notables=[str(n) for n in (row.get("ringNotables") or [])],
+                    nearby_unallocated_notables=[
+                        str(n) for n in (row.get("nearbyUnallocatedNotables") or [])
+                    ],
+                    total_points_spent=int(row.get("totalPointsSpent") or 1),
+                    normal_points_saved=int(row.get("normalPointsSaved") or 0),
+                    stat=str(row.get("stat") or stat),
+                    before=float(row.get("before") or 0.0),
+                    after=float(row.get("after") or 0.0),
+                    delta=float(row.get("delta") or 0.0),
+                    pct=float(row.get("pct") or 0.0),
+                    per_point_delta=float(row.get("perPointDelta") or 0.0),
+                    per_point_pct=float(row.get("perPointPct") or 0.0),
+                )
+            )
+        return RadiusJewelRankingReport(
+            slot=str(res.get("slot") or slot),
+            jewel_name=str(res.get("jewelName") or jewel_name),
+            stat=str(res.get("stat") or stat),
+            base_value=float(res.get("baseValue") or 0.0),
+            candidates=cands,
+        )
+
+    def what_if(
+        self,
+        *,
+        slot: str = "main",
+        equip_items: Mapping[str, str] | None = None,
+        edit_slot: str | None = None,
+        add_mod_lines: Sequence[str] | None = None,
+        remove_mod_substrings: Sequence[str] | None = None,
+        set_quality: int | None = None,
+        alloc_node_ids: Sequence[int] | None = None,
+        dealloc_node_ids: Sequence[int] | None = None,
+        set_config: Mapping[str, Any] | None = None,
+        borrow_from_slot: str | None = None,
+        borrow_slots: Sequence[str] | None = None,
+        borrow_main_skill: bool = False,
+        include_scenario_matrix: bool = False,
+        apply: bool = False,
+    ) -> WhatIfReport:
+        """Run an atomic, rollback-safe multi-mutation PoB2 sandbox on `slot`:
+        - In-place item mod surgery (`edit_slot` + `add_mod_lines` / `remove_mod_substrings`)
+        - Direct multi-slot item swaps (`equip_items`)
+        - Piece-by-piece marginal attribution + grafting from `borrow_from_slot`
+        - Passive tree node swaps (`alloc_node_ids` / `dealloc_node_ids`) & `set_config`
+        - Optional 3-preset scenario matrix (`as_configured`, `sustainable_pinnacle`, `mapping`)
+        Never mutates `slot` unless `apply=True`.
+        """
+        work_slot = "__poe2brain_whatif__"
+        probe_slot = "__poe2brain_whatif_probe__"
+        self.clone_slot(slot, work_slot, activate=False)
+        try:
+            baseline_stats = self.get_stats(slot=work_slot)
+            base_dps = baseline_stats.effective_dps
+            base_ehp = baseline_stats.total_ehp
+
+            edited_item_text: str | None = None
+            attributions: list[WhatIfPieceAttribution] = []
+            warnings: list[str] = []
+
+            def _record_piece_probe(
+                label: str,
+                kind: Literal["equipment_slot", "main_skill_group", "edited_item", "passive_tree"],
+                mutate_fn: Any,
+            ) -> None:
+                self.clone_slot(slot, probe_slot, activate=False)
+                try:
+                    mutate_fn(probe_slot)
+                    p_stats = self.get_stats(slot=probe_slot)
+                    d_dps = p_stats.effective_dps - base_dps
+                    p_dps = (d_dps / base_dps * 100.0) if base_dps > 0 else 0.0
+                    d_ehp = p_stats.total_ehp - base_ehp
+                    p_ehp = (d_ehp / base_ehp * 100.0) if base_ehp > 0 else 0.0
+                    attributions.append(
+                        WhatIfPieceAttribution(
+                            label=label,
+                            kind=kind,
+                            effective_dps_delta=round(d_dps, 2),
+                            effective_dps_pct=round(p_dps, 2),
+                            total_ehp_delta=round(d_ehp, 2),
+                            total_ehp_pct=round(p_ehp, 2),
+                            spirit_unreserved_after=p_stats.spirit_unreserved,
+                            mana_sustainable_after=p_stats.mana_sustainable,
+                        )
+                    )
+                finally:
+                    self.bridge.call("delete_slot", {"slot": probe_slot})
+
+            # 1. Borrow equipment slots and/or main skill from a reference slot (`ref`)
+            if borrow_from_slot:
+                ref_summary = self.bridge.call(
+                    "get_build_summary",
+                    {"slot": borrow_from_slot, "includeItemRaw": True},
+                )
+                ref_items_by_slot: dict[str, str] = {}
+                for it in ref_summary.get("items") or []:
+                    if isinstance(it, Mapping) and it.get("slot") and it.get("raw"):
+                        s_nm = str(it["slot"])
+                        if not s_nm.startswith("Flask") and not s_nm.startswith("Charm"):
+                            ref_items_by_slot[s_nm] = str(it["raw"])
+
+                target_borrow_slots = (
+                    [str(s) for s in borrow_slots]
+                    if borrow_slots is not None
+                    else ([] if borrow_main_skill else list(ref_items_by_slot.keys()))
+                )
+                for b_slot in target_borrow_slots:
+                    raw_it = ref_items_by_slot.get(b_slot)
+                    if not raw_it:
+                        warnings.append(
+                            f"Reference slot {borrow_from_slot!r} has no item in {b_slot!r}."
+                        )
+                        continue
+                    _record_piece_probe(
+                        f"{borrow_from_slot}:{b_slot}",
+                        "equipment_slot",
+                        lambda target_s, s=b_slot, r=raw_it: self.bridge.call(
+                            "equip_item",
+                            {"slot": target_s, "targetSlot": s, "itemText": r},
+                        ),
+                    )
+                    self.bridge.call(
+                        "equip_item",
+                        {"slot": work_slot, "targetSlot": b_slot, "itemText": raw_it},
+                    )
+
+                if borrow_main_skill:
+                    _record_piece_probe(
+                        f"{borrow_from_slot}:Main Skill Links",
+                        "main_skill_group",
+                        lambda target_s: self.bridge.call(
+                            "copy_main_skill_from_slot",
+                            {"source": borrow_from_slot, "target": target_s},
+                        ),
+                    )
+                    self.bridge.call(
+                        "copy_main_skill_from_slot",
+                        {"source": borrow_from_slot, "target": work_slot},
+                    )
+
+            # 2. In-place mod surgery on a currently equipped item
+            if edit_slot:
+                cur_summary = self.bridge.call(
+                    "get_build_summary",
+                    {"slot": work_slot, "includeItemRaw": True},
+                )
+                cur_raw = ""
+                for it in cur_summary.get("items") or []:
+                    if isinstance(it, Mapping) and str(it.get("slot") or "") == edit_slot:
+                        cur_raw = str(it.get("raw") or "")
+                        break
+                if not cur_raw:
+                    raise Pob2BridgeError(
+                        f"Slot {slot!r} has no equipped item in {edit_slot!r} to edit"
+                    )
+                edited_item_text = _edit_pob_item_text(
+                    cur_raw,
+                    add_mod_lines=add_mod_lines,
+                    remove_mod_substrings=remove_mod_substrings,
+                    set_quality=set_quality,
+                )
+                if (
+                    borrow_from_slot
+                    or equip_items
+                    or alloc_node_ids
+                    or dealloc_node_ids
+                ):
+                    _record_piece_probe(
+                        f"edit:{edit_slot}",
+                        "edited_item",
+                        lambda target_s, s=edit_slot, r=edited_item_text: self.bridge.call(
+                            "equip_item",
+                            {"slot": target_s, "targetSlot": s, "itemText": r},
+                        ),
+                    )
+                self.bridge.call(
+                    "equip_item",
+                    {"slot": work_slot, "targetSlot": edit_slot, "itemText": edited_item_text},
+                )
+
+            # 3. Explicit equipment swaps
+            for eq_slot, item_txt in (equip_items or {}).items():
+                if len(equip_items or {}) > 1 or borrow_from_slot or edit_slot:
+                    _record_piece_probe(
+                        f"equip:{eq_slot}",
+                        "equipment_slot",
+                        lambda target_s, s=eq_slot, r=item_txt: self.bridge.call(
+                            "equip_item",
+                            {"slot": target_s, "targetSlot": s, "itemText": r},
+                        ),
+                    )
+                self.bridge.call(
+                    "equip_item",
+                    {"slot": work_slot, "targetSlot": eq_slot, "itemText": item_txt},
+                )
+
+            # 4. Passive tree node allocations / removals
+            if dealloc_node_ids or alloc_node_ids:
+                if dealloc_node_ids:
+                    self.bridge.call(
+                        "dealloc_nodes",
+                        {
+                            "slot": work_slot,
+                            "nodeIds": [int(n) for n in dealloc_node_ids],
+                            "includeDependents": False,
+                        },
+                    )
+                if alloc_node_ids:
+                    self.bridge.call(
+                        "alloc_nodes",
+                        {
+                            "slot": work_slot,
+                            "nodeIds": [int(n) for n in alloc_node_ids],
+                            "includePath": True,
+                        },
+                    )
+
+            # 5. Config overrides
+            if set_config:
+                self.bridge.call(
+                    "set_config",
+                    {"slot": work_slot, "values": dict(set_config)},
+                )
+
+            after_stats = self.get_stats(slot=work_slot)
+            if not after_stats.attributes_met:
+                warnings.append(
+                    f"Unmet Attribute requirements after mutation "
+                    f"(Str {after_stats.str_total}/{after_stats.req_str}, "
+                    f"Dex {after_stats.dex_total}/{after_stats.req_dex}, "
+                    f"Int {after_stats.int_total}/{after_stats.req_int})."
+                )
+            if after_stats.spirit_unreserved < 0:
+                warnings.append(
+                    f"Spirit overflow after mutation ({after_stats.spirit_reserved}/"
+                    f"{after_stats.spirit_total} reserved)."
+                )
+            if not after_stats.mana_payable:
+                warnings.append(
+                    f"Main skill Mana cost ({after_stats.mana_cost:.0f}) exceeds "
+                    f"unreserved Mana ({after_stats.mana_unreserved:.0f})."
+                )
+
+            attributions.sort(key=lambda a: a.effective_dps_pct, reverse=True)
+
+            scenario_matrix: list[WhatIfScenarioPoint] = []
+            if include_scenario_matrix:
+                # Preset 1: As Configured
+                as_cfg_d = after_stats.effective_dps - base_dps
+                as_cfg_p = (as_cfg_d / base_dps * 100.0) if base_dps > 0 else 0.0
+                scenario_matrix.append(
+                    WhatIfScenarioPoint(
+                        scenario="as_configured",
+                        effective_dps=round(after_stats.effective_dps, 2),
+                        effective_dps_delta_vs_baseline=round(as_cfg_d, 2),
+                        effective_dps_pct_vs_baseline=round(as_cfg_p, 2),
+                        total_ehp=round(after_stats.total_ehp, 2),
+                        total_ehp_delta_vs_baseline=round(after_stats.total_ehp - base_ehp, 2),
+                        mana_sustainable=after_stats.mana_sustainable,
+                        spirit_unreserved=after_stats.spirit_unreserved,
+                    )
+                )
+                # Preset 2: Sustainable Pinnacle Boss (dewatered)
+                base_dewater = self.audit_build(slot=slot, apply_dewater=False)
+                after_dewater = self.audit_build(slot=work_slot, apply_dewater=False)
+                b_sust = base_dewater.sustainable_pinnacle_stats
+                a_sust = after_dewater.sustainable_pinnacle_stats
+                sust_d = a_sust.effective_dps - b_sust.effective_dps
+                sust_p = (
+                    (sust_d / b_sust.effective_dps * 100.0) if b_sust.effective_dps > 0 else 0.0
+                )
+                scenario_matrix.append(
+                    WhatIfScenarioPoint(
+                        scenario="sustainable_pinnacle",
+                        effective_dps=round(a_sust.effective_dps, 2),
+                        effective_dps_delta_vs_baseline=round(sust_d, 2),
+                        effective_dps_pct_vs_baseline=round(sust_p, 2),
+                        total_ehp=round(a_sust.total_ehp, 2),
+                        total_ehp_delta_vs_baseline=round(a_sust.total_ehp - b_sust.total_ehp, 2),
+                        mana_sustainable=a_sust.mana_sustainable,
+                        spirit_unreserved=a_sust.spirit_unreserved,
+                    )
+                )
+                # Preset 3: Mapping Clear (non-boss enemy + on-kill active)
+                map_cfg = {
+                    "enemyIsBoss": "None",
+                    "conditionKilledRecently": True,
+                    "conditionCritRecently": True,
+                }
+                self.clone_slot(slot, probe_slot, activate=False)
+                try:
+                    self.bridge.call("set_config", {"slot": probe_slot, "values": map_cfg})
+                    b_map = self.get_stats(slot=probe_slot)
+                finally:
+                    self.bridge.call("delete_slot", {"slot": probe_slot})
+
+                self.clone_slot(work_slot, probe_slot, activate=False)
+                try:
+                    self.bridge.call("set_config", {"slot": probe_slot, "values": map_cfg})
+                    a_map = self.get_stats(slot=probe_slot)
+                finally:
+                    self.bridge.call("delete_slot", {"slot": probe_slot})
+
+                map_d = a_map.effective_dps - b_map.effective_dps
+                map_p = (map_d / b_map.effective_dps * 100.0) if b_map.effective_dps > 0 else 0.0
+                scenario_matrix.append(
+                    WhatIfScenarioPoint(
+                        scenario="mapping_clear",
+                        effective_dps=round(a_map.effective_dps, 2),
+                        effective_dps_delta_vs_baseline=round(map_d, 2),
+                        effective_dps_pct_vs_baseline=round(map_p, 2),
+                        total_ehp=round(a_map.total_ehp, 2),
+                        total_ehp_delta_vs_baseline=round(a_map.total_ehp - b_map.total_ehp, 2),
+                        mana_sustainable=a_map.mana_sustainable,
+                        spirit_unreserved=a_map.spirit_unreserved,
+                    )
+                )
+
+            if apply:
+                self.clone_slot(work_slot, slot, activate=True)
+            else:
+                self.bridge.call("switch_slot", {"slot": slot, "createIfMissing": False})
+
+            dps_delta = after_stats.effective_dps - base_dps
+            dps_pct = (dps_delta / base_dps * 100.0) if base_dps > 0 else 0.0
+            ehp_delta = after_stats.total_ehp - base_ehp
+            ehp_pct = (ehp_delta / base_ehp * 100.0) if base_ehp > 0 else 0.0
+
+            return WhatIfReport(
+                slot=slot,
+                applied=apply,
+                rolled_back=not apply,
+                baseline_stats=baseline_stats,
+                after_stats=after_stats,
+                effective_dps_delta=round(dps_delta, 2),
+                effective_dps_pct=round(dps_pct, 2),
+                total_ehp_delta=round(ehp_delta, 2),
+                total_ehp_pct=round(ehp_pct, 2),
+                edited_equipment_slot=edit_slot,
+                edited_item_text=edited_item_text,
+                borrowed_from_slot=borrow_from_slot,
+                piece_attributions=attributions,
+                scenario_matrix=scenario_matrix,
+                warnings=warnings,
+            )
+        finally:
+            try:
+                self.bridge.call("delete_slot", {"slot": work_slot})
+            except Exception:
+                pass
 
 
 _DEFAULT_SERVICE: BuildService | None = None

@@ -629,8 +629,7 @@ def test_trade2_fetch_to_pob2_text_conversion() -> None:
                 {"description": "+14 to [Spirit] per Socket filled", "domain": "explicit"},
                 {
                     "description": (
-                        "+10% to all [ElementalResistances|Elemental Resistances] "
-                        "per Socket filled"
+                        "+10% to all [ElementalResistances|Elemental Resistances] per Socket filled"
                     ),
                     "domain": "explicit",
                 },
@@ -913,6 +912,4 @@ def test_hash_placeholder_constraints_and_chest_spirit_routing() -> None:
 
     amulet_item = parse_clipboard_item(FIXTURE_04_AMULET_CATALYST_ANOINT, bundle)
     amulet_priced_q = build_item_trade_query(amulet_item, max_price_exalted=5000, bundle=bundle)
-    assert amulet_priced_q["query"]["filters"]["trade_filters"]["filters"]["price"] == {
-        "max": 5000
-    }
+    assert amulet_priced_q["query"]["filters"]["trade_filters"]["filters"]["price"] == {"max": 5000}

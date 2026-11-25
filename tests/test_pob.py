@@ -675,8 +675,7 @@ def test_morior_invictus_socketed_items_evaluates_per_socket_filled_in_pob2(
                 {"description": "+14 to [Spirit] per Socket filled", "domain": "explicit"},
                 {
                     "description": (
-                        "+10% to all [ElementalResistances|Elemental Resistances] "
-                        "per Socket filled"
+                        "+10% to all [ElementalResistances|Elemental Resistances] per Socket filled"
                     ),
                     "domain": "explicit",
                 },
@@ -707,3 +706,267 @@ def test_find_live_slot_upgrades_real_trade2(build_service: BuildService) -> Non
     )
     assert report.query_id is not None
     assert report.total_market_matches >= 0
+
+
+def test_explain_calc_provenance_and_skill_group_warning(build_service: BuildService) -> None:
+    build_service.clone_slot("main", "calc_prov_slot")
+    report = build_service.explain_calc("EnergyShield", slot="calc_prov_slot")
+    assert report.query == "EnergyShield"
+    assert len(report.matched_stats) >= 1
+    assert report.modifier_count_total >= 2
+    source_cats = {m.source_type for m in report.modifiers}
+    assert "Item" in source_cats
+    assert any(st.source_type == "Item" and st.mod_count >= 2 for st in report.source_totals)
+
+    dps_report = build_service.explain_calc("FullDPS", slot="calc_prov_slot")
+    assert "Spark" in dps_report.active_skill_name
+    assert len(dps_report.matched_stats) >= 1
+
+    # Point Calcs tab at group 2 (Archmage) and verify automatic main-skill mismatch warning
+    xml_raw = build_service.export_build(slot="calc_prov_slot", fmt="xml")
+    skewed_xml = xml_raw.replace(
+        '<Input name="skill_number" number="1"/>',
+        '<Input name="skill_number" number="2"/>',
+    )
+    if 'name="skill_number"' not in skewed_xml:
+        skewed_xml = skewed_xml.replace(
+            "<Calcs>",
+            '<Calcs><Input name="skill_number" number="2"/>',
+            1,
+        )
+    build_service.load_build(skewed_xml, slot="calc_prov_skew")
+    skew_report = build_service.explain_calc("AverageDamage", slot="calc_prov_skew")
+    assert skew_report.skill_group == 1
+    assert any("group #2" in w or "skill_number" in w for w in skew_report.warnings)
+
+
+def test_rank_support_gems_tiers_and_lineage_conflicts(build_service: BuildService) -> None:
+    build_service.clone_slot("main", "supp_test")
+    report_all = build_service.rank_support_gems(slot="supp_test", top_n=12)
+    assert "Spark" in report_all.active_skill_label
+    assert report_all.total_valid >= 25
+    assert len(report_all.candidates) == 12
+    assert report_all.candidates[0].dps_delta > 0.0
+
+    # Tier filter (max_tier=2 excludes Tier 3-5, Tier 0 unassigned, and Lineage supports)
+    report_t2 = build_service.rank_support_gems(
+        slot="supp_test",
+        max_tier=2,
+        include_lineage=False,
+        top_n=10,
+    )
+    assert all(not c.is_lineage for c in report_t2.candidates)
+    assert all(
+        c.support_tier is not None and 1 <= c.support_tier <= 2
+        for c in report_t2.candidates
+    )
+
+    # Equip top Lineage candidate on a secondary group and verify conflict detection
+    lineage_cands = [c for c in report_all.candidates if c.is_lineage]
+    if lineage_cands:
+        chosen_lin = lineage_cands[0].name
+        build_service.set_gem_links(
+            ["Orb of Storms 20/20", chosen_lin],
+            slot="supp_test",
+            label="Secondary Orb",
+            include_in_full_dps=False,
+            set_main=False,
+        )
+        conflict_rep = build_service.rank_support_gems(slot="supp_test", top_n=25)
+        flagged = [c for c in conflict_rep.candidates if c.name == chosen_lin]
+        assert flagged and flagged[0].lineage_conflict_skill is not None
+
+        filtered_rep = build_service.rank_support_gems(
+            slot="supp_test",
+            exclude_lineage_conflicts=True,
+            top_n=25,
+        )
+        assert all(c.name != chosen_lin for c in filtered_rep.candidates)
+
+
+def test_rank_radius_jewels_controlled_metamorphosis_and_against_darkness(
+    build_service: BuildService,
+) -> None:
+    cm_report = build_service.rank_radius_jewels(
+        "Controlled Metamorphosis",
+        slot="main",
+        max_path_dist=15,
+        top_n=6,
+    )
+    assert cm_report.jewel_name == "Controlled Metamorphosis"
+    assert len(cm_report.candidates) >= 1
+    top = cm_report.candidates[0]
+    assert top.ring_label != ""
+    assert len(top.ring_notables) >= 1
+    assert top.per_point_delta >= 0.0
+
+    atd_report = build_service.rank_radius_jewels(
+        "Against the Darkness",
+        slot="main",
+        max_path_dist=15,
+        top_n=5,
+    )
+    assert atd_report.jewel_name == "Against the Darkness"
+    assert len(atd_report.candidates) >= 1
+    assert any(c.delta > 0.0 for c in atd_report.candidates)
+
+
+def test_what_if_transactional_rollback_and_borrow_attribution(
+    build_service: BuildService,
+) -> None:
+    build_service.clone_slot("main", "wi_base")
+    build_service.clone_slot("main", "wi_ref")
+    build_service.equip_item(
+        """Rarity: RARE
+God Wand
+Attuned Wand
+Quality: 20
+Sockets: S
+Rune: Greater Iron Rune
+Implicits: 0
+140% increased Spell Damage
+110% increased Lightning Damage
++5 to Level of all Lightning Spell Skills
++220 to maximum Mana
+38% increased Cast Speed""",
+        target_slot="Weapon 1",
+        slot="wi_ref",
+    )
+
+    before_stats = build_service.get_stats(slot="wi_base")
+    wi_report = build_service.what_if(
+        slot="wi_base",
+        edit_slot="Body Armour",
+        add_mod_lines=["+120 to maximum Energy Shield"],
+        set_quality=20,
+        borrow_from_slot="wi_ref",
+        borrow_slots=["Weapon 1"],
+        include_scenario_matrix=True,
+        apply=False,
+    )
+    assert wi_report.applied is False
+    assert wi_report.rolled_back is True
+    assert wi_report.effective_dps_delta > 200.0
+    assert wi_report.after_stats.energy_shield > wi_report.baseline_stats.energy_shield
+    assert len(wi_report.piece_attributions) >= 2
+    assert len(wi_report.scenario_matrix) >= 3
+
+    # Verify non-destructive rollback on wi_base
+    after_rollback = build_service.get_stats(slot="wi_base")
+    assert after_rollback.full_dps == pytest.approx(before_stats.full_dps, rel=1e-6)
+    assert after_rollback.energy_shield == pytest.approx(before_stats.energy_shield, rel=1e-6)
+
+    # Verify apply=True commits the mutation
+    applied = build_service.what_if(
+        slot="wi_base",
+        edit_slot="Body Armour",
+        set_quality=20,
+        apply=True,
+    )
+    assert applied.applied is True
+    assert applied.rolled_back is False
+    after_apply = build_service.get_stats(slot="wi_base")
+    assert after_apply.energy_shield > before_stats.energy_shield
+
+
+def test_find_live_slot_upgrades_craft_topoff_beats_prefinished_corrupted(
+    build_service: BuildService,
+) -> None:
+    fetch_items = [
+        {
+            "id": "corrupt_prefinished",
+            "listing": {
+                "saleType": "securable",
+                "account": {"name": "CorruptSeller"},
+                "price": {"type": "~price", "amount": 40, "currency": "exalted"},
+            },
+            "item": {
+                "name": "Vaal Rod",
+                "baseType": "Attuned Wand",
+                "rarity": "Rare",
+                "ilvl": 82,
+                "corrupted": True,
+                "sockets": [{"group": 0, "type": "rune"}],
+                "socketedItems": [
+                    {"socket": 0, "baseType": "Greater Iron Rune"},
+                ],
+                "runeMods": ["30% increased Spell Damage"],
+                "explicitMods": [
+                    {"description": "80% increased Spell Damage", "domain": "explicit"},
+                    {
+                        "description": "+3 to Level of all Lightning Spell Skills",
+                        "domain": "explicit",
+                    },
+                    {"description": "25% increased Cast Speed", "domain": "explicit"},
+                ],
+            },
+        },
+        {
+            "id": "clean_unfinished",
+            "listing": {
+                "saleType": "securable",
+                "account": {"name": "RawCraftSeller"},
+                "price": {"type": "~price", "amount": 35, "currency": "exalted"},
+            },
+            "item": {
+                "name": "Clean Spire",
+                "baseType": "Attuned Wand",
+                "rarity": "Rare",
+                "ilvl": 82,
+                "explicitMods": [
+                    {"description": "95% increased Spell Damage", "domain": "explicit"},
+                    {
+                        "description": "+3 to Level of all Lightning Spell Skills",
+                        "domain": "explicit",
+                    },
+                    {"description": "25% increased Cast Speed", "domain": "explicit"},
+                ],
+            },
+        },
+    ]
+
+    def mock_handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "/api/trade2/search/poe2/" in url:
+            return httpx.Response(
+                200,
+                json={
+                    "id": "q_topoff_test",
+                    "total": 2,
+                    "result": [e["id"] for e in fetch_items],
+                },
+            )
+        if "/api/trade2/fetch/" in url:
+            return httpx.Response(200, json={"result": fetch_items})
+        return httpx.Response(404, json={"error": "offline"})
+
+    limiter = GGGRateLimiter(sleep_sync=lambda _: None)
+    mock_http = Poe2HttpClient(
+        rate_limiter=limiter, sync_transport=httpx.MockTransport(mock_handler)
+    )
+    svc = BuildService(bridge=build_service.bridge, http_client=mock_http)
+    try:
+        raw_only = svc.find_live_slot_upgrades(
+            "Weapon 1",
+            build_slot="main",
+            normalize_craft_topoff=False,
+        )
+        # Without top-off, the pre-socketed (+30% rune) corrupt wand has 110% inc vs 95% inc!
+        assert raw_only.candidates[0].listing.item_name == "Vaal Rod"
+        assert raw_only.candidates[0].top_off_applied == []
+
+        topped = svc.find_live_slot_upgrades(
+            "Weapon 1",
+            build_slot="main",
+            normalize_craft_topoff=True,
+        )
+        # With top-off, Clean Spire gets +1x Greater Iron Rune (+30% Spell Damage) and wins
+        clean_cand = next(c for c in topped.candidates if c.listing.item_name == "Clean Spire")
+        corrupt_cand = next(c for c in topped.candidates if c.listing.item_name == "Vaal Rod")
+        assert corrupt_cand.top_off_applied == []
+        assert len(clean_cand.top_off_applied) >= 1
+        assert clean_cand.raw_full_dps_delta is not None
+        assert clean_cand.upgrade_diff.full_dps_delta > clean_cand.raw_full_dps_delta
+        assert topped.candidates[0].listing.item_name == "Clean Spire"
+    finally:
+        mock_http.close()

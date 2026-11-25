@@ -1402,6 +1402,99 @@ methods.clone_slot = function(params)
 	}
 end
 
+methods.delete_slot = function(params)
+	local targetName = normalizeSlotName(params, "slot")
+	local existed = slots[targetName] ~= nil
+	slots[targetName] = nil
+	if activeSlot == targetName then
+		if slots["main"] then
+			ensureSlot("main", false)
+		else
+			local fallback = next(slots)
+			if fallback then
+				ensureSlot(fallback, false)
+			else
+				activeSlot = nil
+			end
+		end
+	end
+	return { ok = true, deleted = existed, slot = targetName, activeSlot = activeSlot }
+end
+
+methods.copy_main_skill_from_slot = function(params)
+	if not params or not params.source then
+		error("params.source is required", 0)
+	end
+	local srcName = normalizeSlotName(params, "source")
+	local dstName = normalizeSlotName(params, "target")
+	ensureSlot(srcName, false)
+	local srcIdx = tonumber(build.mainSocketGroup) or 1
+	local srcGroup = build.skillsTab and build.skillsTab.socketGroupList[srcIdx]
+	if not srcGroup or type(srcGroup.gemList) ~= "table" or #srcGroup.gemList == 0 then
+		error("Source slot '" .. srcName .. "' has no main socket group gems", 0)
+	end
+	local copiedGems = {}
+	local srcLabel = srcGroup.label or ""
+	for _, g in ipairs(srcGroup.gemList) do
+		copiedGems[#copiedGems + 1] = {
+			nameSpec = g.nameSpec or (g.gemData and g.gemData.name) or "",
+			gemId = g.gemId,
+			skillId = g.skillId,
+			level = tonumber(g.level) or 20,
+			quality = tonumber(g.quality) or 20,
+			qualityId = g.qualityId or "Default",
+			enabled = g.enabled ~= false,
+			count = tonumber(g.count) or 1,
+		}
+	end
+
+	local dstEntry = ensureSlot(dstName, true)
+	pushUndoSnapshot(dstEntry)
+	local dstIdx = tonumber(build.mainSocketGroup) or 1
+	local dstGroup = build.skillsTab.socketGroupList[dstIdx]
+	if not dstGroup then
+		dstIdx = 1
+		dstGroup = {
+			label = srcLabel,
+			enabled = true,
+			includeInFullDPS = true,
+			gemList = {},
+			mainActiveSkill = 1,
+			mainActiveSkillCalcs = 1,
+		}
+		build.skillsTab.socketGroupList[1] = dstGroup
+		build.mainSocketGroup = 1
+	end
+	dstGroup.gemList = {}
+	for _, cg in ipairs(copiedGems) do
+		local resolved = findGemDataByIdentifier(cg.gemId) or findGemDataByIdentifier(cg.nameSpec)
+		dstGroup.gemList[#dstGroup.gemList + 1] = {
+			nameSpec = (resolved and resolved.name) or cg.nameSpec,
+			gemId = (resolved and resolved.id) or cg.gemId,
+			gemData = resolved,
+			skillId = cg.skillId or (resolved and resolved.grantedEffectId),
+			level = cg.level,
+			quality = cg.quality,
+			qualityId = cg.qualityId,
+			enabled = cg.enabled,
+			enableGlobal1 = true,
+			enableGlobal2 = true,
+			count = cg.count,
+		}
+	end
+	dstGroup.enabled = true
+	dstGroup.includeInFullDPS = true
+	build.skillsTab:ProcessSocketGroup(dstGroup)
+	finalizeSlotMutation(dstEntry)
+	return {
+		ok = true,
+		source = srcName,
+		target = dstName,
+		groupIndex = dstIdx,
+		stats = extractStatsTable(),
+	}
+end
+
 local function applyCharacterOptions(params)
 	if not params then return end
 	local tree = build.spec and build.spec.tree
@@ -2080,25 +2173,76 @@ methods.list_valid_supports = function(params)
 		error("Unknown socket group index " .. tostring(gIdx), 0)
 	end
 	local activeSkill = group.displaySkillList and group.displaySkillList[group.mainActiveSkill or 1]
+	local activeSkillName = (activeSkill and activeSkill.activeEffect and activeSkill.activeEffect.grantedEffect and activeSkill.activeEffect.grantedEffect.name)
+		or group.label
+		or ("Group " .. tostring(gIdx))
 	if not activeSkill then
-		return { slot = slotName, groupIndex = gIdx, supports = {} }
+		return { slot = slotName, groupIndex = gIdx, activeSkillName = activeSkillName, socketedGems = {}, supports = {} }
 	end
 
 	local tierFilter = params and params.tier ~= nil and tonumber(params.tier) or nil
+	local maxTierFilter = params and params.maxTier ~= nil and tonumber(params.maxTier) or nil
 	local includeLineage = (params == nil or params.includeLineage ~= false)
+	local excludeLineageConflicts = (params and params.excludeLineageConflicts == true)
 	local rankByDps = (params and params.rankByDps == true)
 	local topN = params and params.topN ~= nil and tonumber(params.topN) or nil
+	local explicitGemSlot = params and params.gemSlot ~= nil and tonumber(params.gemSlot) or nil
+	local replaceGemQuery = (params and type(params.replaceGem) == "string" and params.replaceGem ~= "") and params.replaceGem:lower() or nil
+
+	-- Scan ALL socket groups on character to enforce PoE2 Lineage Support max_copies_per_char = 1
+	local lineageElsewhereById = {}
+	for otherIdx, otherGrp in ipairs(build.skillsTab.socketGroupList or {}) do
+		if otherIdx ~= gIdx and otherGrp.enabled ~= false then
+			local otherAct = otherGrp.displaySkillList and otherGrp.displaySkillList[otherGrp.mainActiveSkill or 1]
+			local otherLabel = (otherAct and otherAct.activeEffect and otherAct.activeEffect.grantedEffect and otherAct.activeEffect.grantedEffect.name)
+				or (otherGrp.label and otherGrp.label ~= "" and otherGrp.label)
+				or ("Group " .. tostring(otherIdx))
+			for _, g in ipairs(otherGrp.gemList or {}) do
+				local gd = g.gemData
+				if g.enabled ~= false and gd and gd.id and gd.tags and gd.tags.lineage == true then
+					lineageElsewhereById[gd.id] = otherLabel
+				end
+			end
+		end
+	end
 
 	local equippedById = {}
 	local equippedIdxByFamily = {}
+	local socketedGems = {}
+	local resolvedReplaceIdx = nil
+	local supportOrdinal = 0
 	for idx, g in ipairs(group.gemList or {}) do
 		local gd = g.gemData
+		local isSup = (gd and gd.grantedEffect and gd.grantedEffect.support) and true or false
+		local gName = (gd and gd.name) or g.nameSpec or ("Gem " .. tostring(idx))
+		if isSup then
+			supportOrdinal = supportOrdinal + 1
+			if explicitGemSlot and supportOrdinal == explicitGemSlot then
+				resolvedReplaceIdx = idx
+			end
+			if replaceGemQuery and not resolvedReplaceIdx and gName:lower():find(replaceGemQuery, 1, true) then
+				resolvedReplaceIdx = idx
+			end
+		end
+		socketedGems[#socketedGems + 1] = {
+			gemIndex = idx,
+			supportSlot = isSup and supportOrdinal or dkjson.null,
+			name = gName,
+			isSupport = isSup,
+			supportTier = (gd and tonumber(gd.Tier)) or 0,
+			isLineage = (gd and gd.tags and gd.tags.lineage == true) or false,
+			enabled = g.enabled ~= false,
+		}
 		if gd then
 			if gd.id then equippedById[gd.id] = idx end
-			if gd.gemFamily and gd.grantedEffect and gd.grantedEffect.support then
+			if gd.gemFamily and isSup then
 				equippedIdxByFamily[gd.gemFamily] = idx
 			end
 		end
+	end
+
+	if explicitGemSlot and not resolvedReplaceIdx then
+		error("Support slot #" .. tostring(explicitGemSlot) .. " does not exist in socket group " .. tostring(gIdx) .. " (found " .. tostring(supportOrdinal) .. " supports)", 0)
 	end
 
 	local supports = {}
@@ -2106,11 +2250,16 @@ methods.list_valid_supports = function(params)
 		if gemData.grantedEffect and gemData.grantedEffect.support then
 			local isLineage = (gemData.tags and gemData.tags.lineage == true) or false
 			local sTier = tonumber(gemData.Tier) or 0
+			local conflictSkill = isLineage and lineageElsewhereById[gemId] or nil
 			local keep = true
 			if not includeLineage and isLineage then
 				keep = false
+			elseif excludeLineageConflicts and conflictSkill ~= nil then
+				keep = false
 			elseif tierFilter ~= nil then
 				keep = (sTier == tierFilter) or (includeLineage and isLineage)
+			elseif maxTierFilter ~= nil then
+				keep = (sTier >= 1 and sTier <= maxTierFilter) or (includeLineage and isLineage)
 			end
 			if keep then
 				local okS, canSup = pcall(calcLib.canGrantedEffectSupportActiveSkill, gemData.grantedEffect, activeSkill)
@@ -2123,6 +2272,7 @@ methods.list_valid_supports = function(params)
 						supportTier = sTier,
 						isLineage = isLineage,
 						maxCopiesPerChar = isLineage and 1 or dkjson.null,
+						lineageConflictSkill = conflictSkill or dkjson.null,
 						gemFamily = gemData.gemFamily or dkjson.null,
 						reqStr = tonumber(gemData.reqStr) or 0,
 						reqDex = tonumber(gemData.reqDex) or 0,
@@ -2134,6 +2284,9 @@ methods.list_valid_supports = function(params)
 		end
 	end
 
+	local baseDpsOut = 0
+	local baseManaCost = 0
+	local baseSpiritUnres = 0
 	if rankByDps and #supports > 0 then
 		local calcFunc, calcBase = build.calcsTab:GetMiscCalculator()
 		local override = (gIdx ~= (build.mainSocketGroup or 1)) and { mainSocketGroup = gIdx } or nil
@@ -2141,7 +2294,10 @@ methods.list_valid_supports = function(params)
 		local baseStats = extractStatsTable(baseOut)
 		local useFull = (override == nil) and (safeNum(baseStats.FullDPS, 0) > 0)
 		local baseDps = useFull and safeNum(baseStats.FullDPS, 0) or safeNum(baseStats.EffectiveDPS, 0)
-		local fastOpts = { nodeAlloc = true, requirementsItems = true, requirementsGems = true, skipEHP = true, fullDPSOnly = useFull }
+		baseDpsOut = baseDps
+		baseManaCost = safeNum(baseStats.ManaCost, 0)
+		baseSpiritUnres = safeNum(baseStats.SpiritUnreserved, 0)
+		local fastOpts = { nodeAlloc = true, requirementsItems = true, skipEHP = true }
 
 		local gemList = group.gemList
 		local savedDisplayGemList = group.displayGemList
@@ -2157,9 +2313,19 @@ methods.list_valid_supports = function(params)
 				entry.dpsDelta = 0
 				entry.dpsPct = 0
 				entry.replacesGem = dkjson.null
+				entry.manaCostBefore = baseManaCost
+				entry.manaCostAfter = baseManaCost
+				entry.manaSustainableAfter = (safeNum(baseStats.ManaRegenRecovery, 0) >= safeNum(baseStats.ManaPerSecondCost, 0))
+					and (safeNum(baseStats.ManaUnreserved, 0) >= baseManaCost)
+				entry.spiritUnreservedBefore = baseSpiritUnres
+				entry.spiritUnreservedAfter = baseSpiritUnres
+				entry.spiritOverflow = false
+				entry.attributesMetAfter = (safeNum(baseStats.Str, 0) >= safeNum(baseStats.ReqStr, 0))
+					and (safeNum(baseStats.Dex, 0) >= safeNum(baseStats.ReqDex, 0))
+					and (safeNum(baseStats.Int, 0) >= safeNum(baseStats.ReqInt, 0))
 			else
 				local famIdx = (gd.gemFamily and equippedIdxByFamily[gd.gemFamily]) or nil
-				local targetIdx = famIdx or appendIdx
+				local targetIdx = resolvedReplaceIdx or famIdx or appendIdx
 				local oldSlot = gemList[targetIdx]
 				local replacedName = (oldSlot and oldSlot.gemData and oldSlot.gemData.name) or dkjson.null
 				local lvl = (build.skillsTab.ProcessGemLevel and build.skillsTab:ProcessGemLevel(gd)) or gd.naturalMaxLevel or 1
@@ -2185,23 +2351,51 @@ methods.list_valid_supports = function(params)
 					local afterStats = extractStatsTable(out)
 					local newDps = useFull and safeNum(afterStats.FullDPS, 0) or safeNum(afterStats.EffectiveDPS, 0)
 					local delta = newDps - baseDps
+					local mCost = safeNum(afterStats.ManaCost, 0)
+					local mPerSec = safeNum(afterStats.ManaPerSecondCost, 0)
+					local mRegen = safeNum(afterStats.ManaRegenRecovery, 0)
+					local mUnres = safeNum(afterStats.ManaUnreserved, 0)
+					local spUnres = safeNum(afterStats.SpiritUnreserved, 0)
 					entry.dpsBefore = baseDps
 					entry.dpsAfter = newDps
 					entry.dpsDelta = delta
 					entry.dpsPct = baseDps > 0 and (delta / baseDps * 100.0) or 0.0
 					entry.replacesGem = replacedName
+					entry.manaCostBefore = baseManaCost
+					entry.manaCostAfter = mCost
+					entry.manaPerSecondAfter = mPerSec
+					entry.manaRegenAfter = mRegen
+					entry.manaSustainableAfter = (mUnres >= mCost) and (mPerSec <= 0 or mRegen >= mPerSec * 0.8)
+					entry.spiritUnreservedBefore = baseSpiritUnres
+					entry.spiritUnreservedAfter = spUnres
+					entry.spiritOverflow = (spUnres < 0) and (spUnres < baseSpiritUnres)
+					entry.attributesMetAfter = (safeNum(afterStats.Str, 0) >= math.max(safeNum(afterStats.ReqStr, 0), entry.reqStr))
+						and (safeNum(afterStats.Dex, 0) >= math.max(safeNum(afterStats.ReqDex, 0), entry.reqDex))
+						and (safeNum(afterStats.Int, 0) >= math.max(safeNum(afterStats.ReqInt, 0), entry.reqInt))
 				else
 					entry.dpsBefore = baseDps
 					entry.dpsAfter = baseDps
 					entry.dpsDelta = 0
 					entry.dpsPct = 0
 					entry.replacesGem = dkjson.null
+					entry.manaCostBefore = baseManaCost
+					entry.manaCostAfter = baseManaCost
+					entry.manaSustainableAfter = true
+					entry.spiritUnreservedBefore = baseSpiritUnres
+					entry.spiritUnreservedAfter = baseSpiritUnres
+					entry.spiritOverflow = false
+					entry.attributesMetAfter = true
 				end
 			end
 		end
 		calcFunc, calcBase = nil, nil
 		collectgarbage("collect")
 		table.sort(supports, function(a, b)
+			local aBlocked = a.spiritOverflow == true
+			local bBlocked = b.spiritOverflow == true
+			if aBlocked ~= bBlocked then
+				return not aBlocked
+			end
 			if math.abs((a.dpsDelta or 0) - (b.dpsDelta or 0)) > 1e-4 then
 				return (a.dpsDelta or 0) > (b.dpsDelta or 0)
 			end
@@ -2212,13 +2406,27 @@ methods.list_valid_supports = function(params)
 		table.sort(supports, function(a, b) return a.name < b.name end)
 	end
 
+	local totalValidSupports = #supports
 	if topN and topN > 0 and #supports > topN then
 		local trimmed = {}
 		for i = 1, topN do trimmed[i] = supports[i] end
 		supports = trimmed
 	end
 
-	return { slot = slotName, groupIndex = gIdx, count = #supports, supports = supports }
+	return {
+		slot = slotName,
+		groupIndex = gIdx,
+		activeSkillName = activeSkillName,
+		supportCountSocketed = supportOrdinal,
+		replacedSupportSlot = explicitGemSlot or dkjson.null,
+		baseDps = baseDpsOut,
+		baseManaCost = baseManaCost,
+		baseSpiritUnreserved = baseSpiritUnres,
+		socketedGems = socketedGems,
+		totalValid = totalValidSupports,
+		count = #supports,
+		supports = supports,
+	}
 end
 
 -- ---- Capability 4: Dewatering / PoB-Warrior Audit ----
@@ -3154,6 +3362,778 @@ methods.call_batch = function(params)
 		end
 	end
 	return { results = out }
+end
+
+-- ============================================================================
+-- Capability 10: Calcs Breakdown & Radius Jewel Socket Optimizer
+-- ============================================================================
+
+local function stripPobColorCodes(val)
+	if val == nil then return "" end
+	local s = tostring(val)
+	s = s:gsub("%^x%x%x%x%x%x%x", "")
+	s = s:gsub("%^%d", "")
+	return s
+end
+
+local STAT_QUERY_ALIASES = {
+	manacost = {
+		outputs = { "ManaCost", "ManaPerSecondCost", "ManaHasCost" },
+		breakdowns = { "ManaCost", "ManaPerSecondCost" },
+		mods = { "ManaCost", "Cost", "ManaCostNoMult" },
+	},
+	cost = {
+		outputs = { "ManaCost", "ManaPerSecondCost", "LifeCost" },
+		breakdowns = { "ManaCost", "ManaPerSecondCost" },
+		mods = { "ManaCost", "Cost" },
+	},
+	castspeed = {
+		outputs = { "Speed", "CastRate", "Time" },
+		breakdowns = { "Speed" },
+		mods = { "Speed" },
+		cfg = "skill",
+	},
+	attackspeed = {
+		outputs = { "Speed", "HitSpeed", "Time" },
+		breakdowns = { "Speed" },
+		mods = { "Speed" },
+		cfg = "skill",
+	},
+	speed = {
+		outputs = { "Speed", "MovementSpeedMod", "EffectiveMovementSpeedMod" },
+		breakdowns = { "Speed", "MovementSpeedMod" },
+		mods = { "Speed", "MovementSpeed" },
+		cfg = "skill",
+	},
+	crit = {
+		outputs = { "CritChance", "PreEffectiveCritChance", "CritMultiplier", "CritEffect" },
+		breakdowns = { "CritChance", "CritMultiplier", "CritEffect" },
+		mods = { "CritChance", "CritMultiplier" },
+		cfg = "skill",
+	},
+	critchance = {
+		outputs = { "CritChance", "PreEffectiveCritChance" },
+		breakdowns = { "CritChance" },
+		mods = { "CritChance" },
+		cfg = "skill",
+	},
+	critmulti = {
+		outputs = { "CritMultiplier", "CritEffect" },
+		breakdowns = { "CritMultiplier", "CritEffect" },
+		mods = { "CritMultiplier" },
+		cfg = "skill",
+	},
+	dps = {
+		outputs = { "FullDPS", "CombinedDPS", "TotalDPS", "TotalDot", "AverageDamage", "Speed", "HitChance" },
+		breakdowns = { "FullDPS", "CombinedDPS", "TotalDPS", "AverageDamage", "Speed" },
+		mods = { "Damage", "SpellDamage", "PhysicalDamage", "LightningDamage", "ColdDamage", "FireDamage", "ChaosDamage" },
+		cfg = "skill",
+	},
+	fulldps = {
+		outputs = { "FullDPS", "CombinedDPS", "TotalDPS", "AverageDamage", "Speed" },
+		breakdowns = { "FullDPS", "CombinedDPS", "TotalDPS", "AverageDamage" },
+		mods = { "Damage", "SpellDamage", "PhysicalDamage", "LightningDamage", "ColdDamage", "FireDamage", "ChaosDamage" },
+		cfg = "skill",
+	},
+	spirit = {
+		outputs = { "Spirit", "SpiritReserved", "SpiritUnreserved", "SpiritReservedPercent" },
+		breakdowns = { "Spirit", "SpiritReserved" },
+		mods = { "Spirit", "SpiritReservationEfficiency", "ReservationEfficiency" },
+	},
+	es = {
+		outputs = { "EnergyShield", "EnergyShieldRecharge", "EnergyShieldRecoveryCap" },
+		breakdowns = { "EnergyShield", "EnergyShieldRecharge" },
+		mods = { "EnergyShield", "EnergyShieldRecharge", "EnergyShieldRechargeFaster", "Defences" },
+	},
+	energyshield = {
+		outputs = { "EnergyShield", "EnergyShieldRecharge", "EnergyShieldRecoveryCap" },
+		breakdowns = { "EnergyShield", "EnergyShieldRecharge" },
+		mods = { "EnergyShield", "EnergyShieldRecharge", "Defences" },
+	},
+	life = {
+		outputs = { "Life", "LifeUnreserved", "LifeRegenRecovery" },
+		breakdowns = { "Life", "LifeRegenRecovery" },
+		mods = { "Life", "LifeRegen", "LifeRegenPercent" },
+	},
+	mana = {
+		outputs = { "Mana", "ManaUnreserved", "ManaRegenRecovery", "ManaCost", "ManaPerSecondCost" },
+		breakdowns = { "Mana", "ManaRegenRecovery", "ManaCost" },
+		mods = { "Mana", "ManaRegen", "ManaCost" },
+	},
+	chaosresist = {
+		outputs = { "ChaosResist", "ChaosResistOverCap", "ChaosMaximumHitTaken" },
+		breakdowns = { "ChaosResist", "ChaosMaximumHitTaken" },
+		mods = { "ChaosResist", "ChaosResistMax", "ChaosDamageTaken", "DamageTaken" },
+	},
+	fireresist = {
+		outputs = { "FireResist", "FireResistOverCap", "FireMaximumHitTaken" },
+		breakdowns = { "FireResist", "FireMaximumHitTaken" },
+		mods = { "FireResist", "ElementalResist", "FireResistMax" },
+	},
+	coldresist = {
+		outputs = { "ColdResist", "ColdResistOverCap", "ColdMaximumHitTaken" },
+		breakdowns = { "ColdResist", "ColdMaximumHitTaken" },
+		mods = { "ColdResist", "ElementalResist", "ColdResistMax" },
+	},
+	lightningresist = {
+		outputs = { "LightningResist", "LightningResistOverCap", "LightningMaximumHitTaken" },
+		breakdowns = { "LightningResist", "LightningMaximumHitTaken" },
+		mods = { "LightningResist", "ElementalResist", "LightningResistMax" },
+	},
+	armour = {
+		outputs = { "Armour", "PhysicalDamageReduction", "PhysicalMaximumHitTaken" },
+		breakdowns = { "Armour", "PhysicalDamageReduction", "PhysicalMaximumHitTaken" },
+		mods = { "Armour", "Defences", "PhysicalDamageReduction", "PhysicalDamageTaken" },
+	},
+	evasion = {
+		outputs = { "Evasion", "EvadeChance", "DeflectChance", "DeflectionRating" },
+		breakdowns = { "Evasion", "EvadeChance", "DeflectChance" },
+		mods = { "Evasion", "Defences", "DeflectionRating" },
+	},
+	ehp = {
+		outputs = { "TotalEHP", "PhysicalMaximumHitTaken", "FireMaximumHitTaken", "ColdMaximumHitTaken", "LightningMaximumHitTaken", "ChaosMaximumHitTaken" },
+		breakdowns = { "TotalEHP", "PhysicalMaximumHitTaken", "ChaosMaximumHitTaken" },
+		mods = { "Life", "EnergyShield", "Armour", "Evasion", "DamageTaken" },
+	},
+}
+
+local function resolveModSourceLabel(mod, targetBuild)
+	local rawSrc = tostring((mod and mod.source) or "")
+	local srcType = rawSrc:match("^([^:]+)") or "Unknown"
+	local label = rawSrc
+	if srcType == "Item" then
+		local itemId = tonumber(rawSrc:match("^Item:(%d+)"))
+		local item = itemId and targetBuild.itemsTab and targetBuild.itemsTab.items[itemId]
+		local slotStr = (mod and mod.sourceSlot) and (" (" .. tostring(mod.sourceSlot) .. ")") or ""
+		if item then
+			label = stripPobColorCodes(item.name or item.baseName or ("Item #" .. tostring(itemId))) .. slotStr
+		else
+			label = stripPobColorCodes(rawSrc:match("^Item:%d+:(.+)") or rawSrc) .. slotStr
+		end
+	elseif srcType == "Tree" then
+		local nodeId = tonumber(rawSrc:match("^Tree:(%d+)"))
+		local node = nodeId and targetBuild.spec and (
+			targetBuild.spec.nodes[nodeId]
+			or (targetBuild.spec.switchableNodes and targetBuild.spec.switchableNodes[nodeId])
+			or (targetBuild.spec.tree and targetBuild.spec.tree.nodes[nodeId])
+		)
+		if node and node.dn then
+			label = stripPobColorCodes(node.dn) .. " (#" .. tostring(nodeId) .. ")"
+		end
+	elseif srcType == "Skill" then
+		local skillId = rawSrc:match("^Skill:(.+)")
+		local sk = skillId and targetBuild.data and targetBuild.data.skills and targetBuild.data.skills[skillId]
+		label = (sk and sk.name) or skillId or rawSrc
+	elseif srcType == "Rune" or srcType == "Custom" or srcType == "Config" or srcType == "Many Sources" then
+		label = stripPobColorCodes(rawSrc:match("^[^:]+:(.+)") or rawSrc)
+	end
+	return srcType, label
+end
+
+local function formatModFlagsText(mod)
+	if not mod then return "" end
+	local names = {}
+	local mf = tonumber(mod.flags) or 0
+	local kf = tonumber(mod.keywordFlags) or 0
+	if mf ~= 0 and type(ModFlag) == "table" then
+		for name, bitVal in pairs(ModFlag) do
+			if type(bitVal) == "number" and bitVal > 0 and bit.band(mf, bitVal) == bitVal then
+				names[#names + 1] = name
+			end
+		end
+	end
+	if kf ~= 0 and type(KeywordFlag) == "table" then
+		for name, bitVal in pairs(KeywordFlag) do
+			if type(bitVal) == "number" and bitVal > 0 and bit.band(kf, bitVal) == bitVal then
+				names[#names + 1] = "Keyword:" .. name
+			end
+		end
+	end
+	table.sort(names)
+	return table.concat(names, ", ")
+end
+
+methods.calc_breakdown = function(params)
+	local slotName = normalizeSlotName(params, "slot")
+	ensureSlot(slotName, false)
+	checkParentAlive()
+
+	local rawQuery = tostring((params and params.query) or "FullDPS")
+	local normQuery = rawQuery:lower():gsub("[^%w]", "")
+	local rowLimit = math.max(1, math.min(100, tonumber(params and params.limit) or 25))
+	local requestedSkillGroup = params and params.skillGroup ~= nil and tonumber(params.skillGroup) or nil
+
+	local calcsTab = build.calcsTab
+	local savedSkillNum = calcsTab.input and calcsTab.input.skill_number or 1
+	local mainGroupIdx = build.mainSocketGroup or 1
+	local warnings = {}
+
+	if requestedSkillGroup ~= nil then
+		if not build.skillsTab.socketGroupList[requestedSkillGroup] then
+			error("Unknown socket group index " .. tostring(requestedSkillGroup), 0)
+		end
+		calcsTab.input.skill_number = requestedSkillGroup
+	elseif savedSkillNum ~= mainGroupIdx and build.skillsTab.socketGroupList[savedSkillNum] and build.skillsTab.socketGroupList[mainGroupIdx] then
+		local calcsGrp = build.skillsTab.socketGroupList[savedSkillNum]
+		local mainGrp = build.skillsTab.socketGroupList[mainGroupIdx]
+		local cAct = calcsGrp.displaySkillList and calcsGrp.displaySkillList[calcsGrp.mainActiveSkill or 1]
+		local mAct = mainGrp.displaySkillList and mainGrp.displaySkillList[mainGrp.mainActiveSkill or 1]
+		local cName = (cAct and cAct.activeEffect and cAct.activeEffect.grantedEffect and cAct.activeEffect.grantedEffect.name) or calcsGrp.label or ("Group #" .. tostring(savedSkillNum))
+		local mName = (mAct and mAct.activeEffect and mAct.activeEffect.grantedEffect and mAct.activeEffect.grantedEffect.name) or mainGrp.label or ("Group #" .. tostring(mainGroupIdx))
+		if cName ~= mName then
+			warnings[#warnings + 1] = string.format(
+				"PoB2 Calcs tab was pointing at socket group #%d (%s) while mainSkill is socket group #%d (%s); aligned inspection to mainSkill #%d (pass skill_group=%d to inspect %s).",
+				savedSkillNum, cName, mainGroupIdx, mName, mainGroupIdx, savedSkillNum, cName
+			)
+		end
+		calcsTab.input.skill_number = mainGroupIdx
+	end
+
+	local inspectedGroupIdx = calcsTab.input.skill_number or mainGroupIdx
+	local okBuild, buildErr = pcall(function()
+		calcsTab:BuildOutput()
+	end)
+	calcsTab.input.skill_number = savedSkillNum
+	if not okBuild then
+		error("calcsTab:BuildOutput() failed: " .. tostring(buildErr), 0)
+	end
+
+	local calcsEnv = calcsTab.calcsEnv
+	local actor = calcsEnv and calcsEnv.player
+	local output = (actor and actor.output) or calcsTab.mainOutput or {}
+	local breakdown = (actor and actor.breakdown) or {}
+	local mainSkill = actor and actor.mainSkill
+	local activeSkillName = (mainSkill and mainSkill.activeEffect and mainSkill.activeEffect.grantedEffect and mainSkill.activeEffect.grantedEffect.name)
+		or "Default"
+
+	local aliasSpec = STAT_QUERY_ALIASES[normQuery]
+	local targetOutputs = {}
+	local targetBreakdowns = {}
+	local targetMods = {}
+	local seenOut, seenBd, seenMod = {}, {}, {}
+
+	local function pushUnique(tbl, seen, key)
+		if key and not seen[key] then
+			seen[key] = true
+			tbl[#tbl + 1] = key
+		end
+	end
+
+	if aliasSpec then
+		for _, k in ipairs(aliasSpec.outputs or {}) do pushUnique(targetOutputs, seenOut, k) end
+		for _, k in ipairs(aliasSpec.breakdowns or {}) do pushUnique(targetBreakdowns, seenBd, k) end
+		for _, k in ipairs(aliasSpec.mods or {}) do pushUnique(targetMods, seenMod, k) end
+	end
+
+	for k, v in pairs(output) do
+		if type(k) == "string" and (type(v) == "number" or type(v) == "boolean" or type(v) == "string") then
+			local kl = k:lower():gsub("[^%w]", "")
+			if kl == normQuery or (normQuery ~= "" and kl:find(normQuery, 1, true)) then
+				pushUnique(targetOutputs, seenOut, k)
+				if breakdown[k] then pushUnique(targetBreakdowns, seenBd, k) end
+				pushUnique(targetMods, seenMod, k)
+			end
+		end
+	end
+	for k, _ in pairs(breakdown) do
+		if type(k) == "string" then
+			local kl = k:lower():gsub("[^%w]", "")
+			if kl == normQuery or (normQuery ~= "" and kl:find(normQuery, 1, true)) then
+				pushUnique(targetBreakdowns, seenBd, k)
+				if output[k] ~= nil then pushUnique(targetOutputs, seenOut, k) end
+				pushUnique(targetMods, seenMod, k)
+			end
+		end
+	end
+
+	-- Also scan active modDB + skillModList keys so direct mod names ("SpellDamage", "ProjectileCount", etc.) resolve cleanly
+	for _, store in ipairs({ mainSkill and mainSkill.skillModList, actor and actor.modDB }) do
+		if store and type(store.mods) == "table" then
+			for modKey, _ in pairs(store.mods) do
+				if type(modKey) == "string" then
+					local ml = modKey:lower():gsub("[^%w]", "")
+					if ml == normQuery or (normQuery ~= "" and ml:find(normQuery, 1, true)) then
+						pushUnique(targetMods, seenMod, modKey)
+					end
+				end
+			end
+		end
+	end
+
+	table.sort(targetOutputs, function(a, b)
+		local al = (a:lower():gsub("[^%w]", "") == normQuery) and 0 or 1
+		local bl = (b:lower():gsub("[^%w]", "") == normQuery) and 0 or 1
+		if al ~= bl then return al < bl end
+		return a < b
+	end)
+
+	local matchedOutputs = {}
+	for i = 1, math.min(#targetOutputs, 15) do
+		local k = targetOutputs[i]
+		local v = output[k]
+		if type(v) == "number" then
+			matchedOutputs[#matchedOutputs + 1] = { key = k, value = safeNum(v, 0) }
+		elseif type(v) == "boolean" or type(v) == "string" then
+			matchedOutputs[#matchedOutputs + 1] = { key = k, value = stripPobColorCodes(v) }
+		end
+	end
+
+	local formulaBreakdowns = {}
+	local localDefenceRows = {}
+	for i = 1, math.min(#targetBreakdowns, 8) do
+		local bk = targetBreakdowns[i]
+		local bEntry = breakdown[bk]
+		if type(bEntry) == "table" then
+			local lines = {}
+			for _, ln in ipairs(bEntry) do
+				if type(ln) == "string" and ln ~= "" then
+					lines[#lines + 1] = stripPobColorCodes(ln)
+				end
+			end
+			local slotRows = {}
+			if type(bEntry.slots) == "table" then
+				for _, sr in ipairs(bEntry.slots) do
+					local itemLbl = (sr.item and sr.item.name and stripPobColorCodes(sr.item.name)) or sr.sourceName or sr.source or ""
+					local slotSrc = tostring(sr.source or "")
+					local slotTotal = safeNum(tonumber(sr.total), 0)
+					slotRows[#slotRows + 1] = {
+						source = slotSrc,
+						sourceLabel = tostring(itemLbl),
+						base = safeNum(tonumber(sr.base), 0),
+						inc = safeNum(tonumber(sr.inc), 0),
+						more = safeNum(tonumber(sr.more), 0),
+						total = slotTotal,
+					}
+					if slotTotal > 0 and (sr.item ~= nil or (slotSrc ~= "" and slotSrc ~= "Base" and slotSrc ~= "Global")) then
+						local lbl = slotSrc ~= "" and (slotSrc .. (itemLbl ~= "" and itemLbl ~= slotSrc and (": " .. tostring(itemLbl)) or "")) or tostring(itemLbl)
+						localDefenceRows[#localDefenceRows + 1] = {
+							statName = bk .. " (Local Defence)",
+							modType = "BASE",
+							value = slotTotal,
+							numericValue = slotTotal,
+							sourceType = "Item",
+							sourceLabel = lbl,
+							rawSource = "Slot:" .. slotSrc,
+							flags = "",
+						}
+					end
+				end
+			end
+			local reservationRows = {}
+			if type(bEntry.reservations) == "table" then
+				for _, rr in ipairs(bEntry.reservations) do
+					reservationRows[#reservationRows + 1] = {
+						skillName = stripPobColorCodes(rr.skillName or ""),
+						base = tostring(rr.base or ""),
+						mult = tostring(rr.mult or ""),
+						efficiency = tostring(rr.efficiency or ""),
+						total = tostring(rr.total or ""),
+					}
+				end
+			end
+			formulaBreakdowns[#formulaBreakdowns + 1] = {
+				key = bk,
+				outputValue = (type(output[bk]) == "number" and safeNum(output[bk], 0))
+					or (output[bk] ~= nil and stripPobColorCodes(output[bk]))
+					or dkjson.null,
+				lines = lines,
+				slots = slotRows,
+				reservations = reservationRows,
+			}
+		end
+	end
+
+	local cfg = {}
+	if mainSkill and mainSkill.skillCfg then
+		for k, v in pairs(mainSkill.skillCfg) do cfg[k] = v end
+	end
+	cfg.ignoreSourceInCheckConditions = true
+
+	local rawRows = {}
+	local seenRowSig = {}
+	for _, ldr in ipairs(localDefenceRows) do
+		local sig = ldr.statName .. "|" .. ldr.sourceLabel .. "|" .. tostring(ldr.value)
+		if not seenRowSig[sig] then
+			seenRowSig[sig] = true
+			rawRows[#rawRows + 1] = ldr
+		end
+	end
+	local modStores = {}
+	if mainSkill and mainSkill.skillModList then
+		modStores[#modStores + 1] = mainSkill.skillModList
+	end
+	if actor and actor.modDB then
+		modStores[#modStores + 1] = actor.modDB
+	end
+
+	for _, mName in ipairs(targetMods) do
+		for _, store in ipairs(modStores) do
+			if store and store.Tabulate then
+				local okTab, rows = pcall(function()
+					return store:Tabulate(nil, cfg, mName)
+				end)
+				if okTab and type(rows) == "table" then
+					for _, r in ipairs(rows) do
+						local mod = r.mod
+						if mod then
+							local srcType, srcLabel = resolveModSourceLabel(mod, build)
+							local val = r.value
+							local numVal = (type(val) == "number") and safeNum(val, 0) or nil
+							local strVal = (type(val) ~= "number") and stripPobColorCodes(tostring(val)) or nil
+							local sig = table.concat({
+								tostring(mod.name or mName),
+								tostring(mod.type or ""),
+								tostring(numVal or strVal or ""),
+								tostring(mod.source or ""),
+							}, "|")
+							if not seenRowSig[sig] then
+								seenRowSig[sig] = true
+								rawRows[#rawRows + 1] = {
+									statName = tostring(mod.name or mName),
+									modType = tostring(mod.type or "BASE"),
+									value = numVal ~= nil and numVal or strVal,
+									numericValue = numVal or 0,
+									sourceType = srcType,
+									sourceLabel = srcLabel,
+									rawSource = tostring(mod.source or ""),
+									flags = formatModFlagsText(mod),
+								}
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+
+	local typeOrder = { BASE = 1, INC = 2, MORE = 3, OVERRIDE = 4, FLAG = 5 }
+	table.sort(rawRows, function(a, b)
+		local ta = typeOrder[a.modType] or 9
+		local tb = typeOrder[b.modType] or 9
+		if ta ~= tb then return ta < tb end
+		local aa = math.abs(a.numericValue or 0)
+		local ab = math.abs(b.numericValue or 0)
+		if math.abs(aa - ab) > 1e-6 then return aa > ab end
+		return a.sourceLabel < b.sourceLabel
+	end)
+
+	local sourceTotals = {}
+	for _, r in ipairs(rawRows) do
+		local bucket = sourceTotals[r.sourceType]
+		if not bucket then
+			bucket = { BASE = 0, INC = 0, MORE_PCT = 0, count = 0 }
+			sourceTotals[r.sourceType] = bucket
+		end
+		bucket.count = bucket.count + 1
+		if r.modType == "BASE" then
+			bucket.BASE = bucket.BASE + (r.numericValue or 0)
+		elseif r.modType == "INC" then
+			bucket.INC = bucket.INC + (r.numericValue or 0)
+		elseif r.modType == "MORE" then
+			local curMult = 1.0 + (bucket.MORE_PCT / 100.0)
+			curMult = curMult * (1.0 + (r.numericValue or 0) / 100.0)
+			bucket.MORE_PCT = (curMult - 1.0) * 100.0
+		end
+	end
+
+	local trimmedRows = {}
+	for i = 1, math.min(#rawRows, rowLimit) do
+		local r = rawRows[i]
+		trimmedRows[i] = {
+			statName = r.statName,
+			modType = r.modType,
+			value = r.value,
+			sourceType = r.sourceType,
+			sourceLabel = r.sourceLabel,
+			flags = r.flags,
+		}
+	end
+
+	return {
+		slot = slotName,
+		query = rawQuery,
+		skillGroup = inspectedGroupIdx,
+		activeSkillName = activeSkillName,
+		matchedOutputs = matchedOutputs,
+		formulaBreakdowns = formulaBreakdowns,
+		modifierCountTotal = #rawRows,
+		modifiers = trimmedRows,
+		sourceTotals = sourceTotals,
+		warnings = warnings,
+	}
+end
+
+local CONTROLLED_METAMORPHOSIS_RINGS = {
+	{ radiusIndex = 5, ringIndex = 1, label = "Very Small Ring (650-950)" },
+	{ radiusIndex = 6, ringIndex = 2, label = "Small Ring (800-1100)" },
+	{ radiusIndex = 7, ringIndex = 3, label = "Medium-Small Ring (950-1250)" },
+	{ radiusIndex = 8, ringIndex = 4, label = "Medium Ring (1100-1400)" },
+	{ radiusIndex = 9, ringIndex = 5, label = "Medium-Large Ring (1250-1550)" },
+	{ radiusIndex = 10, ringIndex = 6, label = "Large Ring (1400-1700)" },
+	{ radiusIndex = 11, ringIndex = 7, label = "Very Large Ring (1650-1950)" },
+	{ radiusIndex = 12, ringIndex = 8, label = "Massive Ring (1800-2100)" },
+}
+
+methods.rank_radius_jewel_sockets = function(params)
+	local slotName = normalizeSlotName(params, "slot")
+	ensureSlot(slotName, false)
+	build.spec:BuildAllDependsAndPaths()
+
+	local statName = (params and params.stat) or "FullDPS"
+	local topN = math.max(1, math.min(30, tonumber(params and params.topN) or 10))
+	local maxSocketDist = tonumber(params and params.maxPathDist) or 10
+	local jewelQuery = tostring((params and params.jewelName) or "Controlled Metamorphosis")
+	local jLow = jewelQuery:lower()
+	local isAgainstDarkness = jLow:find("against", 1, true) ~= nil or jLow:find("darkness", 1, true) ~= nil
+
+	local calcFunc, baseOut = build.calcsTab:GetMiscCalculator()
+	local baseStats = extractStatsTable(baseOut)
+	if (statName == "FullDPS" or statName == "EffectiveDPS") and safeNum(baseStats.FullDPS, 0) <= 0 and safeNum(baseStats.EffectiveDPS, 0) > 0 then
+		statName = "EffectiveDPS"
+	end
+	local baseVal = safeNum(baseStats[statName], baseStats.EffectiveDPS)
+	local useFullDPS = (statName == "FullDPS") and (safeNum(baseStats.FullDPS, 0) > 0)
+	local prepassStat = (useFullDPS and safeNum(baseStats.CombinedDPS, 0) > 0) and "CombinedDPS" or statName
+	local basePrepassVal = safeNum(baseStats[prepassStat], baseVal)
+	local isOffenceOnly = (statName == "FullDPS" or statName == "EffectiveDPS" or statName == "CombinedDPS" or statName == "TotalDPS")
+	local fastOpts = {
+		requirementsItems = true,
+		requirementsGems = true,
+		skills = true,
+		skipEHP = isOffenceOnly,
+	}
+
+	local singleCache = {}
+	local candidates = {}
+
+	for nodeId, sockNode in pairs(build.spec.nodes or {}) do
+		local isSocket = (sockNode.type == "Socket" or sockNode.isJewelSocket == true) and not sockNode.ascendancyName
+		if isSocket and type(sockNode.nodesInRadius) == "table" then
+			local sockAlloc = sockNode.alloc == true
+			local sockDist = sockAlloc and 0 or (tonumber(sockNode.pathDist) or 1000)
+			if sockDist <= maxSocketDist then
+				checkParentAlive()
+				if isAgainstDarkness then
+					local inLarge = sockNode.nodesInRadius[3] or {}
+					local pathNodeIds = {}
+					if not sockAlloc and sockNode.path then
+						for _, pNode in ipairs(sockNode.path) do
+							if pNode.id then pathNodeIds[pNode.id] = true end
+						end
+					end
+					local allocNotables = {}
+					local pathNotables = {}
+					local allocSmalls = 0
+					local nearUnallocNotables = {}
+					local bestUnallocNode = nil
+					local bestUnallocDist = 9999
+					for rId, rawNode in pairs(inLarge) do
+						local rNode = (build.spec.nodes and build.spec.nodes[rId]) or rawNode
+						if not rNode.ascendancyName then
+							if rNode.alloc then
+								if rNode.type == "Notable" then
+									allocNotables[#allocNotables + 1] = stripPobColorCodes(rNode.dn or tostring(rNode.id))
+								elseif rNode.type == "Normal" then
+									allocSmalls = allocSmalls + 1
+								end
+							elseif pathNodeIds[rNode.id] then
+								if rNode.type == "Notable" then
+									pathNotables[#pathNotables + 1] = stripPobColorCodes(rNode.dn or tostring(rNode.id))
+								elseif rNode.type == "Normal" then
+									allocSmalls = allocSmalls + 1
+								end
+							elseif rNode.type == "Notable" then
+								nearUnallocNotables[#nearUnallocNotables + 1] = stripPobColorCodes(rNode.dn or tostring(rNode.id))
+								local rDist = tonumber(rNode.pathDist) or 9999
+								if rDist < bestUnallocDist then
+									bestUnallocDist = rDist
+									bestUnallocNode = rNode
+								end
+							end
+						end
+					end
+					table.sort(allocNotables)
+					table.sort(pathNotables)
+					table.sort(nearUnallocNotables)
+					local effectiveNotables = #allocNotables + #pathNotables
+					if effectiveNotables > 0 or #nearUnallocNotables > 0 then
+						local addSet = {}
+						local extraPts = 0
+						if not sockAlloc and sockNode.path then
+							for _, pNode in ipairs(sockNode.path) do
+								if not pNode.alloc then addSet[pNode] = true end
+							end
+						end
+						if effectiveNotables == 0 and bestUnallocNode ~= nil then
+							effectiveNotables = 1
+							addSet[bestUnallocNode] = true
+							extraPts = 1
+						end
+						-- Evaluate representative Against the Darkness bonus per allocated notable in Large radius
+						local bonusLine = isOffenceOnly
+							and string.format("Gain %d%% of Damage as Extra Lightning Damage", effectiveNotables * 4)
+							or string.format("%d%% increased maximum Life\n%d%% increased maximum Energy Shield", effectiveNotables * 4, effectiveNotables * 4)
+						local simItem = nil
+						pcall(function()
+							simItem = new("Item"):Item("Rarity: UNIQUE\nAgainst the Darkness\nTime-Lost Diamond\nImplicits: 0\n" .. bonusLine)
+						end)
+						local calcArgs = {}
+						if next(addSet) ~= nil then calcArgs.addNodes = addSet end
+						if simItem then
+							calcArgs.repSlotName = "Jewel " .. tostring(nodeId)
+							calcArgs.repItem = simItem
+						end
+						local simStats = extractStatsTable(calcFunc(calcArgs, useFullDPS))
+						local newVal = safeNum(simStats[statName], simStats.EffectiveDPS)
+						local delta = newVal - baseVal
+						local pct = baseVal > 0 and (delta / baseVal * 100.0) or 0.0
+						local totalSpent = sockDist + extraPts
+						local pts = math.max(1, totalSpent)
+						local activeRingNotables = {}
+						for _, nm in ipairs(allocNotables) do activeRingNotables[#activeRingNotables + 1] = nm end
+						for _, nm in ipairs(pathNotables) do activeRingNotables[#activeRingNotables + 1] = nm end
+						if #activeRingNotables == 0 and bestUnallocNode ~= nil then
+							activeRingNotables[1] = stripPobColorCodes(bestUnallocNode.dn or tostring(bestUnallocNode.id))
+						end
+						candidates[#candidates + 1] = {
+							jewelName = "Against the Darkness",
+							socketNodeId = nodeId,
+							socketName = stripPobColorCodes(sockNode.dn or ("Jewel Socket #" .. tostring(nodeId))),
+							socketAllocated = sockAlloc,
+							socketPathDist = sockDist,
+							ringIndex = 3,
+							ringLabel = "Large Radius (0-1300)",
+							allocatedNotablesInRadius = #allocNotables + #pathNotables,
+							allocatedSmallsInRadius = allocSmalls,
+							ringNotables = activeRingNotables,
+							nearbyUnallocatedNotables = nearUnallocNotables,
+							totalPointsSpent = totalSpent,
+							normalPointsSaved = 0,
+							stat = statName,
+							before = baseVal,
+							after = newVal,
+							delta = delta,
+							pct = pct,
+							perPointDelta = delta / pts,
+							perPointPct = pct / pts,
+						}
+					end
+				else
+					for _, ringInfo in ipairs(CONTROLLED_METAMORPHOSIS_RINGS) do
+						local inRing = sockNode.nodesInRadius[ringInfo.radiusIndex] or {}
+						local posNodes = {}
+						local notableNames = {}
+						local sumSingleDelta = 0
+						local savedTravelPts = 0
+						for rId, rawNode in pairs(inRing) do
+							local rNode = (build.spec.nodes and build.spec.nodes[rId]) or rawNode
+							if rNode.type == "Notable" and not rNode.ascendancyName and not rNode.alloc and rNode.modKey and rNode.modKey ~= "" then
+								if not singleCache[rNode.modKey] then
+									singleCache[rNode.modKey] = extractStatsTable(calcFunc({ addNodes = { [rNode] = true } }, false, fastOpts))
+								end
+								local sStats = singleCache[rNode.modKey]
+								local sDelta = safeNum(sStats[prepassStat], sStats.EffectiveDPS) - basePrepassVal
+								if sDelta > 0 then
+									posNodes[#posNodes + 1] = { node = rNode, delta = sDelta }
+									sumSingleDelta = sumSingleDelta + sDelta
+									local normalDist = tonumber(rNode.pathDist) or 4
+									if normalDist < 500 and normalDist > 1 then
+										savedTravelPts = savedTravelPts + (normalDist - 1)
+									end
+								end
+							end
+						end
+						if #posNodes > 0 then
+							table.sort(posNodes, function(a, b) return a.delta > b.delta end)
+							for _, pn in ipairs(posNodes) do
+								notableNames[#notableNames + 1] = stripPobColorCodes(pn.node.dn or tostring(pn.node.id))
+							end
+							local totalPts = sockDist + #posNodes
+							candidates[#candidates + 1] = {
+								_posNodes = posNodes,
+								_sockNode = sockNode,
+								jewelName = "Controlled Metamorphosis",
+								socketNodeId = nodeId,
+								socketName = stripPobColorCodes(sockNode.dn or ("Jewel Socket #" .. tostring(nodeId))),
+								socketAllocated = sockAlloc,
+								socketPathDist = sockDist,
+								ringIndex = ringInfo.ringIndex,
+								ringLabel = ringInfo.label,
+								allocatedNotablesInRadius = 0,
+								allocatedSmallsInRadius = 0,
+								ringNotables = notableNames,
+								nearbyUnallocatedNotables = notableNames,
+								totalPointsSpent = totalPts,
+								normalPointsSaved = math.max(0, savedTravelPts - sockDist),
+								stat = statName,
+								before = baseVal,
+								after = baseVal + sumSingleDelta,
+								delta = sumSingleDelta,
+								pct = baseVal > 0 and (sumSingleDelta / baseVal * 100.0) or 0.0,
+								perPointDelta = sumSingleDelta / math.max(1, totalPts),
+								perPointPct = (baseVal > 0 and (sumSingleDelta / baseVal * 100.0) or 0.0) / math.max(1, totalPts),
+							}
+						end
+					end
+				end
+			end
+		end
+	end
+
+	table.sort(candidates, function(a, b)
+		if math.abs(a.perPointDelta - b.perPointDelta) > 1e-4 then
+			return a.perPointDelta > b.perPointDelta
+		end
+		return a.delta > b.delta
+	end)
+
+	local trimmed = {}
+	for i = 1, math.min(#candidates, topN) do
+		local c = candidates[i]
+		if c._posNodes then
+			local addSet = {}
+			if not c.socketAllocated and c._sockNode.path then
+				for _, pNode in ipairs(c._sockNode.path) do
+					if not pNode.alloc then addSet[pNode] = true end
+				end
+			end
+			for _, pn in ipairs(c._posNodes) do
+				addSet[pn.node] = true
+			end
+			local exactStats = extractStatsTable(calcFunc({ addNodes = addSet }, useFullDPS))
+			local exactAfter = safeNum(exactStats[statName], exactStats.EffectiveDPS)
+			local exactDelta = exactAfter - baseVal
+			local exactPct = baseVal > 0 and (exactDelta / baseVal * 100.0) or 0.0
+			local pts = math.max(1, c.totalPointsSpent)
+			c.after = exactAfter
+			c.delta = exactDelta
+			c.pct = exactPct
+			c.perPointDelta = exactDelta / pts
+			c.perPointPct = exactPct / pts
+			c._posNodes = nil
+			c._sockNode = nil
+		end
+		trimmed[i] = c
+	end
+
+	table.sort(trimmed, function(a, b)
+		if math.abs(a.perPointDelta - b.perPointDelta) > 1e-4 then
+			return a.perPointDelta > b.perPointDelta
+		end
+		return a.delta > b.delta
+	end)
+
+	calcFunc, baseOut = nil, nil
+	collectgarbage("collect")
+
+	return {
+		slot = slotName,
+		jewelName = isAgainstDarkness and "Against the Darkness" or "Controlled Metamorphosis",
+		stat = statName,
+		baseValue = baseVal,
+		count = #trimmed,
+		candidates = trimmed,
+	}
 end
 
 local shouldExit = false

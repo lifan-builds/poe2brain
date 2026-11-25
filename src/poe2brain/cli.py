@@ -29,8 +29,12 @@ from poe2brain.mcp_server import (
     execute_ninja_character,
     execute_ninja_search,
     execute_ninja_snapshots,
+    execute_pob_calc_breakdown,
     execute_pob_compare,
     execute_pob_hc_audit,
+    execute_pob_radius_jewels,
+    execute_pob_supports,
+    execute_pob_what_if,
     execute_scan_arbitrage,
     execute_scan_craft_profit,
     execute_triage_dump,
@@ -44,6 +48,7 @@ from poe2brain.mcp_server import (
     get_trade_advisor,
     normalize_item_text_for_pob2,
     normalize_pob_objective,
+    parse_config_kv_pairs,
     run_bootstrap_script,
     run_sync_gamedata,
     run_with_service_cleanup,
@@ -1003,6 +1008,343 @@ def pob_nodes_cmd(
     _run_cli(json_output, _compute, _render)
 
 
+@pob_app.command("calc-breakdown")
+def pob_calc_breakdown_cmd(
+    query: Annotated[
+        str,
+        typer.Argument(
+            help="PoB2 stat or alias (e.g. FullDPS, ManaCost, EnergyShield, CritChance, Spirit)."
+        ),
+    ] = "FullDPS",
+    slot: Annotated[str, typer.Option("--slot", help="Named PoB2 build slot.")] = "main",
+    skill_group: Annotated[
+        int | None,
+        typer.Option("--skill-group", help="Optional 1-based socket group override."),
+    ] = None,
+    max_mods: Annotated[
+        int, typer.Option("--max-mods", help="Maximum modifier provenance rows to return.")
+    ] = 40,
+    json_output: JsonOpt = False,
+) -> None:
+    """Explain exact PoB2 calculation formulas & modifier provenance (BASE/INC/MORE/FLAG)."""
+
+    def _compute() -> dict[str, Any]:
+        return execute_pob_calc_breakdown(
+            query=query,
+            slot=slot,
+            skill_group=skill_group,
+            max_mods=max_mods,
+        )
+
+    def _render(data: dict[str, Any]) -> None:
+        console.print(
+            f"[bold cyan]PoB2 Calc Breakdown — {data['query']}[/bold cyan] "
+            f"[{data['slot']} | Group #{data['skill_group']}: {data['active_skill_name']} | "
+            f"mods={data['modifier_count_total']}]"
+        )
+        for w in data.get("warnings", []):
+            console.print(f"  [yellow]Warning:[/yellow] {w}")
+        for st in data.get("matched_stats", [])[:6]:
+            console.print(f"  • [bold]{st['key']}[/bold] = {st['value']}")
+            for ln in st.get("lines", [])[:4]:
+                console.print(f"      {ln}")
+        if data.get("source_totals"):
+            table = Table(title="Modifier Totals by Source")
+            table.add_column("Source", style="bold cyan")
+            table.add_column("Count", justify="right")
+            table.add_column("BASE", justify="right")
+            table.add_column("INC %", justify="right")
+            table.add_column("MORE %", justify="right")
+            for s in data["source_totals"]:
+                table.add_row(
+                    s["source_type"],
+                    str(s["mod_count"]),
+                    f"{s['base_total']:,.2f}",
+                    f"{s['inc_total']:+.1f}%",
+                    f"{s['more_pct']:+.2f}%",
+                )
+            console.print(table)
+
+    _run_cli(json_output, _compute, _render)
+
+
+@pob_app.command("supports")
+def pob_supports_cmd(
+    slot: Annotated[str, typer.Option("--slot", help="Named PoB2 build slot.")] = "main",
+    group_index: Annotated[
+        int | None,
+        typer.Option("--group", help="1-based socket group index (defaults to mainSkill)."),
+    ] = None,
+    replace_gem_slot: Annotated[
+        int | None,
+        typer.Option(
+            "--replace-slot",
+            help="1-based support ordinal to replace instead of appending.",
+        ),
+    ] = None,
+    replace_gem: Annotated[
+        str | None,
+        typer.Option("--replace-gem", help="Existing support gem name substring to swap out."),
+    ] = None,
+    max_tier: Annotated[
+        int | None,
+        typer.Option("--max-tier", help="Maximum Uncut Support Gem Tier (1-5)."),
+    ] = None,
+    include_lineage: Annotated[
+        bool,
+        typer.Option("--lineage/--no-lineage", help="Include PoE2 Lineage Support Gems."),
+    ] = True,
+    exclude_lineage_conflicts: Annotated[
+        bool,
+        typer.Option(
+            "--exclude-conflicts",
+            help="Hide Lineage Supports already socketed in another skill group (copy=1).",
+        ),
+    ] = False,
+    top: Annotated[
+        int, typer.Option("--top", help="Number of top support gem candidates to return.")
+    ] = 15,
+    json_output: JsonOpt = False,
+) -> None:
+    """Rank compatible PoE2 0.5.5 Support Gems (Tier I-III + Lineage) with Mana/Spirit checks."""
+
+    def _compute() -> dict[str, Any]:
+        return execute_pob_supports(
+            slot=slot,
+            group_index=group_index,
+            replace_gem_slot=replace_gem_slot,
+            replace_gem=replace_gem,
+            max_tier=max_tier,
+            include_lineage=include_lineage,
+            exclude_lineage_conflicts=exclude_lineage_conflicts,
+            top_n=top,
+        )
+
+    def _render(data: dict[str, Any]) -> None:
+        cur_supps = ", ".join(data.get("current_supports", [])) or "none"
+        table = Table(
+            title=(
+                f"Support Gem Ranking — {data['active_skill_label']} "
+                f"(Group #{data['group_index']} | current={cur_supps})"
+            )
+        )
+        table.add_column("Support Gem", style="bold cyan")
+        table.add_column("Tier", justify="right")
+        table.add_column("DPS %", justify="right")
+        table.add_column("Mana", justify="right")
+        table.add_column("Notes")
+        for c in data.get("candidates", []):
+            t_lbl = "Lineage" if c["is_lineage"] else f"T{c['support_tier'] or '?'}"
+            notes: list[str] = []
+            if c.get("already_socketed"):
+                notes.append("equipped")
+            if c.get("replaces_gem"):
+                notes.append(f"replaces {c['replaces_gem']}")
+            if c.get("lineage_conflict_skill"):
+                notes.append(f"CONFLICT:{c['lineage_conflict_skill']}")
+            if not c.get("mana_sustainable_after", True):
+                notes.append("mana-unsustainable")
+            if c.get("spirit_overflow"):
+                notes.append("spirit-overflow")
+            if not c.get("attributes_met_after", True):
+                notes.append("attr-short")
+            table.add_row(
+                c["name"],
+                t_lbl,
+                f"{c['dps_pct']:+.2f}%",
+                f"{c['mana_cost_after']:.1f}",
+                ", ".join(notes) or "ok",
+            )
+        console.print(table)
+
+    _run_cli(json_output, _compute, _render)
+
+
+@pob_app.command("radius-jewels")
+def pob_radius_jewels_cmd(
+    jewel_name: Annotated[
+        str,
+        typer.Option(
+            "--jewel",
+            help="Radius jewel type ('Controlled Metamorphosis' or 'Against the Darkness').",
+        ),
+    ] = "Controlled Metamorphosis",
+    slot: Annotated[str, typer.Option("--slot", help="Named PoB2 build slot.")] = "main",
+    stat: Annotated[
+        str, typer.Option("--stat", help="Target PoB2 stat (FullDPS or TotalEHP).")
+    ] = "FullDPS",
+    max_dist: Annotated[
+        int,
+        typer.Option(
+            "--max-dist",
+            help="Maximum passive pathing distance to unallocated sockets.",
+        ),
+    ] = 10,
+    top: Annotated[
+        int, typer.Option("--top", help="Number of top socket × ring combinations to return.")
+    ] = 10,
+    json_output: JsonOpt = False,
+) -> None:
+    """Rank Passive Tree Jewel Sockets & rings for Controlled Metamorphosis / Against Darkness."""
+
+    def _compute() -> dict[str, Any]:
+        return execute_pob_radius_jewels(
+            jewel_name=jewel_name,
+            slot=slot,
+            stat=stat,
+            max_path_dist=max_dist,
+            top_n=top,
+        )
+
+    def _render(data: dict[str, Any]) -> None:
+        table = Table(title=f"Radius Jewel Optimizer — {data['jewel_name']} ({data['stat']})")
+        table.add_column("Socket", style="bold cyan")
+        table.add_column("Ring")
+        table.add_column("Pts", justify="right")
+        table.add_column("Gain %", justify="right")
+        table.add_column("%/Pt", justify="right")
+        table.add_column("Notables")
+        for c in data.get("candidates", []):
+            table.add_row(
+                f"#{c['socket_node_id']}{' (alloc)' if c['socket_allocated'] else ''}",
+                c["ring_label"],
+                str(c["total_points_spent"]),
+                f"{c['pct']:+.2f}%",
+                f"{c['per_point_pct']:+.2f}%",
+                ", ".join(c.get("ring_notables", [])[:4]),
+            )
+        console.print(table)
+
+    _run_cli(json_output, _compute, _render)
+
+
+@pob_app.command("what-if")
+def pob_what_if_cmd(
+    slot: Annotated[str, typer.Option("--slot", help="Target PoB2 build slot.")] = "main",
+    equip: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--equip",
+            help="Equip override as 'Slot=ItemTextOrFilePath' (repeatable across multiple slots).",
+        ),
+    ] = None,
+    edit_slot: Annotated[
+        str | None,
+        typer.Option("--edit-slot", help="Existing equipped slot to edit in place."),
+    ] = None,
+    add_mod: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--add-mod",
+            help="Explicit modifier line to append to --edit-slot (repeatable).",
+        ),
+    ] = None,
+    remove_mod: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--remove-mod",
+            help="Substring of explicit mod line(s) to strip on --edit-slot.",
+        ),
+    ] = None,
+    set_quality: Annotated[
+        int | None,
+        typer.Option("--set-quality", help="Override Quality % on --edit-slot."),
+    ] = None,
+    alloc_node: Annotated[
+        list[int] | None,
+        typer.Option("--alloc-node", help="Passive node ID to allocate (repeatable)."),
+    ] = None,
+    dealloc_node: Annotated[
+        list[int] | None,
+        typer.Option("--dealloc-node", help="Passive node ID to deallocate (repeatable)."),
+    ] = None,
+    config_kv: Annotated[
+        list[str] | None,
+        typer.Option("--config", help="Config key=value override (repeatable)."),
+    ] = None,
+    borrow_from: Annotated[
+        str | None,
+        typer.Option("--borrow-from", help="Reference PoB2 slot to transplant pieces from."),
+    ] = None,
+    borrow_slot: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--borrow-slot",
+            help="Equipment slot to transplant from --borrow-from (repeatable).",
+        ),
+    ] = None,
+    borrow_main_skill: Annotated[
+        bool,
+        typer.Option(
+            "--borrow-main-skill",
+            help="Also transplant mainSkill gem links from --borrow-from.",
+        ),
+    ] = False,
+    scenario_matrix: Annotated[
+        bool,
+        typer.Option(
+            "--scenario-matrix",
+            help="Evaluate across configured, sustainable_pinnacle, and mapping_clear scenarios.",
+        ),
+    ] = False,
+    apply: Annotated[
+        bool,
+        typer.Option("--apply", help="Persistently commit the simulated changes to --slot."),
+    ] = False,
+    json_output: JsonOpt = False,
+) -> None:
+    """Run compound PoB2 what-if simulations (multi-slot, mod edits, passives, ref borrowing)."""
+
+    def _compute() -> dict[str, Any]:
+        return execute_pob_what_if(
+            slot=slot,
+            equip_items=equip,
+            edit_slot=edit_slot,
+            add_mod_lines=add_mod,
+            remove_mod_substrings=remove_mod,
+            set_quality=set_quality,
+            alloc_node_ids=alloc_node,
+            dealloc_node_ids=dealloc_node,
+            set_config=config_kv,
+            borrow_from_slot=borrow_from,
+            borrow_slots=borrow_slot,
+            borrow_main_skill=borrow_main_skill,
+            include_scenario_matrix=scenario_matrix,
+            apply=apply,
+        )
+
+    def _render(data: dict[str, Any]) -> None:
+        base_st = data["baseline_stats"]
+        after_st = data["after_stats"]
+        sp_delta = int(after_st["spirit_unreserved"]) - int(base_st["spirit_unreserved"])
+        console.print(
+            f"[bold cyan]PoB2 What-If Simulation[/bold cyan] "
+            f"[{data['slot']} | applied={data['applied']}]"
+        )
+        console.print(
+            f"  Full DPS  : {base_st['full_dps']:,.1f} -> "
+            f"[bold green]{after_st['full_dps']:,.1f}[/bold green] "
+            f"({data['effective_dps_pct']:+.2f}%)"
+        )
+        console.print(
+            f"  Total EHP : {base_st['total_ehp']:,.1f} -> "
+            f"[bold]{after_st['total_ehp']:,.1f}[/bold] "
+            f"({data['total_ehp_pct']:+.2f}%) | Spirit Δ={sp_delta:+d}"
+        )
+        for attr in data.get("piece_attributions", []):
+            console.print(
+                f"    • {attr['label']}: DPS {attr['effective_dps_pct']:+.2f}%, "
+                f"EHP {attr['total_ehp_pct']:+.2f}%"
+            )
+        for sc in data.get("scenario_matrix", []):
+            console.print(
+                f"    [{sc['scenario']}] DPS={sc['effective_dps']:,.1f} | "
+                f"EHP={sc['total_ehp']:,.1f}"
+            )
+
+    _run_cli(json_output, _compute, _render)
+
+
 @pob_app.command("export")
 def pob_export_cmd(
     fmt: Annotated[
@@ -1161,23 +1503,7 @@ def pob_slots_cmd(
                     include_in_full_dps=True,
                     set_main=(idx == 0),
                 )
-            cfg_dict: dict[str, Any] = {}
-            for pair in config_kv or []:
-                if "=" not in pair:
-                    raise ValueError(f"Expected key=value for --config, got {pair!r}")
-                k, raw_v = pair.split("=", 1)
-                low_v = raw_v.strip().lower()
-                if low_v == "true":
-                    cfg_dict[k.strip()] = True
-                elif low_v == "false":
-                    cfg_dict[k.strip()] = False
-                else:
-                    try:
-                        cfg_dict[k.strip()] = (
-                            int(raw_v) if raw_v.strip().isdigit() else float(raw_v)
-                        )
-                    except ValueError:
-                        cfg_dict[k.strip()] = raw_v.strip()
+            cfg_dict = parse_config_kv_pairs(config_kv)
             if cfg_dict or custom_mods is not None:
                 svc.set_config(cfg_dict or None, custom_mods=custom_mods, slot=active_target)
             save_pob_slot_snapshot(svc, active_target)
@@ -1598,6 +1924,13 @@ def trade_upgrades_cmd(
             "--no-pob", help="Skip headless PoB2 ranking and return raw trade2 candidates."
         ),
     ] = False,
+    normalize_topoff: Annotated[
+        bool,
+        typer.Option(
+            "--normalize-topoff/--no-normalize-topoff",
+            help="Normalize uncrafted listings to +20% Quality & open Rune sockets.",
+        ),
+    ] = True,
     limit: Annotated[
         int, typer.Option("--limit", "-n", help="Max candidate listings to evaluate.")
     ] = 10,
@@ -1617,6 +1950,7 @@ def trade_upgrades_cmd(
             objective=objective,
             stat_filters=stat,
             no_pob=no_pob,
+            normalize_craft_topoff=normalize_topoff,
             limit=limit,
             league=league,
         )
@@ -1636,11 +1970,16 @@ def trade_upgrades_cmd(
                 diff = cand["upgrade_diff"]
                 fee_s = f", Gold fee={lst['fee']}" if lst.get("fee") is not None else ""
                 item_lbl = f"{lst.get('item_name') or ''} {lst['base_type']}".strip()
+                topoff_s = ""
+                if cand.get("top_off_applied"):
+                    all_in = cand.get("effective_total_cost_exalted")
+                    steps = ", ".join(cand["top_off_applied"])
+                    topoff_s = f" | Top-off ({steps}) @ {all_in} Ex"
                 console.print(
                     f"  #{cand['rank']} [{lst['sale_type']}] {item_lbl} — "
                     f"[bold green]{lst['price_exalted']} Ex[/bold green]{fee_s} | "
                     f"FullDPS {diff['full_dps_pct']:+.1f}% ({diff['full_dps_delta']:+,.1f}) | "
-                    f"EHP {diff['total_ehp_pct']:+.1f}%"
+                    f"EHP {diff['total_ehp_pct']:+.1f}%{topoff_s}"
                 )
         else:
             console.print(
@@ -1649,9 +1988,7 @@ def trade_upgrades_cmd(
             )
             for lst in data.get("listings", [])[:10]:
                 item_lbl = f"{lst.get('item_name') or ''} {lst['base_type']}".strip()
-                console.print(
-                    f"  • [{lst['sale_type']}] {item_lbl} — {lst['price_exalted']} Ex"
-                )
+                console.print(f"  • [{lst['sale_type']}] {item_lbl} — {lst['price_exalted']} Ex")
 
     _run_cli(json_output, _compute, _render)
 
@@ -2486,9 +2823,7 @@ def filter_restyle_cmd(
     musical_key: Annotated[
         str, typer.Option("--musical-key", help="Musical root key for synth pack.")
     ] = "D",
-    scale: Annotated[
-        str, typer.Option("--scale", help="Musical scale for synth pack.")
-    ] = "lydian",
+    scale: Annotated[str, typer.Option("--scale", help="Musical scale for synth pack.")] = "lydian",
     warm_night: Annotated[
         bool,
         typer.Option(

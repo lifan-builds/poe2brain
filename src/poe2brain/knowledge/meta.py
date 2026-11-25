@@ -56,8 +56,7 @@ POE1_OR_UNRELEASED_TRAP_CLASSES: dict[str, str] = {
         "or Warbringer in PoE2 0.5.5."
     ),
     "templar": (
-        "Templar is not in PoE2 0.5.5; check Druid (Oracle / Shaman) "
-        "or Monk (Invoker) instead."
+        "Templar is not in PoE2 0.5.5; check Druid (Oracle / Shaman) or Monk (Invoker) instead."
     ),
     "inquisitor": (
         "Inquisitor is a PoE1 Templar ascendancy; check Monk Invoker "

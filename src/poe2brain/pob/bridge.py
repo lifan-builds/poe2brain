@@ -433,9 +433,7 @@ class Pob2Bridge:
         except TimeoutError as exc:
             self._close_sock_locked()
             self._state_epoch += 1
-            raise Pob2BridgeError(
-                f"Timeout calling PoB2 daemon method '{method}': {exc}"
-            ) from exc
+            raise Pob2BridgeError(f"Timeout calling PoB2 daemon method '{method}': {exc}") from exc
         except OSError as exc:
             self._close_sock_locked()
             self._state_epoch += 1
