@@ -297,11 +297,20 @@ def test_craft_profit_auto_competition_and_niche_score() -> None:
         scanner.close()
 
 
-def test_cli_ninja_search_preset_sleeper_json() -> None:
-    """Smoke-test `poe2 ninja search --preset sleeper --limit 3 --json` end-to-end."""
-    res = runner.invoke(app, ["ninja", "search", "--preset", "sleeper", "--limit", "3", "--json"])
-    assert res.exit_code == 0, res.output
-    data = json.loads(res.output)
-    assert data["preset"] == "sleeper"
-    assert data["sort_by"] == "sleeper"
-    assert len(data["builds"]) == 3
+def test_cli_ninja_search_preset_sleeper_json(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Smoke-test `poe2 ninja search --preset sleeper --limit 3 --json` end-to-end offline."""
+    svc = NinjaBuildsService(http_client=_make_mock_ninja_http(), cache_dir=tmp_path)
+    monkeypatch.setattr("poe2brain.mcp_server.get_ninja_service", lambda: svc)
+    try:
+        res = runner.invoke(
+            app, ["ninja", "search", "--preset", "sleeper", "--limit", "3", "--json"]
+        )
+        assert res.exit_code == 0, res.output
+        data = json.loads(res.output)
+        assert data["preset"] == "sleeper"
+        assert data["sort_by"] == "sleeper"
+        assert len(data["builds"]) == 3
+    finally:
+        svc.close()

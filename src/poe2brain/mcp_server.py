@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import atexit
 import base64
+import logging
 import os
 import re
 import signal
@@ -94,6 +95,8 @@ mcp = FastMCP(
     website_url=REPO_URL,
 )
 mcp._mcp_server.version = __version__
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 _SAFE_SLOT_RE = re.compile(r"[^a-zA-Z0-9._-]+")
 
