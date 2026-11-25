@@ -1,40 +1,109 @@
-# poe2brain — 流放之路 2（PoE2）AI 智能引擎
+<div align="center">
 
-> English documentation: [README.md](README.md)
+<img src="docs/assets/hero-banner.svg" alt="poe2brain — 流放之路 2 (0.5.5) AI 智能引擎" width="100%" />
 
-**`poe2brain`** 是专为 **流放之路 2（Path of Exile 2，Patch `0.5.5` / `Forbidden Rites`）** 打造的 AI Agent 引擎（**`AGPL-3.0-only` 开源协议**，附 [ATTRIBUTION.md](ATTRIBUTION.md) 第 7 条署名条款），原生支持 **Windows、macOS、Linux**。同一套 Python 3.12+ 引擎同时提供 **JSON CLI (`poe2`)** 与 **MCP Server (`poe2brain-mcp`，42 个 1:1 工具)**，可直接接入 Claude Code、Cursor、Antigravity、Codex、Devin 等 AI 编程/游戏助手。
+<br/>
 
----
+[![CI (Windows + macOS)](https://img.shields.io/github/actions/workflow/status/lifan-builds/poe2brain/ci.yml?branch=main&style=flat-square&label=CI%20Windows%20%2B%20macOS)](https://github.com/lifan-builds/poe2brain/actions/workflows/ci.yml)
+[![版本](https://img.shields.io/badge/流放之路2-0.5.5%20禁忌仪式-d4a24c?style=flat-square)](https://github.com/lifan-builds/poe2brain)
+[![工具数](https://img.shields.io/badge/MCP%20%2B%20CLI-42%20个全功能工具-38bdf8?style=flat-square)](#完整工具与命令速查)
+[![平台](https://img.shields.io/badge/支持系统-Windows%20%7C%20macOS%20%7C%20Linux-64748b?style=flat-square)](#windows--macos-3-分钟上手)
+[![免费开源](https://img.shields.io/badge/协议-AGPL--3.0--only%20完全免费开源-e11d48?style=flat-square)](LICENSE)
 
-## 核心能力（六大模块，拒绝 AI 幻觉）
+<h3>
+  给 Claude Code、Cursor、Antigravity、Codex、Cherry Studio 装上<br/>
+  真正的《流放之路 2》(<code>0.5.5</code>) 无头 PoB2 与市集大脑 —— 拒绝 AI 幻觉，绝不碰 <code>POESESSID</code>。
+</h3>
 
-1. **PoE2 `0.5.5` 真值知识库 & 23 升华 Meta（支持中英文检索）**
-   - 内置离线 SQLite + FTS5 数据库，覆盖官方关键词弹窗、49 条防 PoE1 幻觉规则（转化机制、品质独立乘区、50% 格挡上限、偏斜、混沌对护盾双倍、流血/中毒穿盾）、1,711 技能宝石、435 传奇、3,219 基底与 23 升华天赋。
-   - 原生支持中文查询（例如 `poe2 wiki ascendancy "风暴编织者"`、`poe2 wiki mechanic "护盾"`、`poe2 wiki gem "拉基亚塔的流光"`）与中文客户端 `Ctrl+C` 装备解析。
-2. **无头 Path of Building 2（PoB2）深度计算引擎**
-   - 直接运行 MIT `PathOfBuilding-PoE2` 内核：**无需安装 C 编译器**，Windows 自动复用本地 PoB2 或内置 `lua51.dll`！
-   - **去水审计 (`pob audit`)**：剥离 PoB 战神虚假勾选，计算真实巅峰 Boss 持续 DPS 与生存。
-   - **词缀溯源 (`pob calc-breakdown`)**：精确拆解 `FullDPS` / `EnergyShield` / `ManaCost` 的 `BASE / INC / MORE` 来源（装备/天赋/宝石/配置）。
-   - **辅助宝石全量扫榜 (`pob supports`)**：按未切割辅助宝石阶数 (`1-5`) 与血脉辅助 (`max_copies=1`) 自动排查魔力续航、精魂溢出与冲突。
-   - **范围珠宝选孔 (`pob radius-jewels`)**：自动遍历全部珠宝孔 × 环径，计算 **可控蜕变 (`Controlled Metamorphosis`)** 与 **抗衡黑暗 (`Against the Darkness`)** 每点天赋收益与省点数。
-   - **无损假设沙盒 (`pob what-if`)**：模拟改词缀、换装备、从榜一大佬槽位借单件装备 (`--borrow-from`) 归因测试、三场景矩阵对比，默认自动回滚。
-3. **实时市集捡漏、装备估价与仓库一键分拣（零 `POESESSID`）**
-   - 无需抓包 Cookie，遵守 GGG 限流协议：自动区分 **金币一口价 (`securable`，离线秒买)** 与 **密语低价钓鱼 (`whisper`)**，去重压价号。
-   - **市集自动找提升 (`trade upgrades`)**：用 PoB2 真实边际权重生成查询，自动给未腐化装备补满 `20%` 品质与高级符文后在 PoB2 中跑分，按「真实全部成本性价比」排序。
-   - **四倍仓一键分拣 (`trade triage`)**：批量粘贴多件 `Ctrl+C` 装备，自动分成「立即秒卖 / 做装半成品 / 赌鉴定揭秘 / 分解卖店」。
-4. **PoE2 `0.5.5` 精确做装概率、最优策略与赚钱做装榜**
-   - 严格遵循 `0.5.5` 条件词池、阶梯通货等级下限、动态元素标签屏蔽、4 词破裂检查点、完美精华结晶置换与深渊揭秘（自动拦截 `0.4` 移除的同质化预兆与 `0.5` 移除的重铸）。
-   - `craft profit` 与 `econ arbitrage` 自动结合实时物价、流动性与 **每 1 万金币收益** 给出低/中/高本金复利路线。
-5. **poe.ninja 抄作业、时光机对比 & 开荒角色导入**
-   - 内置 353 套全 23 升华排行榜数据 + 实时 `poe.ninja` 时光机探测 (`--probe-timeline`)，一键对比开荒第 1 周 vs 终局配装与金币洗点花费。
-6. **防崩客户端过滤器生成器 + 视觉主题 + 护耳音效工坊**
-   - 内置全部 7 类 PoE2 过滤器崩溃规则校验，支持色盲友好 (`--cvd-safe`)、双人组队合并 (`--slots p1,p2`)、凌晨 2 点防耳鸣低通滤波音效 (`--warm-night`)，以及一键修复 PoE1 / 0.1 老过滤器 (`filter heal`)。
+<p>
+  <a href="README.md">English</a> ·
+  <a href="README_ZH.md"><strong>简体中文</strong></a> ·
+  <a href="docs/zh/QUICKSTART_WINDOWS.md"><strong>Windows 零编译保姆教程</strong></a> ·
+  <a href="docs/zh/AGENT_SETUP.md"><strong>AI 客户端接入 &amp; 提示词</strong></a> ·
+  <a href="docs/zh/PLAYBOOKS.md"><strong>六大实战工作流手册</strong></a>
+</p>
+
+</div>
 
 ---
 
-## Windows / macOS 一键安装（3 分钟上手）
+## 为什么做 `poe2brain`？（告别 AI 拿流放 1 规则胡说八道）
 
-### 1. 安装 `uv`（Python 包管理器）
+直接拿通用大模型问《流放之路 2》配装、做装或市集捡漏，90% 会翻车：AI 会用流放 1 的老黄历告诉你「75% 格挡上限」「改造石洗词缀」「用工艺台」「用 0.4 就删掉的同质化预兆」，甚至把 PoB 战神勾选的虚高面板当成真实伤害。
+
+**`poe2brain`** 是一套 **完全免费开源、跨平台（Windows 零编译）** 的 PoE2 专属智能引擎：同一套核心同时提供 **命令行 (`poe2`)** 与 **MCP Server (`poe2brain-mcp`，42 个 1:1 工具)**，把真实无头 **Path of Building 2**、Patch `0.5.5` 离线真值数据库、实时市集一口价捡漏、做装期望求解器和防崩过滤器工坊直接交给你的 AI 助手。
+
+| 玩家 / AI 常见痛点 | 直接问普通 AI / 手工查表 | 用 `poe2brain` (`Patch 0.5.5`) |
+| :--- | :--- | :--- |
+| **拿流放 1 规则套流放 2** | 瞎编 75% 格挡、工艺台、已删除通货 | **离线 SQLite + FTS5 真值库**：769 条官方弹窗、49 条防幻觉铁律、23 升华，**支持中文直接搜** |
+| **抄到「PoB 战神」水货 BD** | 只看勾满药剂/满感电的虚假面板 | **无头 LuaJIT PoB2 真算**：一键**去水审计 (`pob audit`)** + 自动列出前 5 项配装瓶颈 |
+| **想找冷门高伤高速黑马 BD** | 榜一全是天价镜子装或烂大街 Meta | **内置 353 套预去水排行榜**：一句 `--preset sleeper` 1 秒算出真实 DPS × 移速 × 稀有度黑马榜 |
+| **市集被密语压价号钓鱼** | 最低价全是 1 崇高不卖人的脚本号 | 自动拆分 **金币一口价 (`securable`，离线秒买)** vs **密语 (`whisper`)**，自动补满 20% 品质与符文再跑分 |
+| **做装靠感觉容易血本无归** | 不懂 0.5.5 阶梯通货等级下限与词池互斥 | **精确条件词池 MDP + 蒙特卡洛 (`p50`/`p80`/`p95`)**，直接算出「自己做 vs 市集买」谁更赚 |
+| **手改过滤器进游戏直接报错** | `MapTier` / `Expert` 基底 / 空格写错导致加载崩溃 | **7 类崩溃陷阱自校验编译器 + 老过滤器医生 (`filter heal`)**，一句话生成护耳暗黑/色盲友好过滤器 |
+| **担心封号 / Windows 装不上** | 要抠 `POESESSID` Cookie，或在 Windows 折腾 C 编译器 | **零 `POESESSID`、零读内存、零自动交易**（支持本地 PoB2 导入与官方 GGG OAuth 2.1）；**Windows 零编译开箱即用** |
+
+---
+
+## 实测效果一览
+
+### 1. 一句话挖出「冷门 + 高真实伤害 + 高移速」黑马 BD
+
+```bash
+uv run poe2 ninja search --preset sleeper --limit 5
+```
+
+```text
+     poe.ninja Builds — Forbidden Rites (matched 59/345 | preset=sleeper | sort=sleeper)
+┏━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━┓
+┃ Character        ┃ Ascendancy         ┃  Lv ┃ Main Skill        ┃        DPS ┃    EHP ┃  Move ┃
+┡━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━┩
+│ popyj            │ Pathfinder         │ 100 │ Ice Shot          │ 15,150,400 │ 29,631 │ 1.99x │
+│ 一阿克一         │ Pathfinder         │  99 │ Ice Shot          │ 15,093,062 │ 23,467 │ 2.04x │
+│ Noxious_Fu...    │ Acolyte of Chayula │ 100 │ Poisonburst Arrow │  5,652,710 │ 36,369 │ 1.71x │
+│ EightChall...    │ Shaman             │ 100 │ Spark             │  7,113,825 │ 24,586 │ 1.98x │
+│ 风枪锐眼         │ Pathfinder         │ 100 │ Ice Shot          │  3,979,867 │ 21,084 │ 2.17x │
+└──────────────────┴────────────────────┴─────┴───────────────────┴────────────┴────────┴───────┘
+```
+
+### 2. 像和老玩家聊天一样直接问 AI（接入 MCP 后直接复制使用）
+
+- **找黑马 BD：** *「帮我找当前赛季冷门、不要永恒时刻（Temporalis）、真实去水 DPS 高且移速快的 3 套黑马 BD，并找出它们前期最省钱的时光机过渡快照。」*
+- **给自己的号体检：** *「导入我本地 PoB2 里最新保存的 BD，跑一次去水审计告诉我最大瓶颈是什么，再在 50 崇高以内搜市集金币一口价能买到的最大武器提升。」*
+- **四倍仓一键分拣：** *「我把刚才刷图打的一堆装备 `Ctrl+C` 贴给你，按 5 崇高为界帮我分成立即秒卖、半成品值得做、赌鉴定揭秘、直接分解四堆。」*
+- **做装前先算账：** *「我想做一把 82 级法杖要 T1 法伤 + 法术技能等级，帮我算期望成本和 p80 脸黑成本，对比市集直接买划算还是自己做划算。」*
+- **防翻车刷图 + 护耳过滤器：** *「根据我当前槽位 BD 生成一条 50 字符以内的防翻车异界引路石正则，再帮我生成一个暗黑金色、色盲友好、凌晨 2 点不刺耳的严格过滤器。」*
+
+> 更多中文对话模板请见：[docs/zh/AGENT_SETUP.md](docs/zh/AGENT_SETUP.md)
+
+---
+
+## 核心架构（六大模块）
+
+```mermaid
+flowchart TB
+    A["玩家 & AI 助手<br/>Claude Code · Cursor · Antigravity · Codex · Cherry Studio"]
+    A -->|JSON 命令行| CLI["poe2 (CLI)"]
+    A -->|MCP 协议| MCP["poe2brain-mcp (42 个 1:1 工具)"]
+    CLI --> CORE["Python 3.12+ 强类型核心引擎"]
+    MCP --> CORE
+
+    CORE --> P1["1. 0.5.5 真值知识库<br/>中英文检索 · 23 升华<br/>50 字符引路石正则"]
+    CORE --> P2["2. 无头 PoB2 引擎<br/>去水审计 · 词缀溯源<br/>辅助扫榜 · 范围珠宝 · 假设沙盒"]
+    CORE --> P3["3. 实时经济 & 市集捡漏<br/>崇高本位 · 一口价 vs 密语<br/>金币复利套利 · 四倍仓分拣"]
+    CORE --> P4["4. 精确做装求解器<br/>条件词池 · 蒙特卡洛成本<br/>防砸词保护 · 赚钱做装榜"]
+    CORE --> P5["5. poe.ninja 抄作业<br/>353 套预审计数据 · 意图预设<br/>!反向排除 · 时光机过渡点"]
+    CORE --> P6["6. 防崩过滤器 & 音效工坊<br/>7 类报错校验 · 老过滤器修复<br/>色盲主题 · 2AM 护耳音频"]
+```
+
+---
+
+## Windows / macOS 3 分钟上手
+
+> 完整 Windows 保姆级避坑文档（含 PowerShell 中文乱码处理、本地 PoB2 自动识别）：[docs/zh/QUICKSTART_WINDOWS.md](docs/zh/QUICKSTART_WINDOWS.md)
+
+### 第 1 步：安装 `uv`（极速 Python 环境管理器）
+
 - **Windows (PowerShell):**
   ```powershell
   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
@@ -44,90 +113,123 @@
   curl -LsSf https://astral.sh/uv/install.sh | sh
   ```
 
-### 2. 下载并初始化 `poe2brain`
+### 第 2 步：下载并初始化 `poe2brain`
+
 ```bash
 git clone https://github.com/lifan-builds/poe2brain.git
 cd poe2brain
 uv sync
 
-# 初始化无头 PoB2 引擎（Windows 自动复用本地 PoB2 或拉取 MIT x64 DLL，无需装编译器！）
+# 初始化无头 PoB2 引擎
+# • Windows：无需安装 Visual Studio / C 编译器！自动复用本地 PoB2 或拉取 MIT x64 lua51.dll
+# • macOS / Linux：自动编译 LuaJIT 2.1 + luautf8
 uv run poe2 bootstrap pob2
 
-# 检查引擎就绪状态
+# 检查一切就绪
 uv run poe2 version --json
 ```
 
+### 第 3 步：导入你的角色（开荒第 1 天即用，绝不碰 `POESESSID`）
+
+- **方式 A：零登录读取本地 PoB2 存档（最推荐，开箱即用）**
+  ```bash
+  uv run poe2 pob import-local --list
+  uv run poe2 pob import-local --slot main
+  ```
+- **方式 B：官方 GGG OAuth 2.1 PKCE 登录（与 PoB2 相同的官方授权流程）**
+  ```bash
+  uv run poe2 auth login
+  uv run poe2 pob import-character --list
+  uv run poe2 pob import-character "你的角色名" --slot main
+  ```
+- **方式 C：直接导入 `poe.ninja` / `poe2db` / `maxroll` / `pobb.in` 链接或 `eN...` 分享码**
+  ```bash
+  uv run poe2 ninja character "https://poe.ninja/poe2/builds/..." --load-pob --slot main
+  uv run poe2 pob load "eN..." --slot main
+  ```
+
 ---
 
-## 导入你的角色（支持开荒第 1 天，无需 `POESESSID`）
+## 接入主流 AI 助手
 
-### 方式 A：零登录同步本地 PoB2（推荐，立即可用）
-只要你在桌面版 Path of Building (PoE2) 导入并保存过 BD，直接一键加载最新存档：
-```bash
-uv run poe2 pob import-local --list
-uv run poe2 pob import-local --slot main
-```
+仓库已自带主流 AI 客户端配置，详细图文步骤见 **[docs/zh/AGENT_SETUP.md](docs/zh/AGENT_SETUP.md)**：
 
-### 方式 B：官方 GGG OAuth 2.1 登录（与 PoB2 相同的官方 PKCE 协议）
-```bash
-uv run poe2 auth login
-uv run poe2 pob import-character --list
-uv run poe2 pob import-character "你的角色名" --slot main
-```
+- **Claude Code / Cursor：** 直接在项目目录打开（自动识别 [.mcp.json](.mcp.json)），或全局粘贴下方配置。
+- **Antigravity：** 内置插件清单 [plugin.json](plugin.json) 与技能说明 [.agents/skills/poe2brain/SKILL.md](.agents/skills/poe2brain/SKILL.md)。
+- **Cherry Studio / Cline / 通用 MCP 客户端：**
 
-### 方式 C：`poe.ninja` 链接或 PoB2 分享码
-```bash
-uv run poe2 ninja character "https://poe.ninja/poe2/builds/..." --load-pob --slot main
-uv run poe2 pob load "eN..." --slot main
+```json
+{
+  "mcpServers": {
+    "poe2brain": {
+      "command": "uv",
+      "args": ["--directory", "C:/你的路径/poe2brain", "run", "poe2brain-mcp"]
+    }
+  }
+}
 ```
 
 ---
 
 ## 常用玩法速查
 
+> 六大模块的深入实战手册见：[docs/zh/PLAYBOOKS.md](docs/zh/PLAYBOOKS.md)
+
 ```bash
-# 中文查升华/机制/宝石
+# 1. 中文查升华 / 机制 / 宝石（彻底告别 PoE1 幻觉）
 uv run poe2 wiki ascendancy "风暴编织者"
 uv run poe2 wiki mechanic "能量护盾"
 uv run poe2 wiki gem "拉基亚塔的流光"
 
-# 一键挖掘冷门高伤高速黑马 BD（预去水 DPS + 移速 + 稀有度综合打分）
+# 2. 一键挖冷门高伤高速黑马 BD，或用 ! 排除不想看的升华/传奇
 uv run poe2 ninja search --preset sleeper --limit 5
+uv run poe2 ninja search --ascendancy "!Gemling Legionnaire,!Deadeye" --unique "!Temporalis"
 
-# 去水审计（含瓶颈诊断）+ 词缀溯源 + 找最强辅助宝石 + 找最佳可控蜕变孔位
+# 3. 去水审计（含瓶颈诊断）+ 词缀溯源 + 辅助宝石扫榜 + 可控蜕变选孔
 uv run poe2 pob audit --slot main
 uv run poe2 pob calc-breakdown EnergyShield --slot main
 uv run poe2 pob supports --slot main --max-tier 2 --no-lineage
 uv run poe2 pob radius-jewels --jewel "Controlled Metamorphosis" --slot main
 
-# 市集自动找 50E 以内一口价最大提升（自动模拟补满 20% 品质与符文）
+# 4. 市集 50E 一口价自动捡漏（自动模拟补满 20% 品质 + 高级符文再算提升）
 uv run poe2 trade upgrades --equip-slot "Weapon 1" --max-exalted 50 --securable-only --slot main
 
-# 统一预算/金币参数扫描藏身处套利（支持 500 崇高或 5d 神圣写法）
+# 5. 藏身处套利扫描（统一 --budget 支持 500 崇高或 5d 神圣）& 赚钱做装榜
 uv run poe2 econ arbitrage --budget 5d --gold 50000
+uv run poe2 craft profit --budget mid
 
-# 生成 <=50 字符防翻车异界引路石正则
+# 6. 生成 <=50 字符防翻车引路石正则 & 一句话护耳色盲友好过滤器
 uv run poe2 wiki regex --slot main
-
-# 自然语言一句话生成护耳、色盲友好、暗黑防崩客户端的严格过滤器
-uv run poe2 filter generate --slot main --strictness strict --look "obsidian gold colorblind 2am chime" --out my_build.filter
+uv run poe2 filter generate --slot main --strictness strict \
+  --look "obsidian gold deuteranopia 2am chime" --out my_build.filter
 ```
 
 ---
 
-## 接入 AI 助手（Claude Code / Cursor / Antigravity / Codex）
+## 完整工具与命令速查
 
-仓库已内置各主流 Agent 配置文件：
-- **Claude Code / Cursor**：[.mcp.json](.mcp.json)
-- **Antigravity**：[plugin.json](plugin.json) + [.agents/skills/poe2brain/SKILL.md](.agents/skills/poe2brain/SKILL.md)
-- **手动启动 MCP Server**：`uv run poe2brain-mcp`
+<details>
+<summary><strong>点击展开：全部 42 个 MCP 工具与 CLI 命令一览</strong></summary>
+
+| 模块 | 代表 MCP 工具 | 对应 CLI 命令 | 核心用途 |
+| :--- | :--- | :--- | :--- |
+| **状态** | `poe2_status` | `poe2 version --json` | 检查补丁 (`0.5.5`)、数据库与无头 PoB2 就绪状态 |
+| **知识库 (9)** | `poe2_search_knowledge`, `poe2_explain_mechanic`, `poe2_inspect_gem/base/unique/augment/ascendancy`, `poe2_meta_ladder`, `poe2_waystone_regex` | `poe2 wiki search/mechanic/gem/base/unique/augment/ascendancy/meta/regex` | 中英文真值检索、23 升华、全服 Meta、50 字符防翻车引路石/碑牌正则 |
+| **无头 PoB2 (14)** | `poe2_pob_load/stats/audit/compare/hc_audit/eval_item/stat_weights/suggest_nodes/calc_breakdown/supports/radius_jewels/what_if/import_local/import_character` | `poe2 pob load/stats/audit/compare/hc-audit/eval-item/weights/nodes/calc-breakdown/supports/radius-jewels/what-if/import-local/import-character` | 多槽位 PoB2 计算、去水体检与瓶颈定位、HC 猝死审计、词缀溯源、辅助/范围珠宝排榜、无损假设沙盒 |
+| **经济套利 (3)** | `poe2_currency_price`, `poe2_market_scan`, `poe2_scan_arbitrage` | `poe2 econ price/scan/arbitrage` | 崇高本位实时物价、异动扫描、金币税感知套利与复利阶梯 |
+| **市集估价 (4)** | `poe2_parse_item`, `poe2_price_check`, `poe2_triage_dump`, `poe2_find_upgrades` | `poe2 trade parse/check/triage/upgrades` | 中英文 `Ctrl+C` 解析、一口价 vs 密语估价、四倍仓分拣、PoB2 真实提升捡漏 |
+| **做装求解 (3)** | `poe2_craft_odds`, `poe2_craft_plan`, `poe2_scan_craft_profit` | `poe2 craft odds/plan/profit` | 精确条件词池概率、防砸词保护、期望与 p80 脸黑成本、高利润低竞争做装榜 |
+| **poe.ninja (3)** | `poe2_ninja_snapshots`, `poe2_ninja_search`, `poe2_ninja_character` | `poe2 ninja snapshots/search/character` | 全服快照、`--preset` 黑马/开荒/速刷检索、`!反向过滤`、时光机低预算过渡点探测 |
+| **过滤器工坊 (5)** | `poe2_filter_presets`, `poe2_filter_generate`, `poe2_filter_restyle`, `poe2_filter_validate`, `poe2_filter_heal` | `poe2 filter presets/generate/restyle/validate/heal` | 7 类报错校验、老过滤器自动修复、色盲主题、双人组队合并、2AM 护耳/语音播报音效 |
+
+</details>
 
 ---
 
-## 合规与开源声明
+## 合规边界与开源声明
 
-- 严格遵守 GGG ToS：**绝不读取 `POESESSID`**，绝不读游戏内存，绝不自动点击/自动密语交易，所有市集与 API 请求均经过动态限流器。
-- **开源协议 (`AGPL-3.0-only` + Section 7 署名条款)**：本项目代码依据 [LICENSE](LICENSE) (`AGPL-3.0-only`) 与 [ATTRIBUTION.md](ATTRIBUTION.md) 开源；任何复制、修改或网络服务分发版本均须保持 `AGPL-3.0-only` 协议、公开完整源码，并在 README 及 `--version` / MCP 输出中保留署名：
+- **严格遵守 GGG 服务条款（绝不触碰封号红线）：** 本项目仅作为**局外离线计算、剪贴板解析与公开 API 顾问**运行。绝不读取或存储 `POESESSID` / 登录 Cookie，绝不读取游戏内存或截屏 OCR，绝不向游戏客户端注入任何键鼠点击或自动密语交易，所有公开市集请求均经过动态限流器 (`GGGRateLimiter`)。
+- **完全免费开源 (`AGPL-3.0-only` + 第 7 条署名条款)：** 代码依据 [LICENSE](LICENSE) 与 [ATTRIBUTION.md](ATTRIBUTION.md) 开源；任何复制、修改或通过网络对外提供服务的衍生版本，均须保持 `AGPL-3.0-only` 开源并公开完整源码、不得使用 `poe2brain` 名称，并在 README 与 `--version` / 关于输出中保留署名：
   > Based on poe2brain by lifan-builds (https://github.com/lifan-builds/poe2brain)
-- 欢迎依据 [CONTRIBUTING.md](CONTRIBUTING.md) 提交 PR（首次 PR 签署一次性 [CLA](CLA.md)）；商业/非 AGPL 授权请提 Issue 联系 `lifan-builds`。
-- 上游数据致谢：`data/` 内置查表数据与无头计算内核均源自合规 MIT 开源上游项目（`PathOfBuilding-PoE2`、`Exiled-Exchange-2`、`ackness/pobr`、`repoe-fork/poe2`、`NeverSink-Filter-for-PoE2`），原 MIT 许可声明已完整保留。
+- **合规上游致谢：** `data/` 离线查表数据与无头计算内核均源自宽松 MIT 开源项目（`PathOfBuildingCommunity/PathOfBuilding-PoE2`、`Exiled-Exchange-2`、`ackness/pobr`、`repoe-fork/poe2`、`NeverSink-Filter-for-PoE2`），并完整保留原 MIT 许可声明。
+- 欢迎通过 [CONTRIBUTING.md](CONTRIBUTING.md) 提交 PR（首次提交签署一次性 [CLA](CLA.md)）；商业/非 AGPL 授权请联系 `lifan-builds` 开 Issue 咨询。
