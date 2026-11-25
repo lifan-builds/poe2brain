@@ -31,6 +31,20 @@ from poe2brain.pob import (
 
 
 def _is_pid_alive(pid: int) -> bool:
+    if os.name == "nt":
+        import ctypes
+
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(0x1000, False, pid)
+        if not h:
+            return False
+        try:
+            code = ctypes.c_ulong(0)
+            if not k32.GetExitCodeProcess(h, ctypes.byref(code)):
+                return False
+            return code.value == 259  # STILL_ACTIVE
+        finally:
+            k32.CloseHandle(h)
     try:
         os.kill(pid, 0)
         return True
@@ -39,6 +53,34 @@ def _is_pid_alive(pid: int) -> bool:
 
 
 def _rss_mb(pid: int) -> float:
+    if os.name == "nt":
+        import ctypes
+
+        class _PMC(ctypes.Structure):
+            _fields_ = [
+                ("cb", ctypes.c_ulong),
+                ("PageFaultCount", ctypes.c_ulong),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        h = ctypes.windll.kernel32.OpenProcess(0x0400 | 0x0010, False, pid)
+        if not h:
+            return 0.0
+        try:
+            pmc = _PMC()
+            pmc.cb = ctypes.sizeof(_PMC)
+            if ctypes.windll.psapi.GetProcessMemoryInfo(h, ctypes.byref(pmc), pmc.cb):
+                return pmc.WorkingSetSize / (1024.0 * 1024.0)
+            return 0.0
+        finally:
+            ctypes.windll.kernel32.CloseHandle(h)
     out = subprocess.check_output(["ps", "-o", "rss=", "-p", str(pid)], text=True).strip()
     return int(out) / 1024.0
 
@@ -222,8 +264,11 @@ def test_parent_sigkill_triggers_luajit_getppid_self_termination() -> None:
         luajit_pid = int(luajit_pid_line)
         assert _is_pid_alive(luajit_pid)
 
-        # Hard SIGKILL parent Python process (simulating killed agent/pytest worker)
-        os.kill(py_proc.pid, signal.SIGKILL)
+        # Hard-kill parent Python process (simulating killed agent/pytest worker)
+        if os.name == "nt":
+            py_proc.kill()
+        else:
+            os.kill(py_proc.pid, signal.SIGKILL)
         py_proc.wait(timeout=3.0)
 
         deadline = time.monotonic() + 1.5
@@ -249,8 +294,8 @@ def test_zero_luajit_xml_fast_path_for_filter_generation(
     real_pob2 = get_pob2_paths().root_dir
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    (cache_dir / "pob2").symlink_to(real_pob2, target_is_directory=True)
     monkeypatch.setenv("POE2BRAIN_CACHE_DIR", str(cache_dir))
+    monkeypatch.setenv("POE2BRAIN_POB2_DIR", str(real_pob2))
     monkeypatch.delenv("POE2BRAIN_POB_SOCKET", raising=False)
     mcp_mod.close_services()
     close_default_pob2_bridge()

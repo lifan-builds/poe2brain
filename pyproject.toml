@@ -17,6 +17,11 @@ dependencies = [
     "rich>=13.9.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/lifan-builds/poe2brain"
+Repository = "https://github.com/lifan-builds/poe2brain"
+Issues = "https://github.com/lifan-builds/poe2brain/issues"
+
 [dependency-groups]
 dev = [
     "pytest>=8.3.0",
@@ -30,6 +35,9 @@ poe2brain-mcp = "poe2brain.mcp_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/poe2brain"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"data" = "poe2brain/_data"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -3,10 +3,12 @@ from __future__ import annotations
 import atexit
 import json
 import os
+import queue
 import selectors
 import signal
 import socket
 import subprocess
+import sys
 import threading
 import time
 import weakref
@@ -15,6 +17,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from poe2brain.config import REPO_ROOT, Pob2RuntimePaths, get_pob2_paths
+from poe2brain.pob.bootstrap import bootstrap_pob2_runtime
 
 BRIDGE_LUA_PATH: Path = Path(__file__).resolve().parent / "lua" / "pob2_bridge.lua"
 BOOTSTRAP_SCRIPT_PATH: Path = REPO_ROOT / "scripts" / "bootstrap_pob2.sh"
@@ -196,28 +199,15 @@ class Pob2Bridge:
         if not self.auto_bootstrap:
             raise Pob2BridgeError(
                 f"Headless PoB2 runtime is not ready at {paths.root_dir}. "
-                f"Run {BOOTSTRAP_SCRIPT_PATH} first."
+                "Run 'poe2 bootstrap pob2' first."
             )
-        if not BOOTSTRAP_SCRIPT_PATH.is_file():
-            raise Pob2BridgeError(f"Missing PoB2 bootstrap script at {BOOTSTRAP_SCRIPT_PATH}")
-
-        env = os.environ.copy()
-        if self._explicit_pob2_dir is not None:
-            env["POE2BRAIN_CACHE_DIR"] = str(self._explicit_pob2_dir.parent)
-
-        proc = subprocess.run(
-            ["bash", str(BOOTSTRAP_SCRIPT_PATH)],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=self.bootstrap_timeout,
-            check=False,
-        )
-        refreshed = self.paths
-        if proc.returncode != 0 or not refreshed.is_ready:
-            detail = (proc.stderr or proc.stdout or "").strip()[-800:]
-            raise Pob2BridgeError(f"bootstrap_pob2.sh failed (rc={proc.returncode}): {detail}")
-        return refreshed
+        try:
+            return bootstrap_pob2_runtime(
+                pob2_dir=self._explicit_pob2_dir,
+                timeout=self.bootstrap_timeout,
+            )
+        except Exception as exc:
+            raise Pob2BridgeError(f"Failed to bootstrap headless PoB2 runtime: {exc}") from exc
 
     def _start_idle_watchdog_locked(self, proc: subprocess.Popen[str]) -> None:
         if self.idle_timeout_seconds <= 0:
@@ -241,6 +231,34 @@ class Pob2Bridge:
 
             sock_path = self.socket_path
             if sock_path is not None:
+                tcp_desc: dict[str, Any] | None = None
+                if sock_path.is_file():
+                    try:
+                        raw = sock_path.read_text(encoding="utf-8").strip()
+                        if raw.startswith("{"):
+                            parsed = json.loads(raw)
+                            if isinstance(parsed, dict) and parsed.get("transport") == "tcp":
+                                tcp_desc = parsed
+                    except (OSError, json.JSONDecodeError):
+                        tcp_desc = None
+
+                if tcp_desc is not None:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    try:
+                        sock.settimeout(self.request_timeout)
+                        sock.connect((str(tcp_desc["host"]), int(tcp_desc["port"])))
+                        auth_frame = json.dumps({"auth": str(tcp_desc["token"])}) + "\n"
+                        sock.sendall(auth_frame.encode("utf-8"))
+                        self._sock = sock
+                        self._sock_rfile = sock.makefile("r", encoding="utf-8")
+                        self._last_activity_ts = time.monotonic()
+                        return
+                    except OSError as exc:
+                        sock.close()
+                        raise Pob2BridgeError(
+                            f"Failed to connect to PoB2 TCP daemon {sock_path}: {exc}"
+                        ) from exc
+
                 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 try:
                     sock.settimeout(self.request_timeout)
@@ -263,21 +281,36 @@ class Pob2Bridge:
 
             env = os.environ.copy()
             existing_cpath = env.get("LUA_CPATH", "")
-            env["LUA_CPATH"] = f"{paths.bin_dir}/?.so;{existing_cpath};;"
+            if os.name == "nt":
+                env["LUA_CPATH"] = (
+                    f"{paths.runtime_dir}\\?.dll;{paths.bin_dir}\\?.dll;{existing_cpath};;"
+                )
+                env["POB2_RUNTIME_DIR"] = str(paths.runtime_dir)
+                env["POE2BRAIN_PARENT_PID"] = str(os.getpid())
+                env["PYTHONUTF8"] = "1"
+            else:
+                env["LUA_CPATH"] = f"{paths.bin_dir}/?.so;{existing_cpath};;"
             env["POB2_SRC_DIR"] = str(paths.src_dir)
 
-            proc = subprocess.Popen(
-                [str(paths.luajit_bin), str(self.bridge_lua_path)],
-                cwd=str(paths.src_dir),
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                bufsize=1,
-                env=env,
-                start_new_session=(os.name != "nt"),
+            cmd = (
+                [sys.executable, "-m", "poe2brain.pob.win_luajit", str(self.bridge_lua_path)]
+                if paths.uses_windows_dll_host
+                else [str(paths.luajit_bin), str(self.bridge_lua_path)]
             )
+            popen_kwargs: dict[str, Any] = {
+                "cwd": str(paths.src_dir),
+                "stdin": subprocess.PIPE,
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "text": True,
+                "encoding": "utf-8",
+                "bufsize": 1,
+                "env": env,
+                "start_new_session": (os.name != "nt"),
+            }
+            if os.name == "nt":
+                popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            proc = subprocess.Popen(cmd, **popen_kwargs)
             self._proc = proc
             self._proc_finalizer = weakref.finalize(self, _reap_popen, proc)
             self._last_activity_ts = time.monotonic()
@@ -379,7 +412,24 @@ class Pob2Bridge:
     def _readline_with_timeout(self, proc: subprocess.Popen[str], timeout: float) -> str:
         assert proc.stdout is not None
         if os.name == "nt":
-            return proc.stdout.readline()
+            out_q: queue.Queue[tuple[str | None, BaseException | None]] = queue.Queue(maxsize=1)
+
+            def _reader() -> None:
+                try:
+                    assert proc.stdout is not None
+                    out_q.put((proc.stdout.readline(), None))
+                except BaseException as exc:
+                    out_q.put((None, exc))
+
+            t = threading.Thread(target=_reader, name="poe2brain-win-readline", daemon=True)
+            t.start()
+            try:
+                line, err = out_q.get(timeout=timeout)
+            except queue.Empty as exc:
+                raise TimeoutError(f"PoB2 bridge timed out after {timeout:.1f}s") from exc
+            if err is not None:
+                raise err
+            return line or ""
 
         deadline = time.monotonic() + timeout
         with selectors.DefaultSelector() as sel:

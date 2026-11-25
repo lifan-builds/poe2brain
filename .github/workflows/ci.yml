@@ -1,0 +1,43 @@
+name: CI (Windows + macOS)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: ${{ matrix.os }} (Python 3.12)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --python 3.12
+
+      - name: Lint with ruff
+        run: uv run ruff check .
+
+      - name: Bootstrap headless PathOfBuilding-PoE2 runtime
+        run: uv run poe2 bootstrap pob2 --json
+
+      - name: Verify poe2 version readiness
+        run: uv run poe2 version --json
+
+      - name: Run offline unit & PoB2 integration tests
+        run: uv run pytest -v -k "not test_live_"

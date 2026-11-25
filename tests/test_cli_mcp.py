@@ -51,14 +51,15 @@ def isolated_cli_env(
     assert real_pob2.is_dir(), "Expected ~/.cache/poe2brain/pob2 to be bootstrapped"
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    (cache_dir / "pob2").symlink_to(real_pob2, target_is_directory=True)
 
     monkeypatch.setenv("POE2BRAIN_CACHE_DIR", str(cache_dir))
+    monkeypatch.setenv("POE2BRAIN_POB2_DIR", str(real_pob2))
     monkeypatch.setenv(POB_SOCKET_ENV_VAR, str(pob_daemon_socket))
     mcp_mod.close_services()
 
     env = os.environ.copy()
     env["POE2BRAIN_CACHE_DIR"] = str(cache_dir)
+    env["POE2BRAIN_POB2_DIR"] = str(real_pob2)
     env[POB_SOCKET_ENV_VAR] = str(pob_daemon_socket)
     try:
         yield env
@@ -74,7 +75,7 @@ def test_skill_readme_mcp_and_cli_1_to_1_parity() -> None:
 
     skill_tools = set(re.findall(r"\|\s*`?(poe2_[a-z0-9_]+)`?\s*\|", skill_text))
     readme_tools = set(re.findall(r"\|\s*`?(poe2_[a-z0-9_]+)`?\s*\|", readme_text))
-    assert len(skill_tools) == 40
+    assert len(skill_tools) == 42
     assert skill_tools == readme_tools
 
     registered_tools = {t.name for t in mcp_mod.mcp._tool_manager.list_tools()}
@@ -89,6 +90,7 @@ def test_skill_readme_mcp_and_cli_1_to_1_parity() -> None:
         "craft",
         "ninja",
         "filter",
+        "auth",
         "sync",
         "bootstrap",
     ):
@@ -1238,7 +1240,7 @@ async def test_mcp_server_stdio_roundtrip(isolated_cli_env: dict[str, str], tmp_
             await session.initialize()
             tools_resp = await session.list_tools()
             names = {t.name for t in tools_resp.tools}
-            assert len(names) == 40
+            assert len(names) == 42
             assert {
                 "poe2_status",
                 "poe2_inspect_ascendancy",
@@ -1513,19 +1515,21 @@ def test_direct_cli_pob_exits_without_orphan_luajit(tmp_path: Path) -> None:
     assert real_pob2.is_dir(), "Expected ~/.cache/poe2brain/pob2 to be bootstrapped"
     cache_dir = tmp_path / "direct_cli_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    (cache_dir / "pob2").symlink_to(real_pob2, target_is_directory=True)
 
     env = os.environ.copy()
     env["POE2BRAIN_CACHE_DIR"] = str(cache_dir)
+    env["POE2BRAIN_POB2_DIR"] = str(real_pob2)
     env.pop(POB_SOCKET_ENV_VAR, None)
 
-    before_ps = subprocess.run(
-        ["pgrep", "-f", "pob2_bridge.lua"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    before_pids = {line.strip() for line in before_ps.stdout.splitlines() if line.strip()}
+    before_pids: set[str] = set()
+    if os.name != "nt":
+        before_ps = subprocess.run(
+            ["pgrep", "-f", "pob2_bridge.lua"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        before_pids = {line.strip() for line in before_ps.stdout.splitlines() if line.strip()}
 
     proc = subprocess.run(
         [
@@ -1553,11 +1557,12 @@ def test_direct_cli_pob_exits_without_orphan_luajit(tmp_path: Path) -> None:
     payload = json.loads(proc.stdout)
     assert payload["slot"] == "orphan_check"
 
-    after_ps = subprocess.run(
-        ["pgrep", "-f", "pob2_bridge.lua"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    after_pids = {line.strip() for line in after_ps.stdout.splitlines() if line.strip()}
-    assert after_pids - before_pids == set()
+    if os.name != "nt":
+        after_ps = subprocess.run(
+            ["pgrep", "-f", "pob2_bridge.lua"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        after_pids = {line.strip() for line in after_ps.stdout.splitlines() if line.strip()}
+        assert after_pids - before_pids == set()

@@ -463,8 +463,10 @@ def parse_clipboard_item(raw_text: str, bundle: EE2Bundle | None = None) -> Pars
     if bundle is None:
         bundle = get_default_bundle()
     # Local import avoids circular module import at load time
+    from poe2brain.knowledge.zh_aliases import normalize_zh_item_clipboard
     from poe2brain.trade.stat_matcher import match_mod_line
 
+    raw_text = normalize_zh_item_clipboard(raw_text)
     sections = _split_sections(raw_text)
     if not sections:
         raise ValueError("Empty clipboard item text")

@@ -17,6 +17,7 @@ from poe2brain.knowledge.meta import (
     ClassSummary,
     MetaService,
 )
+from poe2brain.knowledge.zh_aliases import translate_zh_query
 from poe2brain.models.common import Poe2Model
 from poe2brain.models.knowledge import (
     BaseItemSummary,
@@ -610,6 +611,7 @@ class KnowledgeService:
     ) -> list[KnowledgeRecord]:
         if limit <= 0:
             return []
+        query = translate_zh_query(query)
         q_raw = query.strip()
         if not q_raw:
             return []
@@ -1214,7 +1216,7 @@ class KnowledgeService:
         return None
 
     def explain_mechanic(self, topic: str, limit: int = 6) -> MechanicExplanation:
-        q_raw = topic.strip()
+        q_raw = translate_zh_query(topic.strip())
         if not q_raw:
             return MechanicExplanation(topic=topic)
 
@@ -1581,7 +1583,7 @@ class KnowledgeService:
         )
 
     def inspect_gem(self, name_or_id: str) -> GemInspection:
-        q = name_or_id.strip()
+        q = translate_zh_query(name_or_id.strip())
         if not q:
             raise LookupError("Gem query cannot be empty.")
 
@@ -1965,7 +1967,7 @@ class KnowledgeService:
         )
 
     def inspect_unique(self, name: str) -> UniqueInspection:
-        q = name.strip()
+        q = translate_zh_query(name.strip())
         if not q:
             raise LookupError("Unique item name cannot be empty.")
 
@@ -2051,7 +2053,7 @@ class KnowledgeService:
         )
 
     def inspect_augment(self, query: str, limit: int = 8) -> list[AugmentSummary]:
-        q = query.strip()
+        q = translate_zh_query(query.strip())
         if not q or limit <= 0:
             return []
 

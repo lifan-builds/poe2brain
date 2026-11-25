@@ -534,7 +534,11 @@ def collect_engine_status() -> EngineStatus:
         bundled_data_dir=str(BUNDLED_DATA_DIR),
         gamedata_db_ready=db_path.is_file(),
         pob2_runtime_ready=pob2.is_ready,
-        pob2_luajit_path=str(pob2.luajit_bin) if pob2.luajit_bin.is_file() else None,
+        pob2_luajit_path=(
+            str(pob2.luajit_bin)
+            if pob2.luajit_bin.is_file()
+            else (str(pob2.win_lua_dll) if pob2.win_lua_dll.is_file() else None)
+        ),
         pob2_src_dir=str(pob2.src_dir) if pob2.src_dir.is_dir() else None,
     )
 
@@ -1542,6 +1546,97 @@ def poe2_pob_what_if(
             borrow_main_skill=borrow_main_skill,
             include_scenario_matrix=include_scenario_matrix,
             apply=apply,
+        )
+    )
+
+
+def execute_pob_import_local(
+    *,
+    name_or_path: str | None = None,
+    builds_dir: str | None = None,
+    slot: str = "main",
+    list_only: bool = False,
+) -> dict[str, Any]:
+    from poe2brain.pob.local_sync import discover_local_pob2_builds, resolve_local_pob2_build
+
+    dir_path = Path(builds_dir).expanduser() if builds_dir else None
+    if list_only:
+        return discover_local_pob2_builds(builds_dir=dir_path).model_dump(mode="json")
+
+    target_xml = resolve_local_pob2_build(name_or_path, builds_dir=dir_path)
+    svc = get_build_service()
+    stats = svc.load_build(target_xml, slot=slot, name=target_xml.stem)
+    save_pob_slot_snapshot(svc, slot=slot)
+    return {
+        "slot": slot,
+        "source_path": str(target_xml),
+        "build_name": target_xml.stem,
+        "stats": stats.model_dump(mode="json"),
+    }
+
+
+def execute_pob_import_character(
+    *,
+    character_name: str | None = None,
+    realm: str = "poe2",
+    slot: str = "main",
+    list_only: bool = False,
+) -> dict[str, Any]:
+    from poe2brain.pob.oauth import GggOAuthClient
+
+    oauth = GggOAuthClient()
+    if list_only or not character_name:
+        chars = oauth.list_characters(realm=realm)
+        return {
+            "realm": realm,
+            "count": len(chars),
+            "characters": [c.model_dump(mode="json") for c in chars],
+        }
+
+    raw_json = oauth.fetch_character_json(character_name, realm=realm)
+    svc = get_build_service()
+    stats = svc.import_ggg_character_json(raw_json, slot=slot, name=character_name)
+    save_pob_slot_snapshot(svc, slot=slot)
+    return {
+        "slot": slot,
+        "character_name": character_name,
+        "realm": realm,
+        "stats": stats.model_dump(mode="json"),
+    }
+
+
+@mcp.tool()
+def poe2_pob_import_local(
+    name_or_path: str | None = None,
+    builds_dir: str | None = None,
+    slot: str = "main",
+    list_only: bool = False,
+) -> dict[str, Any]:
+    """Discover or load saved local Path of Building (PoE2) .xml builds without OAuth."""
+    return _safe_tool_call(
+        lambda: execute_pob_import_local(
+            name_or_path=name_or_path,
+            builds_dir=builds_dir,
+            slot=slot,
+            list_only=list_only,
+        )
+    )
+
+
+@mcp.tool()
+def poe2_pob_import_character(
+    character_name: str | None = None,
+    realm: str = "poe2",
+    slot: str = "main",
+    list_only: bool = False,
+) -> dict[str, Any]:
+    """List or import official PoE2 characters via GGG OAuth 2.1 PKCE (no POESESSID)."""
+    return _safe_tool_call(
+        lambda: execute_pob_import_character(
+            character_name=character_name,
+            realm=realm,
+            slot=slot,
+            list_only=list_only,
         )
     )
 
@@ -2895,13 +2990,13 @@ def poe2_filter_heal(
 
 
 def run_bootstrap_script(*, force: bool = False) -> dict[str, Any]:
-    script = REPO_ROOT / "scripts" / "bootstrap_pob2.sh"
-    cmd = [str(script)] + (["--force"] if force else [])
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    from poe2brain.pob.bootstrap import bootstrap_pob2_runtime
+
+    paths = bootstrap_pob2_runtime(force=force)
     status = collect_engine_status()
     return {
         "ok": True,
-        "output": proc.stdout.strip(),
+        "output": f"PoB2 runtime ready at {paths.root_dir} (src={paths.src_dir})",
         "status": status.model_dump(mode="json"),
     }
 

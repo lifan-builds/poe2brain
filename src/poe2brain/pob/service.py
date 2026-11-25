@@ -1267,6 +1267,20 @@ class BuildService:
             )
         return self.get_stats(slot=slot)
 
+    def import_ggg_character_json(
+        self,
+        character_json: str,
+        *,
+        slot: str = "main",
+        name: str | None = None,
+    ) -> BuildStats:
+        """Import official GGG OAuth `/character/poe2/{name}` JSON via PoB2 ImportTab."""
+        params: dict[str, Any] = {"slot": slot, "characterJson": character_json}
+        if name is not None:
+            params["name"] = name
+        self.bridge.call("import_ggg_character_json", params)
+        return self.get_stats(slot=slot)
+
     def export_build(
         self,
         slot: str = "main",

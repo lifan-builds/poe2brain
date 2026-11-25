@@ -130,6 +130,20 @@ def test_bridge_lifecycle_and_crash_recovery() -> None:
 
 def test_bridge_atexit_cleanup_and_socket_daemon_reuse() -> None:
     def _is_pid_alive(pid: int) -> bool:
+        if os.name == "nt":
+            import ctypes
+
+            k32 = ctypes.windll.kernel32
+            h = k32.OpenProcess(0x1000, False, pid)
+            if not h:
+                return False
+            try:
+                code = ctypes.c_ulong(0)
+                if not k32.GetExitCodeProcess(h, ctypes.byref(code)):
+                    return False
+                return code.value == 259  # STILL_ACTIVE
+            finally:
+                k32.CloseHandle(h)
         try:
             os.kill(pid, 0)
             return True

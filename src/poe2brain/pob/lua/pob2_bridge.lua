@@ -38,7 +38,15 @@ collectgarbage("setstepmul", 300)
 
 local ffi = require("ffi")
 
-ffi.cdef[[
+if ffi.os == "Windows" then
+	ffi.cdef[[
+int _chdir(const char *path);
+void *OpenProcess(uint32_t dwDesiredAccess, int bInheritHandle, uint32_t dwProcessId);
+uint32_t WaitForSingleObject(void *hHandle, uint32_t dwMilliseconds);
+int CloseHandle(void *hObject);
+]]
+else
+	ffi.cdef[[
 int chdir(const char *path);
 int getppid(void);
 
@@ -49,7 +57,10 @@ struct pob2_pollfd {
 };
 int poll(struct pob2_pollfd *fds, unsigned int nfds, int timeout);
 long read(int fd, void *buf, size_t count);
+]]
+end
 
+ffi.cdef[[
 typedef struct pob2_z_stream_s {
 	const uint8_t *next_in;
 	unsigned int   avail_in;
@@ -76,19 +87,41 @@ int inflateEnd(pob2_z_stream *strm);
 const char *zlibVersion(void);
 ]]
 
-local INITIAL_PPID = ffi.C.getppid()
-
-local function checkParentAlive()
-	local curPpid = ffi.C.getppid()
-	if curPpid ~= INITIAL_PPID or curPpid <= 1 then
-		os.exit(0)
+local checkParentAlive
+if ffi.os == "Windows" then
+	local parentHandle = nil
+	local envPpid = tonumber(os.getenv("POE2BRAIN_PARENT_PID") or "")
+	if envPpid and envPpid > 0 then
+		local okK, k32 = pcall(ffi.load, "kernel32")
+		if okK and k32 then
+			local h = k32.OpenProcess(0x00100000, 0, envPpid) -- SYNCHRONIZE
+			if h ~= nil then
+				parentHandle = { k32 = k32, handle = h }
+			end
+		end
+	end
+	checkParentAlive = function()
+		if parentHandle ~= nil then
+			-- WAIT_TIMEOUT = 0x00000102; any other return means parent exited
+			if parentHandle.k32.WaitForSingleObject(parentHandle.handle, 0) ~= 0x00000102 then
+				os.exit(0)
+			end
+		end
+	end
+else
+	local INITIAL_PPID = ffi.C.getppid()
+	checkParentAlive = function()
+		local curPpid = ffi.C.getppid()
+		if curPpid ~= INITIAL_PPID or curPpid <= 1 then
+			os.exit(0)
+		end
 	end
 end
 
 -- Allow passing PoB2 src directory via POB2_SRC_DIR or arg[1] if CWD is elsewhere.
 local pobSrcDir = os.getenv("POB2_SRC_DIR") or (arg and arg[1])
 if pobSrcDir and pobSrcDir ~= "" then
-	local rc = ffi.C.chdir(pobSrcDir)
+	local rc = (ffi.os == "Windows") and ffi.C._chdir(pobSrcDir) or ffi.C.chdir(pobSrcDir)
 	if rc ~= 0 then
 		stderr:write("[pob2_bridge] Failed to chdir to POB2_SRC_DIR: " .. tostring(pobSrcDir) .. "\n")
 		os.exit(1)
@@ -140,6 +173,11 @@ local function loadZlib()
 	local explicit = os.getenv("POB2_ZLIB_PATH")
 	if explicit and explicit ~= "" then
 		candidates[#candidates + 1] = explicit
+	end
+	if ffi.os == "Windows" then
+		candidates[#candidates + 1] = "../runtime/zlib1.dll"
+		candidates[#candidates + 1] = "zlib1"
+		candidates[#candidates + 1] = "../runtime/z.dll"
 	end
 	candidates[#candidates + 1] = "z"
 	candidates[#candidates + 1] = "libz.dylib"
@@ -4134,6 +4172,51 @@ methods.rank_radius_jewel_sockets = function(params)
 		count = #trimmed,
 		candidates = trimmed,
 	}
+end
+
+methods.import_ggg_character_json = function(params)
+	if type(params) ~= "table" or type(params.characterJson) ~= "string" or params.characterJson == "" then
+		error("params.characterJson is required", 0)
+	end
+	local slotName = normalizeSlotName(params, "slot")
+	local decoded, _, decErr = dkjson.decode(params.characterJson)
+	if type(decoded) ~= "table" then
+		error("Invalid GGG character JSON: " .. tostring(decErr or "decode failed"), 0)
+	end
+	local charData = type(decoded.character) == "table" and decoded.character or decoded
+	if type(charData.passives) ~= "table" and type(charData.equipment) ~= "table" then
+		error("GGG character JSON is missing passives/equipment fields", 0)
+	end
+
+	local entry = ensureSlot(slotName, true)
+	local charName = tostring((params and params.name) or charData.name or slotName)
+	local blankXml = '<PathOfBuilding2><Build level="' .. tostring(tonumber(charData.level) or 1) .. '" className="Witch" ascendClassName="None" mainSocketGroup="1"/><Tree activeSpec="1"><Spec treeVersion="0_5" classId="0" ascendClassId="0" nodes=""/></Tree><Skills activeSkillSet="1"><SkillSet id="1"/></Skills><Items activeItemSet="1"><ItemSet id="1"/></Items><Config><ConfigSet id="1"/></Config></PathOfBuilding2>'
+	loadXMLIntoBuild(blankXml, charName)
+
+	if build.importTab then
+		if type(charData.passives) == "table" and build.importTab.ImportPassiveTreeAndJewels then
+			build.importTab:ImportPassiveTreeAndJewels(charData)
+		end
+		if build.calcsTab and build.calcsTab.BuildOutput then
+			build.calcsTab:BuildOutput()
+		end
+		if type(charData.equipment) == "table" and build.importTab.ImportItemsAndSkills then
+			build.importTab:ImportItemsAndSkills(charData)
+		end
+	else
+		error("PoB2 build.importTab is unavailable", 0)
+	end
+
+	local lv = tonumber(charData.level)
+	if lv and lv >= 1 and lv <= 100 then
+		build.characterLevel = lv
+		build.characterLevelAutoMode = false
+		if build.controls and build.controls.characterLevelInput then
+			build.controls.characterLevelInput:SetText(tostring(lv))
+		end
+	end
+	rebuildAndSnapshot(entry)
+	return extractStatsTable()
 end
 
 local shouldExit = false

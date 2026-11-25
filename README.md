@@ -1,6 +1,8 @@
 # poe2brain
 
-**`poe2brain`** is an agent-native Path of Exile 2 (`Patch 0.5.5` / `Forbidden Rites`) intelligence engine. It exposes a single typed Python 3.12+ core simultaneously as a JSON-first CLI (`poe2`) and a Model Context Protocol stdio server (`poe2brain-mcp`, **36** tools in 1:1 parity), giving AI coding/gaming agents and power users ground-truth mechanics, `<=50`-char Waystone/Tablet stash regexes, `poe.ninja` build discovery & time-machine character import, real Path of Building 2 calculations & HC rip audits, live market/trade pricing & dump triage, exact expected-cost crafting plans, and validated PoE2 loot filters with CVD/co-op themes, 2 AM tinnitus-safe audio soundpacks, and legacy Filter Doctor auto-healing.
+> **中文文档 / Bilibili 用户快速上手：** 请见 [README_ZH.md](README_ZH.md)（支持 Windows 零编译一键安装、中文词缀/升华搜索、本地 PoB2 导入与官方 GGG OAuth 2.1）
+
+**`poe2brain`** is an agent-native Path of Exile 2 (`Patch 0.5.5` / `Forbidden Rites`) intelligence engine for **Windows, macOS, and Linux**. It exposes a single typed Python 3.12+ core simultaneously as a JSON-first CLI (`poe2`) and a Model Context Protocol stdio server (`poe2brain-mcp`, **42** tools in 1:1 parity), giving AI coding/gaming agents and players ground-truth mechanics (English + `zh-CN`/`zh-TW`), `<=50`-char Waystone/Tablet stash regexes, `poe.ninja` + local PoB2 + official GGG OAuth 2.1 character import, real Path of Building 2 calculations & HC rip audits, live market/trade pricing & dump triage, exact expected-cost crafting plans, and validated PoE2 loot filters with CVD/co-op themes, 2 AM tinnitus-safe audio soundpacks, and legacy Filter Doctor auto-healing.
 
 ---
 
@@ -38,18 +40,39 @@
 
 ---
 
-## Quickstart
+## Quickstart (Windows, macOS & Linux)
 
 ```bash
 # 1. Install Python >= 3.12 environment & console entrypoints (poe2, poe2brain-mcp)
 uv sync
 
-# 2. Bootstrap native LuaJIT + PathOfBuilding-PoE2 into ~/.cache/poe2brain/pob2 (<2s if cached)
-./scripts/bootstrap_pob2.sh
+# 2. Bootstrap headless PathOfBuilding-PoE2 runtime into ~/.cache/poe2brain/pob2
+#    - Windows: zero C compiler needed (reuses local PoB2 install or MIT x64 lua51.dll)
+#    - macOS / Linux: compiles LuaJIT 2.1 + luautf8 automatically
+uv run poe2 bootstrap pob2
 
 # 3. Verify engine, SQLite gamedata DB, and PoB2 runtime readiness
 uv run poe2 version --json
 ```
+
+### Importing Your Own Character (Day-1 Friendly, Zero `POESESSID`)
+
+- **Option 1 — Zero-Auth Local PoB2 Sync (Works Immediately):** If you use Path of Building (PoE2) on desktop, load your latest saved build directly:
+  ```bash
+  uv run poe2 pob import-local --list
+  uv run poe2 pob import-local --slot main
+  ```
+- **Option 2 — Official GGG OAuth 2.1 PKCE (Same Official Flow as PoB2):**
+  ```bash
+  uv run poe2 auth login
+  uv run poe2 pob import-character --list
+  uv run poe2 pob import-character "<CharacterName>" --slot main
+  ```
+- **Option 3 — `poe.ninja` URL / PoB2 Share Code:**
+  ```bash
+  uv run poe2 ninja character "<poe.ninja_url>" --load-pob --slot main
+  uv run poe2 pob load "<eN..._code_or_pobb.in_url>" --slot main
+  ```
 
 ---
 
@@ -60,7 +83,7 @@ uv run poe2 version --json
 - **Antigravity**: Self-contained repo plugin manifest in [plugin.json](plugin.json), workspace MCP config in [.agents/mcp_config.json](.agents/mcp_config.json), and progressive-disclosure skill in [.agents/skills/poe2brain/SKILL.md](.agents/skills/poe2brain/SKILL.md).
 - **Claude Code / Cursor**: Workspace stdio MCP config in [.mcp.json](.mcp.json).
 - **Devin**: Workspace MCP config in [.devin/mcp_config.json](.devin/mcp_config.json).
-- **Shell-Capable Coding Agents (Codex, CLI workflows)**: Invoke `uv --directory /Users/lfan/Project/poe2brain run poe2 ... --json` directly.
+- **Shell-Capable Coding Agents (Codex, CLI workflows)**: Invoke `uv --directory /path/to/poe2brain run poe2 ... --json` directly.
 
 To run the stdio MCP server manually:
 
@@ -98,6 +121,8 @@ Every MCP tool maps 1:1 to a `poe2 ... --json` CLI command over the exact same d
 | **PoB2** | `poe2_pob_supports` | `poe2 pob supports [--slot main] [--group <idx>] [--replace-slot <n>] [--replace-gem "<name>"] [--max-tier <1..3>] [--include-lineage/--no-lineage] [--top 15] --json` | Rank all compatible PoE2 `0.5.5` Support Gems (Tier `I`–`III` + Lineage) by DPS/EHP delta, Mana sustain, Spirit overflow, and Lineage `max_copies=1` conflicts. |
 | **PoB2** | `poe2_pob_radius_jewels` | `poe2 pob radius-jewels ["<jewel>"] [--slot main] [--stat FullDPS] [--max-dist 10] [--top 10] --json` | Rank Passive Tree Jewel Sockets × radius rings (`Controlled Metamorphosis` / `Against the Darkness`) by per-point gain & travel points saved. |
 | **PoB2** | `poe2_pob_what_if` | `poe2 pob what-if [--slot main] [--equip "Slot=TextOrPath"] [--edit-slot "<slot>" --add-mod "<line>" --remove-mod "<sub>" --quality 20] [--alloc-node <id>] [--dealloc-node <id>] [--config k=v] [--borrow-from <ref> --borrow-slot "<slot>"] [--scenario-matrix] [--apply] --json` | Transactional multi-change PoB2 hypothesis sandbox (`WhatIfReport`) with per-piece attribution, 3-scenario matrix, and automatic rollback. |
+| **PoB2** | `poe2_pob_import_local` | `poe2 pob import-local [<name_or_path>] [--dir <builds_dir>] [--slot main] [--list] --json` | Discover or load saved local Path of Building (PoE2) `.xml` builds directly (zero-auth Day-1 sync on Windows/macOS/Linux). |
+| **PoB2** | `poe2_pob_import_character` | `poe2 pob import-character [<character_name>] [--realm poe2] [--slot main] [--list] --json` | List or import private/Day-1 PoE2 characters via official GGG OAuth 2.1 PKCE (`poe2 auth login`, zero `POESESSID`). |
 | **Economy** | `poe2_currency_price` | `poe2 econ price "<query>" [--league "Forbidden Rites"] --json` | Live `CurrencyQuote` normalized to `{exalted, chaos, divine}` (`Exalted = 1.0`) with 7d trend and volume. |
 | **Economy** | `poe2_market_scan` | `poe2 econ scan [--category <cat>] [--min-volume-divine 5.0] [--league "Forbidden Rites"] --json` | High-liquidity exchange movers, numeraire-normalized cross-source spreads, and chanceable Uniques. |
 | **Economy** | `poe2_scan_arbitrage` | `poe2 econ arbitrage [--min-volume-divine 2.0] [--max-investment-divine <d>] [--max-gold <g>] [--ladder-start-exalted <ex> --gold-budget <g> --ladder-target-divine <d>] [--live-books/--no-live-books] --json` | Executable `0.5.5` conversions, Alva spreads, order books, `profit_ex_per_10k_gold`, trap warnings, or multi-rung capital & Gold compounding ladder. |

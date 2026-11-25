@@ -1189,8 +1189,10 @@ class MetaService:
 
     def inspect_ascendancy(self, name_or_class: str) -> AscendancyInspection:
         """Inspect a PoE2 Ascendancy (or all Ascendancies of a base Class) with full notables."""
+        from poe2brain.knowledge.zh_aliases import translate_zh_query
+
         self._ensure_tree_loaded()
-        q_clean = name_or_class.strip()
+        q_clean = translate_zh_query(name_or_class.strip())
         if not q_clean:
             raise ValueError("Ascendancy or class query cannot be empty.")
 

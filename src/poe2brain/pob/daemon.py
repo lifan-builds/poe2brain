@@ -3,6 +3,7 @@ from __future__ import annotations
 import atexit
 import json
 import os
+import secrets
 import shutil
 import socket
 import tempfile
@@ -15,7 +16,11 @@ from poe2brain.pob.bridge import Pob2Bridge, Pob2BridgeError
 
 
 class Pob2SocketDaemon:
-    """Thread-safe local Unix-socket JSON-RPC proxy sharing one warm LuaJIT Pob2Bridge."""
+    """Thread-safe local JSON-RPC proxy sharing one warm LuaJIT Pob2Bridge.
+
+    Uses AF_UNIX on POSIX and token-authenticated 127.0.0.1 TCP loopback
+    (descriptor written to `socket_path`) on Windows.
+    """
 
     def __init__(
         self,
@@ -28,12 +33,16 @@ class Pob2SocketDaemon:
     ) -> None:
         self._owns_temp_dir = socket_path is None
         if socket_path is None:
-            tmp_dir = Path(tempfile.mkdtemp(prefix="p2b_", dir="/tmp"))
+            base_tmp = "/tmp" if os.name != "nt" and Path("/tmp").is_dir() else None
+            tmp_dir = Path(tempfile.mkdtemp(prefix="p2b_", dir=base_tmp))
             self._temp_dir: Path | None = tmp_dir
-            self.socket_path = tmp_dir / "pob.sock"
+            self.socket_path = tmp_dir / ("pob.tcp.json" if os.name == "nt" else "pob.sock")
         else:
             self._temp_dir = None
             self.socket_path = Path(socket_path)
+
+        self._use_tcp = os.name == "nt" or not hasattr(socket, "AF_UNIX")
+        self._auth_token: str | None = None
 
         self._bridge = Pob2Bridge(
             pob2_dir=pob2_dir,
@@ -65,15 +74,39 @@ class Pob2SocketDaemon:
         if self.socket_path.exists():
             self.socket_path.unlink()
 
-        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        try:
-            srv.bind(str(self.socket_path))
-            os.chmod(self.socket_path, 0o600)
-            srv.listen(32)
-            srv.settimeout(0.5)
-        except Exception:
-            srv.close()
-            raise
+        if self._use_tcp:
+            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                srv.bind(("127.0.0.1", 0))
+                port = srv.getsockname()[1]
+                srv.listen(32)
+                srv.settimeout(0.5)
+                token = secrets.token_hex(24)
+                self._auth_token = token
+                self.socket_path.write_text(
+                    json.dumps(
+                        {
+                            "transport": "tcp",
+                            "host": "127.0.0.1",
+                            "port": port,
+                            "token": token,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            except Exception:
+                srv.close()
+                raise
+        else:
+            srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                srv.bind(str(self.socket_path))
+                os.chmod(self.socket_path, 0o600)
+                srv.listen(32)
+                srv.settimeout(0.5)
+            except Exception:
+                srv.close()
+                raise
 
         if not self._lazy:
             self._bridge.ensure_started()
@@ -112,6 +145,19 @@ class Pob2SocketDaemon:
             with conn:
                 rfile = conn.makefile("r", encoding="utf-8", errors="replace")
                 try:
+                    if self._auth_token is not None:
+                        auth_line = rfile.readline()
+                        if not auth_line:
+                            return
+                        try:
+                            auth_obj = json.loads(auth_line)
+                        except json.JSONDecodeError:
+                            return
+                        if (
+                            not isinstance(auth_obj, dict)
+                            or auth_obj.get("auth") != self._auth_token
+                        ):
+                            return
                     for raw_line in rfile:
                         if self._stop_event.is_set():
                             break

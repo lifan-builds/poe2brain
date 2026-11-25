@@ -26,6 +26,7 @@ REPO_DIR="${POB2_DIR}/PathOfBuilding-PoE2"
 
 LUAJIT_COMMIT="2460b3ff93a1c955de3d62cfc825de7d68dc272e"
 LUAUTF8_TAG="0.1.6"
+POB2_PINNED_COMMIT="${POE2BRAIN_POB2_REF:-601768bd105869618c3d6581b883e5d7aeec91b2}"
 POB2_UPSTREAM_URL="https://github.com/PathOfBuildingCommunity/PathOfBuilding-PoE2.git"
 
 SEED_ROOT="${POE2BRAIN_OSS_SEED_DIR:-/tmp/poe2brain-oss}"
@@ -131,9 +132,11 @@ elif [ -d "${SEED_REPO_DIR}/.git" ] && [ -f "${SEED_REPO_DIR}/src/HeadlessWrappe
   fi
   git -C "${REPO_DIR}" remote set-url origin "${POB2_UPSTREAM_URL}"
 else
-  echo "[bootstrap_pob2] Cloning PathOfBuilding-PoE2 from ${POB2_UPSTREAM_URL}"
+  echo "[bootstrap_pob2] Cloning PathOfBuilding-PoE2 (${POB2_PINNED_COMMIT:0:10}) from ${POB2_UPSTREAM_URL}"
   rm -rf "${REPO_DIR}"
   git clone --depth 1 --branch dev "${POB2_UPSTREAM_URL}" "${REPO_DIR}"
+  git -C "${REPO_DIR}" fetch --depth 1 origin "${POB2_PINNED_COMMIT}" 2>/dev/null || true
+  git -C "${REPO_DIR}" checkout --detach "${POB2_PINNED_COMMIT}" 2>/dev/null || true
 fi
 
 ln -sfn "PathOfBuilding-PoE2/src" "${POB2_DIR}/src"

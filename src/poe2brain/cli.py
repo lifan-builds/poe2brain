@@ -32,6 +32,8 @@ from poe2brain.mcp_server import (
     execute_pob_calc_breakdown,
     execute_pob_compare,
     execute_pob_hc_audit,
+    execute_pob_import_character,
+    execute_pob_import_local,
     execute_pob_radius_jewels,
     execute_pob_supports,
     execute_pob_what_if,
@@ -88,6 +90,10 @@ filter_app = typer.Typer(
     help="Pillar 6: PoE2 0.5.5 loot filter compiler, theme composer, custom soundpacks, & healing.",
     no_args_is_help=True,
 )
+auth_app = typer.Typer(
+    help="Official GGG OAuth 2.1 PKCE login for private/Day-1 PoE2 character imports.",
+    no_args_is_help=True,
+)
 sync_app = typer.Typer(
     help="Rebuild bundled deterministic PoE2 gamedata artifacts.", no_args_is_help=True
 )
@@ -100,6 +106,7 @@ app.add_typer(trade_app, name="trade")
 app.add_typer(craft_app, name="craft")
 app.add_typer(ninja_app, name="ninja")
 app.add_typer(filter_app, name="filter")
+app.add_typer(auth_app, name="auth")
 app.add_typer(sync_app, name="sync")
 app.add_typer(bootstrap_app, name="bootstrap")
 
@@ -1343,6 +1350,170 @@ def pob_what_if_cmd(
             )
 
     _run_cli(json_output, _compute, _render)
+
+
+@pob_app.command("import-local")
+def pob_import_local_cmd(
+    name_or_path: Annotated[
+        str | None,
+        typer.Argument(
+            help="Build name substring or .xml file path (omit to load the newest PoB2 build)."
+        ),
+    ] = None,
+    builds_dir: Annotated[
+        Path | None,
+        typer.Option("--dir", help="Override local Path of Building (PoE2)/Builds directory."),
+    ] = None,
+    slot: Annotated[str, typer.Option("--slot", help="Target PoB2 build slot.")] = "main",
+    list_only: Annotated[
+        bool,
+        typer.Option("--list", help="List detected local PoB2 .xml builds without loading."),
+    ] = False,
+    json_output: JsonOpt = False,
+) -> None:
+    """Discover or load saved local Path of Building (PoE2) .xml builds (zero-auth)."""
+
+    def _compute() -> dict[str, Any]:
+        return execute_pob_import_local(
+            name_or_path=name_or_path,
+            builds_dir=str(builds_dir) if builds_dir is not None else None,
+            slot=slot,
+            list_only=list_only,
+        )
+
+    def _render(data: dict[str, Any]) -> None:
+        if list_only:
+            table = Table(title="Local Path of Building (PoE2) Builds")
+            table.add_column("Name", style="bold cyan")
+            table.add_column("Class / Ascendancy")
+            table.add_column("Lv", justify="right")
+            table.add_column("Skill")
+            table.add_column("Modified")
+            for b in data.get("builds", []):
+                asc = b.get("ascendancy_name") or b.get("class_name") or "?"
+                table.add_row(
+                    str(b["name"]),
+                    str(asc),
+                    str(b.get("level") or "-"),
+                    str(b.get("main_skill") or "-"),
+                    str(b["modified_at"])[:19],
+                )
+            console.print(table)
+            return
+        st = data["stats"]
+        console.print(
+            f"[bold green]Loaded local PoB2 build[/bold green] {data['build_name']} -> "
+            f"[{data['slot']}] ({st.get('ascendancy_name') or st.get('class_name')} "
+            f"Lv{st.get('level')}, DPS={st.get('effective_dps', 0):,.1f}, "
+            f"EHP={st.get('total_ehp', 0):,.1f})"
+        )
+
+    _run_cli(json_output, _compute, _render)
+
+
+@pob_app.command("import-character")
+def pob_import_character_cmd(
+    character_name: Annotated[
+        str | None,
+        typer.Argument(help="PoE2 character name to import (omit to list account characters)."),
+    ] = None,
+    realm: Annotated[str, typer.Option("--realm", help="GGG realm (default: poe2).")] = "poe2",
+    slot: Annotated[str, typer.Option("--slot", help="Target PoB2 build slot.")] = "main",
+    list_only: Annotated[
+        bool,
+        typer.Option("--list", help="List characters on your GGG OAuth account."),
+    ] = False,
+    json_output: JsonOpt = False,
+) -> None:
+    """List or import official PoE2 characters via GGG OAuth 2.1 PKCE (run 'poe2 auth login')."""
+
+    def _compute() -> dict[str, Any]:
+        return execute_pob_import_character(
+            character_name=character_name,
+            realm=realm,
+            slot=slot,
+            list_only=list_only,
+        )
+
+    def _render(data: dict[str, Any]) -> None:
+        if "characters" in data:
+            table = Table(title=f"GGG Account Characters ({data['realm']})")
+            table.add_column("Name", style="bold cyan")
+            table.add_column("Class")
+            table.add_column("Lv", justify="right")
+            table.add_column("League")
+            for c in data["characters"]:
+                table.add_row(c["name"], c["class_name"], str(c["level"]), c["league"])
+            console.print(table)
+            return
+        st = data["stats"]
+        console.print(
+            f"[bold green]Imported GGG character[/bold green] {data['character_name']} -> "
+            f"[{data['slot']}] ({st.get('ascendancy_name') or st.get('class_name')} "
+            f"Lv{st.get('level')}, DPS={st.get('effective_dps', 0):,.1f}, "
+            f"EHP={st.get('total_ehp', 0):,.1f})"
+        )
+
+    _run_cli(json_output, _compute, _render)
+
+
+@auth_app.command("login")
+def auth_login_cmd(
+    timeout: Annotated[
+        float, typer.Option("--timeout", help="Seconds to wait for browser OAuth callback.")
+    ] = 120.0,
+    no_browser: Annotated[
+        bool, typer.Option("--no-browser", help="Print authorize URL without opening a browser.")
+    ] = False,
+    json_output: JsonOpt = False,
+) -> None:
+    """Authenticate with GGG's official OAuth 2.1 PKCE portal (no POESESSID)."""
+    from poe2brain.pob.oauth import GggOAuthClient
+
+    _run_cli(
+        json_output,
+        lambda: GggOAuthClient()
+        .login(timeout=timeout, open_browser=not no_browser)
+        .model_dump(mode="json"),
+        lambda d: console.print(
+            f"[bold green]GGG OAuth authenticated[/bold green] "
+            f"(client={d['client_id']}, scopes={', '.join(d.get('scopes', []))})"
+        ),
+    )
+
+
+@auth_app.command("status")
+def auth_status_cmd(json_output: JsonOpt = False) -> None:
+    """Show current GGG OAuth 2.1 login status and token expiry."""
+    from poe2brain.pob.oauth import GggOAuthClient
+
+    def _render(d: dict[str, Any]) -> None:
+        state = (
+            "[green]authenticated[/green]"
+            if d["authenticated"]
+            else "[yellow]not logged in[/yellow]"
+        )
+        console.print(f"GGG OAuth 2.1: {state} (client_id={d['client_id']})")
+        if d.get("note"):
+            console.print(f"  {d['note']}")
+
+    _run_cli(
+        json_output,
+        lambda: GggOAuthClient().status().model_dump(mode="json"),
+        _render,
+    )
+
+
+@auth_app.command("logout")
+def auth_logout_cmd(json_output: JsonOpt = False) -> None:
+    """Delete locally stored GGG OAuth 2.1 tokens."""
+    from poe2brain.pob.oauth import GggOAuthClient
+
+    _run_cli(
+        json_output,
+        lambda: GggOAuthClient().logout(),
+        lambda d: console.print(f"Logged out (removed token file: {d['had_saved_token']})."),
+    )
 
 
 @pob_app.command("export")
