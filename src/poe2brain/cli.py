@@ -3202,6 +3202,12 @@ def bootstrap_pob2_cmd(
 
 
 def main() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
     run_with_service_cleanup(app)
 
 

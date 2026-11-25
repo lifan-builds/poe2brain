@@ -626,6 +626,7 @@ def test_cross_process_cli_pob_slot_persistence(isolated_cli_env: dict[str, str]
             env=isolated_cli_env,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=True,
         )
         return json.loads(proc.stdout)
@@ -1176,6 +1177,7 @@ def test_cross_process_ninja_character_to_pob_and_filter_generate(
             env=isolated_cli_env,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=True,
         )
         return json.loads(proc.stdout)

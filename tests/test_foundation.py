@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import httpx
@@ -512,14 +513,27 @@ def test_pob2_runtime_ready() -> None:
     paths = get_pob2_paths()
     assert paths.is_ready, f"Expected bootstrapped PoB2 runtime at {paths.root_dir}"
     env = os.environ.copy()
-    env["LUA_CPATH"] = f"{paths.bin_dir}/?.so;;"
-    proc = subprocess.run(
-        [
+    if paths.uses_windows_dll_host:
+        env["LUA_CPATH"] = f"{paths.runtime_dir}\\?.dll;{paths.bin_dir}\\?.dll;;"
+        env["POB2_RUNTIME_DIR"] = str(paths.runtime_dir)
+        cmd = [
+            sys.executable,
+            "-m",
+            "poe2brain.pob.win_luajit",
+            "-e",
+            'local u = require("lua-utf8"); local z = require("ffi").load("zlib1"); '
+            'local x = 1; x += 2; assert(x == 3 and u.len("PoE2") == 4); print("POB2_RT_OK")',
+        ]
+    else:
+        env["LUA_CPATH"] = f"{paths.bin_dir}/?.so;;"
+        cmd = [
             str(paths.luajit_bin),
             "-e",
             'local u = require("lua-utf8"); local z = require("ffi").load("z"); '
             'local x = 1; x += 2; assert(x == 3 and u.len("PoE2") == 4); print("POB2_RT_OK")',
-        ],
+        ]
+    proc = subprocess.run(
+        cmd,
         cwd=paths.src_dir,
         env=env,
         capture_output=True,
