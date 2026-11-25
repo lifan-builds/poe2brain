@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 lifan-builds. poe2brain; Section 7 attribution terms in ATTRIBUTION.md.
 """Zero-auth local Path of Building (PoE2) Builds folder discovery and sync.
 
 Lets Windows, macOS, and Linux players who already imported or saved a character

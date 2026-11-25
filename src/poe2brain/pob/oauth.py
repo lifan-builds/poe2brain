@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 lifan-builds. poe2brain; Section 7 attribution terms in ATTRIBUTION.md.
 """Official GGG OAuth 2.1 Public Client (PKCE S256 + localhost loopback) for PoE2.
 
 Strictly ToS-compliant:

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 lifan-builds. poe2brain; Section 7 attribution terms in ATTRIBUTION.md.
 """Windows LuaJIT 2.1 runner hosted via PathOfBuilding-PoE2's bundled MIT x64 lua51.dll.
 
 Usage:

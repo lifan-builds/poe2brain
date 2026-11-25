@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 lifan-builds. poe2brain; Section 7 attribution terms in ATTRIBUTION.md.
 from __future__ import annotations
 
 import re
@@ -971,7 +973,7 @@ class NeverSinkAdapter:
                 b.block_index = idx_b
 
         attribution = [
-            f"# Adapted & healed for PoE2 Patch {POE2_PATCH} by poe2brain (MIT License).",
+            f"# Adapted & healed for PoE2 Patch {POE2_PATCH} by poe2brain (AGPL-3.0-only).",
             (
                 "# Base filter structure courtesy of NeverSink "
                 "(https://github.com/NeverSinkDev/NeverSink-Filter-for-PoE2, MIT License)."

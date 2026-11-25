@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 lifan-builds. poe2brain; Section 7 attribution terms in ATTRIBUTION.md.
 """Cross-platform PathOfBuilding-PoE2 runtime bootstrapper (Windows, macOS, Linux).
 
 On Windows:

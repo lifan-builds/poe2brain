@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 lifan-builds. poe2brain; Section 7 attribution terms in ATTRIBUTION.md.
 """Pillar 3: Live PoE2 economy, item clipboard parser, stat matcher, and trade2 client."""
 
 from __future__ import annotations

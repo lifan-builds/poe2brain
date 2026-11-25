@@ -171,7 +171,15 @@ POE2_LIVE_TESTS=1 uv run pytest -v
 
 ---
 
-## Clean-Room Licensing & GGG ToS Boundary
+## Upstream Attribution & GGG ToS Boundary
 
-- **MIT Licensed**: See [LICENSE](LICENSE). Bundled lookup data in `data/` derives strictly from MIT-licensed upstream projects (`PathOfBuildingCommunity/PathOfBuilding-PoE2`, `Kvan7/Exiled-Exchange-2` in [data/ee2/LICENSE.Exiled-Exchange-2](data/ee2/LICENSE.Exiled-Exchange-2), `ackness/pobr` in [data/ninja/LICENSE.pobr](data/ninja/LICENSE.pobr), `repoe-fork/poe2` & `thmsndk/vscode.poe2-filter` in [data/filter/LICENSE.filter-data](data/filter/LICENSE.filter-data), plus optional MIT `NeverSinkDev/NeverSink-Filter-for-PoE2` base filter healing).
-- **Strictly Out-of-Game & Unauthenticated**: `poe2brain` never reads `POESESSID` or auth cookies, never calls Cloudflare-gated `/api/protected/` routes, never inspects game memory or screen frames, never injects inputs into the Path of Exile 2 client, and paces all public `trade2` requests through `GGGRateLimiter`.
+- **Clean-Room Upstream Data Attribution**: Bundled lookup data in `data/` derives strictly from permissive MIT-licensed upstream projects (`PathOfBuildingCommunity/PathOfBuilding-PoE2`, `Kvan7/Exiled-Exchange-2` in [data/ee2/LICENSE.Exiled-Exchange-2](data/ee2/LICENSE.Exiled-Exchange-2), `ackness/pobr` in [data/ninja/LICENSE.pobr](data/ninja/LICENSE.pobr), `repoe-fork/poe2` & `thmsndk/vscode.poe2-filter` in [data/filter/LICENSE.filter-data](data/filter/LICENSE.filter-data), plus optional MIT `NeverSinkDev/NeverSink-Filter-for-PoE2` base filter healing), with original upstream MIT notices preserved.
+- **Strictly Out-of-Game & ToS-Compliant**: `poe2brain` never reads `POESESSID` or auth cookies, never calls Cloudflare-gated `/api/protected/` routes, never inspects game memory or screen frames, never injects inputs into the Path of Exile 2 client, uses official GGG OAuth 2.1 PKCE for private character imports, and paces all public `trade2` requests through `GGGRateLimiter`.
+
+## License
+
+Open source under [AGPL-3.0-only](https://github.com/lifan-builds/poe2brain/blob/main/LICENSE), with the Section 7 attribution terms in [ATTRIBUTION.md](https://github.com/lifan-builds/poe2brain/blob/main/ATTRIBUTION.md). Copies and modified versions must keep this credit in their README and `--version` or About output, mark their changes, and may not use the poe2brain name:
+
+> Based on poe2brain by lifan-builds (https://github.com/lifan-builds/poe2brain)
+
+Copyright © 2026 [lifan-builds](https://github.com/lifan-builds). Pull requests are welcome under [CONTRIBUTING.md](https://github.com/lifan-builds/poe2brain/blob/main/CONTRIBUTING.md) with a one-time [CLA](https://github.com/lifan-builds/poe2brain/blob/main/CLA.md). For licensing outside AGPL, open an issue.

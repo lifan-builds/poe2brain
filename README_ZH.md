@@ -2,7 +2,7 @@
 
 > English documentation: [README.md](README.md)
 
-**`poe2brain`** 是专为 **流放之路 2（Path of Exile 2，Patch `0.5.5` / `Forbidden Rites`）** 打造的 AI Agent 引擎（**MIT 开源协议**），原生支持 **Windows、macOS、Linux**。同一套 Python 3.12+ 引擎同时提供 **JSON CLI (`poe2`)** 与 **MCP Server (`poe2brain-mcp`，42 个 1:1 工具)**，可直接接入 Claude Code、Cursor、Antigravity、Codex、Devin 等 AI 编程/游戏助手。
+**`poe2brain`** 是专为 **流放之路 2（Path of Exile 2，Patch `0.5.5` / `Forbidden Rites`）** 打造的 AI Agent 引擎（**`AGPL-3.0-only` 开源协议**，附 [ATTRIBUTION.md](ATTRIBUTION.md) 第 7 条署名条款），原生支持 **Windows、macOS、Linux**。同一套 Python 3.12+ 引擎同时提供 **JSON CLI (`poe2`)** 与 **MCP Server (`poe2brain-mcp`，42 个 1:1 工具)**，可直接接入 Claude Code、Cursor、Antigravity、Codex、Devin 等 AI 编程/游戏助手。
 
 ---
 
@@ -121,4 +121,7 @@ uv run poe2 filter generate --slot main --strictness strict --theme darkmode_obs
 ## 合规与开源声明
 
 - 严格遵守 GGG ToS：**绝不读取 `POESESSID`**，绝不读游戏内存，绝不自动点击/自动密语交易，所有市集与 API 请求均经过动态限流器。
-- **MIT 协议开源**：仅使用 MIT/BSD/Apache 兼容数据与上游项目（`PathOfBuilding-PoE2`、`Exiled-Exchange-2`、`repoe-fork/poe2`、`NeverSink-Filter-for-PoE2`）。
+- **开源协议 (`AGPL-3.0-only` + Section 7 署名条款)**：本项目代码依据 [LICENSE](LICENSE) (`AGPL-3.0-only`) 与 [ATTRIBUTION.md](ATTRIBUTION.md) 开源；任何复制、修改或网络服务分发版本均须保持 `AGPL-3.0-only` 协议、公开完整源码，并在 README 及 `--version` / MCP 输出中保留署名：
+  > Based on poe2brain by lifan-builds (https://github.com/lifan-builds/poe2brain)
+- 欢迎依据 [CONTRIBUTING.md](CONTRIBUTING.md) 提交 PR（首次 PR 签署一次性 [CLA](CLA.md)）；商业/非 AGPL 授权请提 Issue 联系 `lifan-builds`。
+- 上游数据致谢：`data/` 内置查表数据与无头计算内核均源自合规 MIT 开源上游项目（`PathOfBuilding-PoE2`、`Exiled-Exchange-2`、`ackness/pobr`、`repoe-fork/poe2`、`NeverSink-Filter-for-PoE2`），原 MIT 许可声明已完整保留。

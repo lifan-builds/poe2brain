@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 lifan-builds. poe2brain; Section 7 attribution terms in ATTRIBUTION.md.
 from __future__ import annotations
 
 import atexit
@@ -17,12 +19,13 @@ from typing import Any, Literal
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-from poe2brain import __version__
+from poe2brain import ATTRIBUTION, LICENSE_SPDX, LICENSE_SUMMARY, __version__
 from poe2brain.config import (
     BUNDLED_DATA_DIR,
     DEFAULT_LEAGUE,
     POE2_PATCH,
     REPO_ROOT,
+    REPO_URL,
     get_cache_dir,
     get_gamedata_db_path,
     get_pob2_paths,
@@ -84,7 +87,12 @@ from poe2brain.trade import (
     parsed_item_to_pob2_text,
 )
 
-mcp = FastMCP("poe2brain")
+mcp = FastMCP(
+    "poe2brain",
+    instructions=f"{ATTRIBUTION}. License: {LICENSE_SUMMARY}.",
+    website_url=REPO_URL,
+)
+mcp._mcp_server.version = __version__
 
 _SAFE_SLOT_RE = re.compile(r"[^a-zA-Z0-9._-]+")
 
@@ -528,6 +536,8 @@ def collect_engine_status() -> EngineStatus:
     db_path = get_gamedata_db_path()
     return EngineStatus(
         version=__version__,
+        attribution=ATTRIBUTION,
+        license=LICENSE_SPDX,
         patch=POE2_PATCH,
         default_league=DEFAULT_LEAGUE,
         cache_dir=str(get_cache_dir()),

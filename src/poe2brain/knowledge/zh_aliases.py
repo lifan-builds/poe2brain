@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 lifan-builds. poe2brain; Section 7 attribution terms in ATTRIBUTION.md.
 """Bilingual zh-CN / zh-TW <-> English PoE2 0.5.5 terminology & clipboard normalizer.
 
 Zero external dependencies; zero overhead on ASCII-only English queries.

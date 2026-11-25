@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 lifan-builds. poe2brain; Section 7 attribution terms in ATTRIBUTION.md.
 # Deterministic POSIX/macOS bootstrap for headless Path of Building 2:
 #   - LuaJIT 2.1 (commit 2460b3ff93a1c955de3d62cfc825de7d68dc272e, supporting += / ..=)
 #   - starwing/luautf8 0.1.6 (lua-utf8.so)

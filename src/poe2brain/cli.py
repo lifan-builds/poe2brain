@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 lifan-builds. poe2brain; Section 7 attribution terms in ATTRIBUTION.md.
 from __future__ import annotations
 
 import json
@@ -183,8 +185,29 @@ def _read_item_input(
     raise ValueError('Provide item text via --text "<ctrl_c>" or --file <path>.')
 
 
+def _version_flag_callback(value: bool) -> None:
+    if value:
+        from poe2brain import ATTRIBUTION, LICENSE_SUMMARY, __version__
+
+        typer.echo(f"poe2brain {__version__}")
+        typer.echo(ATTRIBUTION)
+        typer.echo(f"License: {LICENSE_SUMMARY}")
+        raise typer.Exit()
+
+
 @app.callback()
-def _root_callback() -> None:
+def _root_callback(
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            "-V",
+            callback=_version_flag_callback,
+            is_eager=True,
+            help="Show version, attribution, and license notice and exit.",
+        ),
+    ] = False,
+) -> None:
     """Path of Exile 2 intelligence engine for AI agents and power users."""
 
 
@@ -193,14 +216,14 @@ def version_cmd(json_output: JsonOpt = False) -> None:
     """Show poe2brain version, target PoE2 patch, default league, and runtime readiness."""
 
     def _render(status: Any) -> None:
-        pob_label = (
-            "ready" if status.pob2_runtime_ready else "missing (run scripts/bootstrap_pob2.sh)"
-        )
+        pob_label = "ready" if status.pob2_runtime_ready else "missing (run poe2 bootstrap pob2)"
         db_label = "ready" if status.gamedata_db_ready else "missing (run poe2 sync gamedata)"
         console.print(
             f"[bold cyan]poe2brain[/bold cyan] v{status.version} "
             f"(PoE2 [bold]{status.patch}[/bold] | League: [bold]{status.default_league}[/bold])"
         )
+        console.print(f"  {status.attribution}")
+        console.print(f"  License      : {status.license} (see ATTRIBUTION.md)")
         console.print(f"  PoB2 runtime : {pob_label}")
         console.print(f"  Gamedata DB  : {db_label}")
         console.print(f"  Cache dir    : {status.cache_dir}")

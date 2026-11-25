@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 lifan-builds. poe2brain; Section 7 attribution terms in ATTRIBUTION.md.
 from __future__ import annotations
 
 from enum import StrEnum
@@ -40,6 +42,8 @@ class PriceAmount(Poe2Model):
 
 class EngineStatus(Poe2Model):
     version: str
+    attribution: str = "Based on poe2brain by lifan-builds (https://github.com/lifan-builds/poe2brain)"
+    license: str = "AGPL-3.0-only"
     patch: str
     default_league: str
     cache_dir: str

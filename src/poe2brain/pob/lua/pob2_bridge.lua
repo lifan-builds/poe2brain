@@ -1,5 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
+-- Copyright (C) 2026 lifan-builds. poe2brain; Section 7 attribution terms in ATTRIBUTION.md.
 -- pob2_bridge.lua
--- MIT License
 -- Persistent headless PathOfBuilding-PoE2 JSON-RPC 2.0 bridge over stdin/stdout.
 --
 -- Capabilities:

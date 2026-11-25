@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 lifan-builds. poe2brain; Section 7 attribution terms in ATTRIBUTION.md.
 """Pillar 1: PoE2 game knowledge, FTS5 search, and anti-hallucination mechanics rules."""
 
 from poe2brain.knowledge.db import GAMEDATA_TABLES, GamedataDB, GamedataHealth

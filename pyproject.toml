@@ -1,13 +1,15 @@
 [build-system]
-requires = ["hatchling>=1.25.0"]
+requires = ["hatchling>=1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
 name = "poe2brain"
 version = "0.1.0"
 description = "Agent-native Path of Exile 2 intelligence engine: game knowledge, headless PoB2 math, live trade/economy, and exact crafting solver."
+authors = [{ name = "lifan-builds" }]
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "AGPL-3.0-only"
+license-files = ["LICENSE", "ATTRIBUTION.md"]
 requires-python = ">=3.12"
 dependencies = [
     "mcp>=1.6.0,<2.0.0",
