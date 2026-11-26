@@ -57,7 +57,7 @@ uv run poe2 bootstrap pob2
 uv run poe2 version --json
 ```
 
-看到 `"pob2_ready": true` 和 `"gamedata_db_exists": true` 即表示全部安装成功！
+看到 `"pob2_runtime_ready": true` 和 `"gamedata_db_ready": true` 即表示全部安装成功（也可以直接运行 `uv run poe2 status` 查看人类可读摘要）！
 
 ---
 

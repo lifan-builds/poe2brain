@@ -1450,6 +1450,27 @@ _NAMED_SWATCHES: dict[str, str] = {
     "ivory": "#fffbeb",
     "pitch black": "#06070b",
     "obsidian": "#0e1017",
+    "粉红": "#ff4da6",
+    "品红": "#ff0099",
+    "洋红": "#ff0099",
+    "青色": "#00f5ff",
+    "电青": "#00f5ff",
+    "蓝绿": "#14b8a6",
+    "翠绿": "#34d399",
+    "翡翠": "#34d399",
+    "荧光绿": "#a3e635",
+    "金色": "#fbbf24",
+    "明黄": "#fde047",
+    "琥珀": "#f59e0b",
+    "橙色": "#fb923c",
+    "猩红": "#ef4444",
+    "紫色": "#c084fc",
+    "紫罗兰": "#a78bfa",
+    "冰蓝": "#38bdf8",
+    "宝石蓝": "#38bdf8",
+    "银白": "#e2e8f0",
+    "纯黑": "#06070b",
+    "黑曜石": "#0e1017",
 }
 
 _CVD_PROMPT_KEYWORDS: tuple[str, ...] = (
@@ -1463,16 +1484,88 @@ _CVD_PROMPT_KEYWORDS: tuple[str, ...] = (
     "cvd",
     "okabe",
     "accessible",
+    "红绿色盲",
+    "绿色盲",
+    "红色盲",
+    "蓝黄色盲",
+    "色盲",
+    "色弱",
+    "无障碍",
 )
 
 _PROMPT_PRESET_KEYWORDS: tuple[tuple[tuple[str, ...], str], ...] = (
     (_CVD_PROMPT_KEYWORDS, "colorblind_safe"),
-    (("synthwave", "cyberpunk", "neon", "vaporwave", "laser"), "cyberpunk_neon"),
-    (("zen", "minimal", "calm", "subtle", "clean", "low clutter"), "zen_minimal"),
-    (("vaal", "blood", "crimson", "atziri", "sacrifice"), "vaal_blood"),
-    (("solaris", "royal", "ivory", "sun", "golden"), "solaris_gold"),
-    (("cobalt", "ice", "frost", "glacial", "sapphire", "storm"), "cobalt_arcane"),
-    (("darkmode", "dark mode", "obsidian", "matte", "no white"), "darkmode_obsidian"),
+    (
+        ("synthwave", "cyberpunk", "neon", "vaporwave", "laser", "赛博", "霓虹", "蒸汽波", "激光"),
+        "cyberpunk_neon",
+    ),
+    (
+        (
+            "zen",
+            "minimal",
+            "calm",
+            "subtle",
+            "clean",
+            "low clutter",
+            "极简",
+            "禅意",
+            "清爽",
+            "克制",
+            "低调",
+        ),
+        "zen_minimal",
+    ),
+    (
+        ("vaal", "blood", "crimson", "atziri", "sacrifice", "瓦尔", "猩红", "血红", "鲜血", "祭祀"),
+        "vaal_blood",
+    ),
+    (
+        (
+            "solaris",
+            "royal",
+            "ivory",
+            "sun",
+            "golden",
+            "太阳神",
+            "圣金",
+            "皇家金",
+            "耀金",
+            "象牙白",
+        ),
+        "solaris_gold",
+    ),
+    (
+        (
+            "cobalt",
+            "ice",
+            "frost",
+            "glacial",
+            "sapphire",
+            "storm",
+            "钴蓝",
+            "奥术",
+            "冰蓝",
+            "寒霜",
+            "星界",
+        ),
+        "cobalt_arcane",
+    ),
+    (
+        (
+            "darkmode",
+            "dark mode",
+            "obsidian",
+            "matte",
+            "no white",
+            "暗黑",
+            "黑曜石",
+            "护眼暗黑",
+            "哑光黑",
+            "不要白底",
+            "去白底",
+        ),
+        "darkmode_obsidian",
+    ),
 )
 
 _TIER_ALIASES: dict[str, str] = {
@@ -1480,6 +1573,9 @@ _TIER_ALIASES: dict[str, str] = {
     "divines": "s_plus",
     "mirror": "s_plus",
     "jackpot": "s_plus",
+    "神圣": "s_plus",
+    "镜子": "s_plus",
+    "大奖": "s_plus",
     "s+": "s_plus",
     "s-plus": "s_plus",
     "s_plus": "s_plus",
@@ -1495,8 +1591,12 @@ _TIER_ALIASES: dict[str, str] = {
     "d tier": "d",
     "build": "build_upgrade",
     "pob": "build_upgrade",
+    "流派": "build_upgrade",
+    "构筑": "build_upgrade",
     "waystone": "waystone_high",
     "waystones": "waystone_high",
+    "引路石": "waystone_high",
+    "异界地图": "waystone_high",
 }
 
 
@@ -1524,7 +1624,8 @@ def _extract_colors_from_clause(clause: str) -> list[RgbaColor]:
 
     lower = clause.lower()
     for name in sorted(_NAMED_SWATCHES, key=len, reverse=True):
-        for m in re.finditer(rf"\b{re.escape(name)}\b", lower):
+        pattern = rf"\b{re.escape(name)}\b" if name.isascii() else re.escape(name)
+        for m in re.finditer(pattern, lower):
             s, e = m.span()
             if not _overlaps(s, e):
                 positioned.append((s, e, RgbaColor.from_any(_NAMED_SWATCHES[name])))
@@ -1589,7 +1690,9 @@ def compose_theme(
     theme = get_visual_theme(chosen_base)
 
     if style_prompt:
-        slug = re.sub(r"[^a-z0-9]+", "_", prompt_lower).strip("_")[:28] or "custom"
+        ascii_slug = re.sub(r"[^a-z0-9]+", "_", prompt_lower).strip("_")[:28]
+        ascii_letters = sum(ch.isalpha() for ch in ascii_slug)
+        slug = ascii_slug if ascii_letters >= 3 else chosen_base
         theme.id = theme_id or f"custom_{slug}"
         theme.name = f"Custom ({style_prompt.strip()[:48]})"
         theme.description = f"Agent-composed theme from '{chosen_base}': {style_prompt.strip()}"
@@ -1605,15 +1708,16 @@ def compose_theme(
         RgbaColor.from_any(background_color) if background_color is not None else None
     )
     if bg_override is None:
-        if "pitch black" in prompt_lower or "pure black" in prompt_lower:
+        if any(k in prompt_lower for k in ("pitch black", "pure black", "纯黑", "深黑")):
             bg_override = RgbaColor(r=6, g=7, b=11, a=250)
-        elif "obsidian" in prompt_lower:
+        elif any(k in prompt_lower for k in ("obsidian", "黑曜石", "暗黑")):
             bg_override = RgbaColor(r=14, g=16, b=23, a=250)
 
     if bg_override is not None:
+        no_white = any(k in prompt_lower for k in ("no white", "不要白底", "去白底", "无白底"))
         for t_key, style in theme.tiers.items():
             # Keep inverted S+ background unless pitch-black / darkmode explicitly requested
-            if t_key == "s_plus" and "no white" not in prompt_lower and background_color is None:
+            if t_key == "s_plus" and not no_white and background_color is None:
                 continue
             if wants_cvd and background_color is None:
                 # Blend 45% toward obsidian/pitch-black to keep dark comfort + CVD plate separation
@@ -1635,8 +1739,17 @@ def compose_theme(
     acc = RgbaColor.from_any(accent_color) if accent_color is not None else None
 
     if prompt_lower and (prim is None or acc is None):
-        # Ignore "red-green" / "red green" negated colorblind descriptors when extracting swatches
-        sanitized_clause = re.sub(r"\bred[\s-]+green\b", "", re.split(r"[,;]", prompt_lower)[0])
+        # Extract global swatches from non-tier-specific clauses (ignoring "red-green" / "红绿色盲")
+        global_clauses: list[str] = []
+        for clause in re.split(r"[,;，；]", prompt_lower):
+            has_tier = any(
+                re.search(rf"\b{re.escape(al)}\b" if al.isascii() else re.escape(al), clause)
+                for al in _TIER_ALIASES
+            )
+            if not has_tier:
+                global_clauses.append(clause)
+        joined_global = " ".join(global_clauses)
+        sanitized_clause = re.sub(r"\bred[\s-]+green\b|红绿色盲|蓝黄色盲", "", joined_global)
         swatches = [
             c
             for c in _extract_colors_from_clause(sanitized_clause)
@@ -1671,10 +1784,11 @@ def compose_theme(
 
     # Clause-level tier directives (e.g. "huge text on divines", "subtle muted yellows on b-tier")
     if prompt_lower:
-        for clause in re.split(r"[,;]|(?:\band\b(?=[^,]*\bon\b))", prompt_lower):
+        for clause in re.split(r"[,;，；、]|(?:\band\b(?=[^,]*\bon\b))", prompt_lower):
             matched_tier: str | None = None
             for alias, canonical in _TIER_ALIASES.items():
-                if re.search(rf"\b{re.escape(alias)}\b", clause):
+                pat = rf"\b{re.escape(alias)}\b" if alias.isascii() else re.escape(alias)
+                if re.search(pat, clause):
                     matched_tier = canonical
                     break
             if matched_tier and matched_tier in theme.tiers:
@@ -1684,7 +1798,7 @@ def compose_theme(
                 ]
                 if clause_colors:
                     col = clause_colors[0]
-                    if "muted" in clause or "subtle" in clause:
+                    if any(w in clause for w in ("muted", "subtle", "柔和", "淡化", "低调")):
                         h, l_v, s_v = colorsys.rgb_to_hls(
                             col.r / 255.0, col.g / 255.0, col.b / 255.0
                         )
@@ -1701,14 +1815,18 @@ def compose_theme(
                             color=b_name,
                             shape=st.minimap_icon.shape,
                         )
-                if any(w in clause for w in ("huge", "massive", "giant", "max")):
+                if any(w in clause for w in ("huge", "massive", "giant", "max", "超大", "大字")):
                     st.font_size = 45
-                elif any(w in clause for w in ("small", "tiny", "subtle", "compact")):
+                elif any(
+                    w in clause
+                    for w in ("small", "tiny", "subtle", "compact", "小字", "低调", "淡化")
+                ):
                     st.font_size = max(20, st.font_size - 5)
-                    if "subtle" in clause or "muted" in clause:
+                    if any(w in clause for w in ("subtle", "muted", "低调", "淡化")):
                         st.beam = None
 
-        if "no beams" in prompt_lower or beam_mode == "none":
+        no_beams = any(k in prompt_lower for k in ("no beams", "无光柱", "不要光柱"))
+        if no_beams or beam_mode == "none":
             for st in theme.tiers.values():
                 st.beam = None
         elif beam_mode == "all_temp":
@@ -1803,13 +1921,16 @@ def parse_look_intent(look: str | None) -> dict[str, Any]:
     low = look.strip().lower()
 
     cvd_safe: str | bool | None = None
-    if any(k in low for k in ("deuteranopia", "deutan", "red-green", "red green")):
+    if any(
+        k in low
+        for k in ("deuteranopia", "deutan", "red-green", "red green", "红绿色盲", "绿色盲")
+    ):
         cvd_safe = "deuteranopia"
-    elif any(k in low for k in ("protanopia", "protan")):
+    elif any(k in low for k in ("protanopia", "protan", "红色盲")):
         cvd_safe = "protanopia"
-    elif any(k in low for k in ("tritanopia", "tritan", "blue-yellow", "blue yellow")):
+    elif any(k in low for k in ("tritanopia", "tritan", "blue-yellow", "blue yellow", "蓝黄色盲")):
         cvd_safe = "tritanopia"
-    elif any(k in low for k in ("colorblind", "colourblind", "color-blind", "cvd")):
+    elif any(k in low for k in ("colorblind", "colourblind", "color-blind", "cvd", "色盲", "色弱")):
         cvd_safe = True
 
     warm_night_mode = any(
@@ -1826,21 +1947,55 @@ def parse_look_intent(look: str | None) -> dict[str, Any]:
             "no harsh highs",
             "ear safe",
             "ear-safe",
+            "护耳",
+            "凌晨",
+            "深夜",
+            "半夜",
+            "不刺耳",
+            "防耳鸣",
+            "柔和音效",
+            "低频",
         )
     )
 
     sound_style: str | None = None
-    if any(k in low for k in ("voice", "callout", "spoken", "tts")):
+    if any(k in low for k in ("voice", "callout", "spoken", "tts", "语音", "播报", "人声")):
         sound_style = "voice_callout"
-    elif any(k in low for k in ("gong", "ritual gong", "bronze bell")):
+    elif any(k in low for k in ("gong", "ritual gong", "bronze bell", "铜锣", "古锣", "祭坛")):
         sound_style = "ritual_gong"
-    elif any(k in low for k in ("synthwave", "cyber synth", "cyber_synth", "synth audio")):
+    elif any(
+        k in low
+        for k in (
+            "synthwave",
+            "cyber synth",
+            "cyber_synth",
+            "synth audio",
+            "电子音效",
+            "电音",
+            "合成器",
+            "赛博音效",
+        )
+    ):
         sound_style = "cyber_synth"
-    elif any(k in low for k in ("arcade", "chiptune", "8-bit", "8bit", "retro audio")):
+    elif any(
+        k in low for k in ("arcade", "chiptune", "8-bit", "8bit", "retro audio", "像素", "街机")
+    ):
         sound_style = "arcade_retro"
-    elif any(k in low for k in ("zen minimal", "zen_minimal", "rhodes", "piano", "soft chime")):
+    elif any(
+        k in low
+        for k in (
+            "zen minimal",
+            "zen_minimal",
+            "rhodes",
+            "piano",
+            "soft chime",
+            "钢琴",
+            "电钢",
+            "轻柔",
+        )
+    ):
         sound_style = "zen_minimal"
-    elif any(k in low for k in ("chime", "celestial", "bell")):
+    elif any(k in low for k in ("chime", "celestial", "bell", "风铃", "清脆", "星铃", "水晶")):
         sound_style = "celestial_chime"
 
     return {

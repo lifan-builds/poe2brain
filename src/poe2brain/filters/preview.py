@@ -218,9 +218,18 @@ def render_filter_preview_html(
     output_path: Path | None = None,
 ) -> str:
     cards: list[str] = []
+    build_base_label = "Slicing Quarterstaff (Tier 4 Unid)"
+    if result and result.build_context:
+        bc = result.build_context
+        if bc.equipped_bases:
+            build_base_label = f"{bc.equipped_bases[0]} (Tier 4 Unid)"
+        elif bc.weapon_filter_classes:
+            build_base_label = f"{bc.weapon_filter_classes[0]} Base (Tier 4 Unid)"
     for tier_key, item_label, subtitle in SAMPLE_ITEMS_FOR_TIER:
         if tier_key not in theme.tiers:
             continue
+        if tier_key == "build_upgrade":
+            item_label = build_base_label
         style = theme.tiers[tier_key]
         uri = _encode_clip_data_uri(sound_pack, tier_key)
         if sound_pack and tier_key in sound_pack.clips:

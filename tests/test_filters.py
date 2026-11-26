@@ -449,3 +449,25 @@ def test_preview_html_and_bundle_installer(tmp_path: Path) -> None:
     assert "data:audio/wav;base64," in html_doc
     assert "Divine Orb" in html_doc
     assert "Contrast" in html_doc
+
+
+def test_chinese_vibe_filter_look_prompt_and_intent() -> None:
+    from poe2brain.filters.themes import parse_look_intent
+
+    intent = parse_look_intent("赛博霓虹 护耳 凌晨2点 电子音效")
+    assert intent["warm_night_mode"] is True
+    assert intent["sound_style"] == "cyber_synth"
+    assert intent["cvd_safe"] is None
+
+    cvd_intent = parse_look_intent("暗黑金色 红绿色盲 轻柔钢琴")
+    assert cvd_intent["cvd_safe"] == "deuteranopia"
+    assert cvd_intent["sound_style"] == "zen_minimal"
+
+    theme = compose_theme("赛博霓虹，品红和青色，纯黑背景，神圣超大")
+    assert theme.base_preset == "cyberpunk_neon"
+    assert theme.id == "custom_cyberpunk_neon"
+    assert theme.tiers["s_plus"].font_size == 45
+    assert theme.tiers["s_plus"].border_color.to_hex() == "#ff0099"
+    assert theme.tiers["s"].border_color.to_hex() == "#00f5ff"
+    s_bg = theme.tiers["s"].background_color
+    assert (s_bg.r, s_bg.g, s_bg.b) == (6, 7, 11)

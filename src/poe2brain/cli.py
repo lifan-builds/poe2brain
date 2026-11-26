@@ -212,6 +212,7 @@ def _root_callback(
 
 
 @app.command("version")
+@app.command("status")
 def version_cmd(json_output: JsonOpt = False) -> None:
     """Show poe2brain version, target PoE2 patch, default league, and runtime readiness."""
 
@@ -823,10 +824,14 @@ def pob_audit_cmd(
     def _render(data: dict[str, Any]) -> None:
         raw_s = data["raw_stats"]
         sus_s = data["sustainable_pinnacle_stats"]
+        use_total = (raw_s["full_dps"] <= 0.0) and (raw_s["total_dps"] > 0.0)
+        dps_label = "TotalDPS" if use_total else "FullDPS"
+        raw_dps = raw_s["total_dps"] if use_total else raw_s["full_dps"]
+        sus_dps = sus_s["total_dps"] if use_total else sus_s["full_dps"]
         console.print(
             f"[bold cyan]Dewatering Audit[/bold cyan] [{data['slot_name']}]: "
-            f"FullDPS {raw_s['full_dps']:,.1f} -> "
-            f"[bold green]{sus_s['full_dps']:,.1f}[/bold green] "
+            f"{dps_label} {raw_dps:,.1f} -> "
+            f"[bold green]{sus_dps:,.1f}[/bold green] "
             f"(inflation +{data['dps_inflation_pct']:.1f}%) | "
             f"TotalEHP {raw_s['total_ehp']:,.1f} -> [bold]{sus_s['total_ehp']:,.1f}[/bold] "
             f"(inflation +{data['ehp_inflation_pct']:.1f}%)"
