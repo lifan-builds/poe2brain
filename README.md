@@ -9,7 +9,7 @@
 [![MCP Tools](https://img.shields.io/badge/MCP%20%2B%20CLI-42%20Tools%20(1%3A1)-38bdf8?style=flat-square)](#11-mcp-tool--cli-command-reference)
 [![Platforms](https://img.shields.io/badge/OS-Windows%20%7C%20macOS%20%7C%20Linux-64748b?style=flat-square)](#60-second-quickstart)
 [![Python](https://img.shields.io/badge/Python-3.12%2B-3776ab?style=flat-square)](pyproject.toml)
-[![License](https://img.shields.io/badge/License-AGPL--3.0--only-e11d48?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/License-GPL--3.0--only-e11d48?style=flat-square)](LICENSE)
 
 <h3>
   Give Claude Code, Cursor, Antigravity, Codex, or any MCP agent<br/>
@@ -292,8 +292,8 @@ POE2_LIVE_TESTS=1 uv run pytest -v
 
 ## License
 
-Open source under [AGPL-3.0-only](https://github.com/lifan-builds/poe2brain/blob/main/LICENSE), with the Section 7 attribution terms in [ATTRIBUTION.md](https://github.com/lifan-builds/poe2brain/blob/main/ATTRIBUTION.md). Copies and modified versions must keep this credit in their README and `--version` or About output, mark their changes, and may not use the poe2brain name:
+Open source under [GPL-3.0-only](https://github.com/lifan-builds/poe2brain/blob/main/LICENSE), with the Section 7 attribution terms in [ATTRIBUTION.md](https://github.com/lifan-builds/poe2brain/blob/main/ATTRIBUTION.md). Copies, integrations, and modified versions must stay under `GPL-3.0`, keep this credit in their README / credits (and `--version` or About output for standalone forks), mark their changes, and may not use the poe2brain name:
 
 > Based on poe2brain by lifan-builds (https://github.com/lifan-builds/poe2brain)
 
-Copyright © 2026 [lifan-builds](https://github.com/lifan-builds). Pull requests are welcome under [CONTRIBUTING.md](https://github.com/lifan-builds/poe2brain/blob/main/CONTRIBUTING.md) with a one-time [CLA](https://github.com/lifan-builds/poe2brain/blob/main/CLA.md). For licensing outside AGPL, open an issue.
+Copyright © 2026 [lifan-builds](https://github.com/lifan-builds). Pull requests are welcome under [CONTRIBUTING.md](https://github.com/lifan-builds/poe2brain/blob/main/CONTRIBUTING.md) with a one-time [CLA](https://github.com/lifan-builds/poe2brain/blob/main/CLA.md). For licensing outside GPL, open an issue.

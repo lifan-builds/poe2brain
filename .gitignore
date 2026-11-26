@@ -23,3 +23,6 @@ build/
 /PERF_REVIEW_PLAYBOOK.md
 /.impeccable/
 # end lifan-builds maintainer-only
+
+# Local standalone launch video workspace (renders & assets stay out of Git)
+/media/videos/

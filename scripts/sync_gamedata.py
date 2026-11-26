@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: GPL-3.0-only
 # Copyright (C) 2026 lifan-builds. poe2brain; Section 7 attribution terms in ATTRIBUTION.md.
 """Deterministic PoE2 0.5.5 gamedata compiler -> SQLite + FTS5 (`data/poe2_0.5.5.sqlite`).
 

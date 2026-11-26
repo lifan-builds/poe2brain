@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: GPL-3.0-only
 # Copyright (C) 2026 lifan-builds. poe2brain; Section 7 attribution terms in ATTRIBUTION.md.
 from __future__ import annotations
 
@@ -216,7 +216,7 @@ def test_tcp_loopback_daemon_transport_works_cross_platform(tmp_path: Path) -> N
         daemon.close()
 
 
-def test_agpl_attribution_in_cli_version_and_mcp() -> None:
+def test_gpl_attribution_in_cli_version_and_mcp() -> None:
     from poe2brain import ATTRIBUTION, LICENSE_SPDX
     from poe2brain.config import REPO_ROOT
     from poe2brain.mcp_server import mcp
@@ -236,6 +236,6 @@ def test_agpl_attribution_in_cli_version_and_mcp() -> None:
     assert mcp.instructions and ATTRIBUTION in mcp.instructions
     assert (REPO_ROOT / "ATTRIBUTION.md").is_file()
     assert (REPO_ROOT / "CLA.md").is_file()
-    assert "GNU AFFERO GENERAL PUBLIC LICENSE" in (REPO_ROOT / "LICENSE").read_text(
+    assert "GNU GENERAL PUBLIC LICENSE" in (REPO_ROOT / "LICENSE").read_text(
         encoding="utf-8"
     )

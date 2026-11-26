@@ -8,7 +8,7 @@
 [![版本](https://img.shields.io/badge/流放之路2-0.5.5%20禁忌仪式-d4a24c?style=flat-square)](https://github.com/lifan-builds/poe2brain)
 [![工具数](https://img.shields.io/badge/MCP%20%2B%20CLI-42%20个全功能工具-38bdf8?style=flat-square)](#完整工具与命令速查)
 [![平台](https://img.shields.io/badge/支持系统-Windows%20%7C%20macOS%20%7C%20Linux-64748b?style=flat-square)](#windows--macos-3-分钟上手)
-[![免费开源](https://img.shields.io/badge/协议-AGPL--3.0--only%20完全免费开源-e11d48?style=flat-square)](LICENSE)
+[![免费开源](https://img.shields.io/badge/协议-GPL--3.0--only%20完全免费开源-e11d48?style=flat-square)](LICENSE)
 
 <h3>
   给 Claude Code、Cursor、Antigravity、Codex、Cherry Studio 装上<br/>
@@ -231,7 +231,7 @@ uv run poe2 filter generate --slot main --strictness strict \
 ## 合规边界与开源声明
 
 - **严格遵守 GGG 服务条款（绝不触碰封号红线）：** 本项目仅作为**局外离线计算、剪贴板解析与公开 API 顾问**运行。绝不读取或存储 `POESESSID` / 登录 Cookie，绝不读取游戏内存或截屏 OCR，绝不向游戏客户端注入任何键鼠点击或自动密语交易，所有公开市集请求均经过动态限流器 (`GGGRateLimiter`)。
-- **完全免费开源 (`AGPL-3.0-only` + 第 7 条署名条款)：** 代码依据 [LICENSE](LICENSE) 与 [ATTRIBUTION.md](ATTRIBUTION.md) 开源；任何复制、修改或通过网络对外提供服务的衍生版本，均须保持 `AGPL-3.0-only` 开源并公开完整源码、不得使用 `poe2brain` 名称，并在 README 与 `--version` / 关于输出中保留署名：
+- **完全免费开源 (`GPL-3.0-only` + 第 7 条署名条款)：** 代码依据 [LICENSE](LICENSE) 与 [ATTRIBUTION.md](ATTRIBUTION.md) 开源；欢迎与其他 `GPL-3.0` 开源项目复用或集成，衍生版本须保持 `GPL-3.0` 开源、不得使用 `poe2brain` 名称，并在 README / 致谢文档（独立分支还需在 `--version` / 关于输出）中保留署名：
   > Based on poe2brain by lifan-builds (https://github.com/lifan-builds/poe2brain)
 - **合规上游致谢：** `data/` 离线查表数据与无头计算内核均源自宽松 MIT 开源项目（`PathOfBuildingCommunity/PathOfBuilding-PoE2`、`Exiled-Exchange-2`、`ackness/pobr`、`repoe-fork/poe2`、`NeverSink-Filter-for-PoE2`），并完整保留原 MIT 许可声明。
-- 欢迎通过 [CONTRIBUTING.md](CONTRIBUTING.md) 提交 PR（首次提交签署一次性 [CLA](CLA.md)）；商业/非 AGPL 授权请联系 `lifan-builds` 开 Issue 咨询。
+- 欢迎通过 [CONTRIBUTING.md](CONTRIBUTING.md) 提交 PR（首次提交签署一次性 [CLA](CLA.md)）；商业/非 GPL 授权请联系 `lifan-builds` 开 Issue 咨询。
