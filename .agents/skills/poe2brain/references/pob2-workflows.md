@@ -6,7 +6,7 @@
 
 1. **Check Readiness**: If `poe2_status` (`poe2 version --json`) reports `pob2_runtime_ready: false`, run:
    ```bash
-   /Users/lfan/Project/poe2brain/scripts/bootstrap_pob2.sh
+   /Users/lfan/Project/poe2/poe2brain/scripts/bootstrap_pob2.sh
    ```
 2. **Supported Build Inputs (`poe2_pob_load`)**:
    - **`eN...` Share Codes** (PoB2 export strings, decoded via ZLib `wbits=47` / encoded `wbits=15`).

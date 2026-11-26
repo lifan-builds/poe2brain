@@ -18,11 +18,11 @@ Use `poe2brain` (`poe2` CLI `--json` and `poe2brain` MCP server) as the single s
 
 ## Surface Routing: `poe2` CLI vs `poe2brain` MCP
 
-Both surfaces call the same typed Python engine in `/Users/lfan/Project/poe2brain`.
-- **In shell-capable coding harnesses (Antigravity, Claude Code, Codex, Devin):** Prefer `uv --directory /Users/lfan/Project/poe2brain run poe2 ... --json` when batching calls, piping item text from files, or filtering large outputs with `jq`.
+Both surfaces call the same typed Python engine in `/Users/lfan/Project/poe2/poe2brain`.
+- **In shell-capable coding harnesses (Antigravity, Claude Code, Codex, Devin):** Prefer `uv --directory /Users/lfan/Project/poe2/poe2brain run poe2 ... --json` when batching calls, piping item text from files, or filtering large outputs with `jq`.
 - **For single-turn lookups or chat-only harnesses:** Call the matching `poe2brain` MCP tool directly.
 
-| Pillar | MCP Tool (`poe2brain`) | CLI Command (`uv --directory /Users/lfan/Project/poe2brain run ...`) | Purpose & Typed Output |
+| Pillar | MCP Tool (`poe2brain`) | CLI Command (`uv --directory /Users/lfan/Project/poe2/poe2brain run ...`) | Purpose & Typed Output |
 | :--- | :--- | :--- | :--- |
 | **Health** | `poe2_status` | `poe2 version --json` | Verify patch (`0.5.5`), default league (`Forbidden Rites`), SQLite DB (`data/poe2_0.5.5.sqlite`), and headless PoB2 runtime (`~/.cache/poe2brain/pob2`). |
 | **Knowledge** | `poe2_search_knowledge` | `poe2 wiki search "<query>" [--category <cat>] [--limit 12] --json` | FTS5 + exact search across 769 GGG `KeywordPopups`, 49 anti-hallucination rules, 1,711 gems, 435 uniques, 3,219 live bases, 313 augments, 293 crafting levers, and 882 runeforge recipes. |
