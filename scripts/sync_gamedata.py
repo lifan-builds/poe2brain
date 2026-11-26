@@ -278,7 +278,9 @@ def parse_pob_uniques(uniques_dir: Path, live_names: set[str]) -> list[tuple]:
     tags_prefix_re = re.compile(r"\{tags:[^}]+\}")
 
     seen_ids: set[str] = set()
-    for lua_file in sorted(uniques_dir.glob("*.lua")):
+    for lua_file in sorted(uniques_dir.rglob("*.lua")):
+        if lua_file.name == "Generated.lua":
+            continue
         slot_category = lua_file.stem
         content = lua_file.read_text(encoding="utf-8", errors="replace")
         for block in block_re.findall(content):
@@ -350,6 +352,135 @@ def parse_pob_uniques(uniques_dir: Path, live_names: set[str]) -> list[tuple]:
                     req_level,
                     json.dumps(implicits, ensure_ascii=False),
                     json.dumps(explicits, ensure_ascii=False),
+                    is_live,
+                )
+            )
+
+    # Also include PoB2's programmatically generated uniques from Special/Generated.lua
+    gen_file = uniques_dir / "Special" / "Generated.lua"
+    if gen_file.exists():
+        gen_specs: list[tuple[str, str, str, list[str], list[str]]] = [
+            (
+                "Against the Darkness",
+                "Time-Lost Diamond",
+                "jewel",
+                [],
+                [
+                    "Limited to: 1",
+                    "Radius: Small",
+                    "Source: Drops from Zarokh, the Temporal (Trial of the Sekhemas)",
+                    (
+                        "Small Passive Skills in Radius also grant 1 random mod "
+                        "(+Spirit, +Attributes, +% Extra Elemental Damage, +% Resistances)"
+                    ),
+                    "Notable Passive Skills in Radius also grant 1 random mod",
+                ],
+            ),
+            (
+                "From Nothing",
+                "Diamond",
+                "jewel",
+                [],
+                [
+                    "Limited to: 1",
+                    "Radius: Small",
+                    "Source: Drops from The King in the Mists (Crux of Nothingness)",
+                    (
+                        "Passives in radius of a random Keystone can be Allocated "
+                        "without being connected to your tree"
+                    ),
+                    "Corrupted",
+                ],
+            ),
+            (
+                "Prism of Belief",
+                "Diamond",
+                "jewel",
+                [],
+                [
+                    "Limited to: 1",
+                    "Source: Drops from Arbiter of Ash (The Burning Monolith)",
+                    "+(1-3) to Level of all [Random Active Skill] Skills",
+                    "Corrupted",
+                ],
+            ),
+            (
+                "Megalomaniac",
+                "Diamond",
+                "jewel",
+                [],
+                [
+                    "Limited to: 1",
+                    "Source: Drops from Kosis, The Revelation (Simulacrum)",
+                    "Allocates 2 to 3 random Passive Tree Notables without connection",
+                    "Corrupted",
+                ],
+            ),
+            (
+                "Flesh Crucible",
+                "Diamond",
+                "jewel",
+                [],
+                [
+                    "Limited to: 1",
+                    "Source: Drops from Atziri's Vault (Vaal Temple)",
+                    "Grants a random Keystone Passive Skill and a Vivisection drawback modifier",
+                    "Corrupted",
+                ],
+            ),
+            (
+                "Grip of Kulemak",
+                "Abyssal Signet",
+                "ring",
+                ["Inflict Abyssal Wasting on Hit"],
+                [
+                    "League: Rise of the Abyssal",
+                    "Rolls 4 Abyssal Passage unique modifiers",
+                ],
+            ),
+            (
+                "Heart of the Well",
+                "Diamond",
+                "jewel",
+                [],
+                [
+                    "Limited to: 1",
+                    "League: Rise of the Abyssal",
+                    "Rolls 4 Desecrated unique modifiers",
+                ],
+            ),
+            (
+                "Loreweave",
+                "Ornate Ringmail",
+                "body",
+                [],
+                [
+                    "League: Runes of Aldur",
+                    (
+                        "Rolls large-range Physical Damage, Accuracy, Mana, Rarity, "
+                        "Gem Quality, Cast Speed, Max Resistances override, plus 3 random mods"
+                    ),
+                ],
+            ),
+        ]
+        gen_text = gen_file.read_text(encoding="utf-8", errors="replace")
+        for g_name, g_base, g_slot, g_imp, g_exp in gen_specs:
+            if f'"{g_name}"' not in gen_text:
+                continue
+            uid = f"{g_slot}:{g_name}:{g_base}"
+            if uid in seen_ids:
+                continue
+            seen_ids.add(uid)
+            is_live = 1 if (g_name in live_names or g_slot == "jewel") else 0
+            rows.append(
+                (
+                    uid,
+                    g_name,
+                    g_base,
+                    g_slot,
+                    None,
+                    json.dumps(g_imp, ensure_ascii=False),
+                    json.dumps(g_exp, ensure_ascii=False),
                     is_live,
                 )
             )

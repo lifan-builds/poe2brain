@@ -53,6 +53,8 @@ ZH_TO_EN_ALIASES: dict[str, str] = {
     "亞馬遜": "Amazon",
     "灵行者": "Spirit Walker",
     "靈行者": "Spirit Walker",
+    "灵魂行者": "Spirit Walker",
+    "靈魂行者": "Spirit Walker",
     "仪式师": "Ritualist",
     "儀式師": "Ritualist",
     "泰坦": "Titan",
@@ -105,6 +107,11 @@ ZH_TO_EN_ALIASES: dict[str, str] = {
     "护盾": "Energy Shield",
     "護盾": "Energy Shield",
     "精魂": "Spirit",
+    "精魄": "Spirit",
+    "武器套装": "Weapon Set",
+    "武器套裝": "Weapon Set",
+    "涂油": "Anoint",
+    "塗油": "Anoint",
     "偏斜": "Deflection",
     "格挡": "Block",
     "格擋": "Block",
@@ -132,9 +139,17 @@ ZH_TO_EN_ALIASES: dict[str, str] = {
     "可控蜕变": "Controlled Metamorphosis",
     "可控蛻變": "Controlled Metamorphosis",
     "抗衡黑暗": "Against the Darkness",
+    "力抗黑暗": "Against the Darkness",
     "深渊之暗": "Against the Darkness",
     "无中生有": "From Nothing",
     "無中生有": "From Nothing",
+    "妄想症": "Megalomaniac",
+    "信仰棱镜": "Prism of Belief",
+    "信仰稜鏡": "Prism of Belief",
+    "英雄悲剧": "Heroic Tragedy",
+    "英雄悲劇": "Heroic Tragedy",
+    "时空衣": "Temporalis",
+    "時空衣": "Temporalis",
     "卡兰德之触": "Kalandra's Touch",
     "卡蘭德之觸": "Kalandra's Touch",
     "莫里奥": "Morior Invictus",
@@ -171,6 +186,8 @@ ZH_TO_EN_ALIASES: dict[str, str] = {
     "瓦尔宝珠": "Vaal Orb",
     "瓦爾寶珠": "Vaal Orb",
     "破裂石": "Fracturing Orb",
+    "破裂宝珠": "Fracturing Orb",
+    "破裂寶珠": "Fracturing Orb",
     "分裂石": "Fracturing Orb",
     "剥离石": "Orb of Annulment",
     "剝離石": "Orb of Annulment",
@@ -187,6 +204,35 @@ ZH_TO_EN_ALIASES: dict[str, str] = {
     "引路石": "Waystone",
     "先驱石板": "Precursor Tablet",
     "先驅石板": "Precursor Tablet",
+    "裂隙碑牌": "Breach Tablet",
+    "炸坟碑牌": "Expedition Tablet",
+    "祭坛碑牌": "Ritual Tablet",
+    "迷雾碑牌": "Delirium Tablet",
+    "碑牌": "Tablet",
+    "石板": "Tablet",
+    "丝克玛试炼": "Trial of the Sekhema",
+    "絲克瑪試煉": "Trial of the Sekhema",
+    "丝克玛": "Sekhema",
+    "絲克瑪": "Sekhema",
+    "混沌试炼": "Trial of Chaos",
+    "混沌試煉": "Trial of Chaos",
+    "巨灵之币": "Djinn Barya",
+    "巨靈之幣": "Djinn Barya",
+    "国王的觐见": "An Audience with the King",
+    "國王的覲見": "An Audience with the King",
+    "无名之仪": "Rite of the Nameless",
+    "無名之儀": "Rite of the Nameless",
+    "先祖秘藏": "Expedition",
+    "炸坟": "Expedition",
+    "裂隙石": "Breachstone",
+    "裂隙": "Breach",
+    "迷雾": "Delirium",
+    "譫妄": "Delirium",
+    "祭坛": "Ritual",
+    "圣物": "Relic",
+    "聖物": "Relic",
+    "维里西姆": "Verisium",
+    "維里西姆": "Verisium",
     "符文": "Rune",
     "灵魂核心": "Soul Core",
     "靈魂核心": "Soul Core",
@@ -233,10 +279,20 @@ _ZH_ITEM_CLASS_MAP: dict[str, str] = {
     "珠寶": "Jewels",
     "珠宝": "Jewels",
     "引路石": "Waystones",
+    "碑牌": "Tablets",
+    "先驱石板": "Tablets",
+    "先驅石板": "Tablets",
+    "石板": "Tablets",
+    "圣物": "Relics",
+    "聖物": "Relics",
+    "可堆叠通货": "Stackable Currency",
+    "可堆疊通貨": "Stackable Currency",
     "通貨": "Stackable Currency",
     "通货": "Stackable Currency",
     "技能寶石": "Skill Gems",
     "技能宝石": "Skill Gems",
+    "精魂寶石": "Spirit Gems",
+    "精魂宝石": "Spirit Gems",
     "輔助寶石": "Support Gems",
     "辅助宝石": "Support Gems",
 }
@@ -276,46 +332,85 @@ def normalize_zh_item_clipboard(raw_text: str) -> str:
         return raw_text
 
     out_lines: list[str] = []
+    in_header = True
     for line in raw_text.splitlines():
         s = line.strip()
-        if s.startswith(("物品類別:", "物品类别:", "物品種類:", "物品种类:")):
-            val = s.split(":", 1)[1].strip()
-            out_lines.append(f"Item Class: {_ZH_ITEM_CLASS_MAP.get(val, val)}")
+        if s == "--------":
+            in_header = False
+            out_lines.append(line)
             continue
-        if s.startswith(("稀有度:", "稀有度：")):
-            val = s.replace("：", ":", 1).split(":", 1)[1].strip()
-            out_lines.append(f"Rarity: {_ZH_RARITY_MAP.get(val, val)}")
-            continue
-        if s.startswith(("物品等級:", "物品等级:", "物品等級：", "物品等级：")):
-            val = s.replace("：", ":", 1).split(":", 1)[1].strip()
-            out_lines.append(f"Item Level: {val}")
-            continue
-        if s.startswith(("品質:", "品质:", "品質：", "品质：")):
-            val = s.replace("：", ":", 1).split(":", 1)[1].strip()
-            val = val.replace("(已強化)", "(augmented)").replace("(已强化)", "(augmented)")
-            out_lines.append(f"Quality: {val}")
-            continue
-        if s.startswith(("插槽:", "插槽：")):
-            val = s.replace("：", ":", 1).split(":", 1)[1].strip()
-            out_lines.append(f"Sockets: {val}")
-            continue
-        if s.startswith(("需求:", "需求：")):
-            val = s.replace("：", ":", 1).split(":", 1)[1].strip()
-            val = (
-                val.replace("等級", "Level")
-                .replace("等级", "Level")
-                .replace("力量", "Str")
-                .replace("敏捷", "Dex")
-                .replace("智慧", "Int")
-                .replace("智力", "Int")
-            )
-            out_lines.append(f"Requires: {val}")
-            continue
+
+        # Normalize key: value headers where Chinese clients insert spaces (e.g. "稀 有 度: 稀有")
+        if ":" in s or "：" in s:
+            raw_k, raw_v = s.replace("：", ":", 1).split(":", 1)
+            compact_k = re.sub(r"\s+", "", raw_k)
+            val = raw_v.strip()
+
+            if compact_k in ("物品類別", "物品类别", "物品種類", "物品种类"):
+                out_lines.append(f"Item Class: {_ZH_ITEM_CLASS_MAP.get(val, val)}")
+                continue
+            if compact_k == "稀有度":
+                out_lines.append(f"Rarity: {_ZH_RARITY_MAP.get(val, val)}")
+                continue
+            if compact_k in ("物品等級", "物品等级"):
+                out_lines.append(f"Item Level: {val}")
+                continue
+            if compact_k in ("堆疊數量", "堆叠数量"):
+                out_lines.append(f"Stack Size: {val}")
+                continue
+            if compact_k in ("品質", "品质"):
+                val = val.replace("(已強化)", "(augmented)").replace("(已强化)", "(augmented)")
+                out_lines.append(f"Quality: {val}")
+                continue
+            if compact_k == "插槽":
+                out_lines.append(f"Sockets: {val}")
+                continue
+            if compact_k in ("能量護盾", "能量护盾"):
+                out_lines.append(f"Energy Shield: {val}")
+                continue
+            if compact_k in ("護甲", "护甲"):
+                out_lines.append(f"Armour: {val}")
+                continue
+            if compact_k in ("閃避值", "闪避值", "閃避", "闪避"):
+                out_lines.append(f"Evasion Rating: {val}")
+                continue
+            if compact_k in ("精魂", "精魄"):
+                out_lines.append(f"Spirit: {val}")
+                continue
+            if compact_k == "需求":
+                val = (
+                    val.replace("等級", "Level")
+                    .replace("等级", "Level")
+                    .replace("力量", "Str")
+                    .replace("敏捷", "Dex")
+                    .replace("智慧", "Int")
+                    .replace("智力", "Int")
+                )
+                out_lines.append(f"Requires: {val}" if val else "Requirements:")
+                continue
+            if compact_k in ("等級", "等级"):
+                out_lines.append(f"Level: {val}")
+                continue
+            if compact_k == "力量":
+                out_lines.append(f"Str: {val}")
+                continue
+            if compact_k == "敏捷":
+                out_lines.append(f"Dex: {val}")
+                continue
+            if compact_k in ("智慧", "智力"):
+                out_lines.append(f"Int: {val}")
+                continue
+
         if s in ("已汙染", "已污染", "已腐化"):
             out_lines.append("Corrupted")
             continue
         if s in ("未鑑定", "未鉴定"):
             out_lines.append("Unidentified")
+            continue
+
+        # Translate exact known Chinese currency/unique names in the nameplate section
+        if in_header and s in ZH_TO_EN_ALIASES:
+            out_lines.append(ZH_TO_EN_ALIASES[s])
             continue
 
         # Normalize mod tags such as (破裂) / (褻瀆) / (符文) / (基底)

@@ -646,7 +646,7 @@ class TradeAdvisor:
 
     def triage_clipboard_dump(
         self,
-        items_raw_list: Sequence[str],
+        items_raw_list: Sequence[str] | str,
         *,
         league: str = DEFAULT_LEAGUE,
         min_sell_exalted: float = 5.0,
@@ -666,6 +666,10 @@ class TradeAdvisor:
           (Chance Shards), or 3-to-1 Reforging Bench rather than burning Gold listing fees.
         """
         from poe2brain.crafting.planner import _bone_family_for_base
+        from poe2brain.mcp_server import split_multi_item_clipboard_dump
+
+        if isinstance(items_raw_list, str):
+            items_raw_list = split_multi_item_clipboard_dump(items_raw_list)
 
         div_rate = self._divine_rate_exalted(league) or 460.0
         pool_eng = self._get_pool_engine()

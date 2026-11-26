@@ -326,9 +326,13 @@ def normalize_item_text_for_pob2(raw_text: str) -> str:
     return stripped
 
 
-_ITEM_CLASS_HEADER_RE = re.compile(r"^Item Class:\s*\S", re.I)
+_ITEM_CLASS_HEADER_RE = re.compile(
+    r"^(?:Item Class|物\s*品\s*(?:類\s*別|类\s*别|種\s*類|种\s*类))\s*[:：]\s*\S", re.I
+)
 _RARITY_HEADER_RE = re.compile(
-    r"^Rarity:\s*(?:Normal|Magic|Rare|Unique|Currency|Gem|Divination Card)\b", re.I
+    r"^(?:Rarity\s*:\s*(?:Normal|Magic|Rare|Unique|Currency|Gem|Divination Card)\b"
+    r"|稀\s*有\s*度\s*[:：]\s*\S)",
+    re.I,
 )
 _DUMP_DIVIDER_ONLY_RE = re.compile(r"^[=#*~_]{3,}$")
 
@@ -1012,6 +1016,11 @@ def execute_waystone_regex(
     avoid_keywords: Sequence[str] | str | None = None,
     want_keywords: Sequence[str] | str | None = None,
     tablet_want_keywords: Sequence[str] | str | None = None,
+    tablet_preset: str | None = None,
+    vendor_preset: str | None = None,
+    vendor_want_keywords: Sequence[str] | str | None = None,
+    relic_preset: str | None = None,
+    relic_want_keywords: Sequence[str] | str | None = None,
     min_waystone_drop_pct: int = 120,
     min_pack_size_pct: int | None = 20,
     item_text: str | None = None,
@@ -1033,6 +1042,8 @@ def execute_waystone_regex(
     avoid_list = _coerce_csv_or_list(avoid_keywords) or None
     want_list = _coerce_csv_or_list(want_keywords) or None
     tablet_list = _coerce_csv_or_list(tablet_want_keywords) or None
+    vendor_list = _coerce_csv_or_list(vendor_want_keywords) or None
+    relic_list = _coerce_csv_or_list(relic_want_keywords) or None
     clean_item = item_text.strip() if (item_text and item_text.strip()) else None
 
     plan = build_waystone_regex_plan(
@@ -1041,6 +1052,11 @@ def execute_waystone_regex(
         avoid_keywords=avoid_list,
         want_keywords=want_list,
         tablet_want_keywords=tablet_list,
+        tablet_preset=tablet_preset,
+        vendor_preset=vendor_preset,
+        vendor_want_keywords=vendor_list,
+        relic_preset=relic_preset,
+        relic_want_keywords=relic_list,
         min_waystone_drop_pct=min_waystone_drop_pct,
         min_pack_size_pct=min_pack_size_pct,
         waystone_item=clean_item,
@@ -1078,13 +1094,18 @@ def poe2_waystone_regex(
     avoid_keywords: list[str] | str | None = None,
     want_keywords: list[str] | str | None = None,
     tablet_want_keywords: list[str] | str | None = None,
+    tablet_preset: str | None = None,
+    vendor_preset: str | None = None,
+    vendor_want_keywords: list[str] | str | None = None,
+    relic_preset: str | None = None,
+    relic_want_keywords: list[str] | str | None = None,
     min_waystone_drop_pct: int = 120,
     min_pack_size_pct: int | None = 20,
     item_text: str | None = None,
     include_dangerous: bool = False,
     max_chars: int = 50,
 ) -> dict[str, Any]:
-    """Compile <=50-char PoE2 Waystone brick/safe/juicing & Precursor Tablet stash regexes."""
+    """Compile <=50-char Waystone, Precursor Tablet, Vendor Shopping & Sekhema Relic regexes."""
     return _safe_tool_call(
         lambda: execute_waystone_regex(
             slot=slot,
@@ -1092,6 +1113,11 @@ def poe2_waystone_regex(
             avoid_keywords=avoid_keywords,
             want_keywords=want_keywords,
             tablet_want_keywords=tablet_want_keywords,
+            tablet_preset=tablet_preset,
+            vendor_preset=vendor_preset,
+            vendor_want_keywords=vendor_want_keywords,
+            relic_preset=relic_preset,
+            relic_want_keywords=relic_want_keywords,
             min_waystone_drop_pct=min_waystone_drop_pct,
             min_pack_size_pct=min_pack_size_pct,
             item_text=item_text,
@@ -1211,18 +1237,34 @@ def poe2_pob_stat_weights(
 
 @mcp.tool()
 def poe2_pob_suggest_nodes(
-    mode: Literal["perPoint", "total", "anoint"] = "perPoint",
+    mode: Literal["perPoint", "total", "anoint", "megalomaniac"] = "perPoint",
     slot: str = "main",
     top: int = 10,
     stat: str = "FullDPS",
     max_path_dist: int = 8,
     include_keystones: bool = False,
+    max_exalted: float | None = None,
+    securable_only: bool = False,
+    league: str = DEFAULT_LEAGUE,
 ) -> dict[str, Any]:
-    """Rank reachable passive notables (perPoint/total) or full-tree Amulet anoints (anoint)."""
+    """Rank reachable notables, Amulet anoints (anoint), or Megalomaniac combos + Trade2 search."""
 
     def _run() -> dict[str, Any]:
         svc = get_build_service()
         ensure_pob_slot_loaded(svc, slot=slot, require_existing=True)
+        if mode == "megalomaniac":
+            rep = svc.find_megalomaniac_upgrades(
+                slot=slot,
+                stat=stat,
+                top_notables=max(top, 15),
+                top_combos=top,
+                max_exalted=max_exalted,
+                securable_only=securable_only,
+                league=league,
+            )
+            out = rep.model_dump(mode="json")
+            out["mode"] = "megalomaniac"
+            return out
         nodes = svc.rank_passive_upgrades(
             slot=slot,
             mode=mode,
@@ -1238,6 +1280,31 @@ def poe2_pob_suggest_nodes(
             "count": len(nodes),
             "upgrades": [n.model_dump(mode="json") for n in nodes],
         }
+
+    return _safe_tool_call(_run)
+
+
+@mcp.tool()
+def poe2_pob_optimize_runes(
+    slot: str = "main",
+    objective: Literal["balanced", "dps", "ehp", "spirit", "rarity"] = "balanced",
+    max_budget_exalted: float | None = None,
+    league: str = DEFAULT_LEAGUE,
+    offline_prices: bool = False,
+) -> dict[str, Any]:
+    """Solve Resist Tetris & optimal Armour/Weapon Rune and Soul Core sockets in PoB2."""
+
+    def _run() -> dict[str, Any]:
+        svc = get_build_service()
+        ensure_pob_slot_loaded(svc, slot=slot, require_existing=True)
+        rep = svc.optimize_rune_sockets(
+            slot=slot,
+            objective=objective,
+            max_budget_exalted=max_budget_exalted,
+            league=league,
+            offline_prices=offline_prices,
+        )
+        return rep.model_dump(mode="json")
 
     return _safe_tool_call(_run)
 
@@ -1740,6 +1807,25 @@ def poe2_market_scan(
     return _safe_tool_call(_run)
 
 
+@mcp.tool()
+def poe2_boss_ev(
+    league: str = DEFAULT_LEAGUE,
+    encounter: str | None = None,
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    """Compare live PoE2 0.5.5 Pinnacle Boss & Trial entry costs vs chase unique drops."""
+
+    def _run() -> dict[str, Any]:
+        econ = get_economy_service()
+        return econ.compare_boss_ev(
+            league=league,
+            encounter=encounter,
+            force_refresh=force_refresh,
+        )
+
+    return _safe_tool_call(_run)
+
+
 _BUDGET_AMOUNT_RE = re.compile(
     r"^\s*([0-9]+(?:\.[0-9]+)?)\s*(d|div|divine|divines|ex|exalt|exalted|exalteds)?\s*$",
     re.IGNORECASE,
@@ -1792,9 +1878,7 @@ def execute_scan_arbitrage(
 ) -> dict[str, Any]:
     scanner = get_arbitrage_scanner()
     parsed_budget = parse_unified_budget(budget)
-    is_ladder = (
-        starting_exalted is not None or gold_budget is not None or target_divine is not None
-    )
+    is_ladder = starting_exalted is not None or gold_budget is not None or target_divine is not None
 
     if is_ladder:
         eff_start_ex = starting_exalted
@@ -1809,9 +1893,7 @@ def execute_scan_arbitrage(
         if eff_start_ex is None:
             eff_start_ex = 250.0
         eff_gold = (
-            gold_budget
-            if gold_budget is not None
-            else (gold if gold is not None else 80_000)
+            gold_budget if gold_budget is not None else (gold if gold is not None else 80_000)
         )
         eff_target_div = target_divine if target_divine is not None else 50.0
         ladder = scanner.build_compounding_ladder(

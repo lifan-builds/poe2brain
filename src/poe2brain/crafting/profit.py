@@ -1258,7 +1258,105 @@ def default_curated_recipes() -> list[CraftRecipeSpec]:
                 "1/3 hits (30-50)% chance for Spell Skills to fire 2 additional Projectiles."
             ),
         ),
-        # 13. HIGH BUDGET TRAP CHECK: Chancing Heavy Belt -> Headhunter (Proves Negative EV)
+        # 13. LOW/MID BUDGET: 0.5.5 Expedition Tablet Rolling (Verisium / Logbooks / Rarity)
+        CraftRecipeSpec(
+            recipe_id="expedition_tablet_verisium_roll",
+            name="Expedition Tablet Rolling (Logbooks / Verisium / Rare Monsters)",
+            budget_tier="low",
+            archetype="0.5.5 Map Device Tablet Flipping & Juicing",
+            base_type="Expedition Tablet",
+            ilvl=82,
+            live_trade_priority=6,
+            base_market=MarketQuerySpec(
+                category="map.tablet",
+                base_type="Expedition Tablet",
+                rarity="normal",
+                fallback_price_ex=8.0,
+                fallback_liquidity_count=200,
+            ),
+            exit_market=MarketQuerySpec(
+                category="map.tablet",
+                base_type="Expedition Tablet",
+                rarity="magic",
+                stat_filters=[
+                    ("increased quantity of expedition logbooks", 15.0, None),
+                ],
+                fallback_price_ex=180.0,
+                fallback_liquidity_count=60,
+            ),
+            stages=[
+                CraftStageSpec(
+                    kind="magic_opener",
+                    description=(
+                        "Transmute + Augment clean Expedition Tablet for Logbooks / Rarity"
+                    ),
+                    lever="Orb of Transmutation",
+                    secondary_lever="Orb of Augmentation",
+                    target_mod="Logbooks",
+                ),
+            ],
+            notes=(
+                "High-velocity 0.5.5 hideout flip popularized on YouTube/Reddit: mass-roll "
+                "Expedition Tablets for Logbook Quantity, Verisium, or Rare Monsters and slot "
+                "directly into the Map Device (or sell bulk)."
+            ),
+        ),
+        # 14. MID BUDGET: 5-Mod Energy Shield / Caster Sapphire Jewel Craft
+        CraftRecipeSpec(
+            recipe_id="sapphire_es_caster_jewel",
+            name="ES + Spell / Crit Sapphire Jewel (Mid-Budget Jewel Flip)",
+            budget_tier="mid",
+            archetype="CI / Stormweaver / Blood Mage Jewel Slot",
+            base_type="Sapphire",
+            ilvl=82,
+            live_trade_priority=7,
+            base_market=MarketQuerySpec(
+                category="jewel",
+                base_type="Sapphire",
+                rarity="normal",
+                fallback_price_ex=10.0,
+                fallback_liquidity_count=150,
+            ),
+            exit_market=MarketQuerySpec(
+                category="jewel",
+                base_type="Sapphire",
+                rarity="rare",
+                stat_filters=[
+                    ("increased maximum energy shield", 12.0, None),
+                    ("increased spell damage", 10.0, None),
+                ],
+                fallback_price_ex=450.0,
+                fallback_liquidity_count=45,
+            ),
+            stages=[
+                CraftStageSpec(
+                    kind="magic_opener",
+                    description=(
+                        "Transmute + Augment Sapphire targeting +% Maximum Energy Shield "
+                        "(Jewel mods require ilvl 1, so use base Transmute/Augment)"
+                    ),
+                    lever="Orb of Transmutation",
+                    secondary_lever="Orb of Augmentation",
+                    target_mod="Energy Shield",
+                ),
+                CraftStageSpec(
+                    kind="regal_step",
+                    description="Regal Orb to Rare Sapphire",
+                    lever="Regal Orb",
+                ),
+                CraftStageSpec(
+                    kind="targeted_slam",
+                    description="Exalted Orb slam for Spell Damage / Crit / Mana Recovery",
+                    lever="Exalted Orb",
+                    target_mod="Spell Damage",
+                ),
+            ],
+            notes=(
+                "Sapphire jewels have a compact ES + Spell/Crit pool; hitting T1 ES + Spell Damage "
+                "or Crit sells rapidly to CI Stormweaver, Chronomancer, and Blood Mage builds."
+            ),
+        ),
+        # 15. HIGH BUDGET TRAP CHECK: Chancing Heavy Belt -> Headhunter (Proves Negative EV)
         CraftRecipeSpec(
             recipe_id="headhunter_chance_negative_ev_check",
             name="Chance Check: Heavy Belt + Orb of Chance -> Headhunter (Negative-EV Benchmark)",

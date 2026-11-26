@@ -1789,7 +1789,7 @@ class KnowledgeService:
         )
 
     def inspect_base_item(self, name_or_slug: str, ilvl: int = 82) -> BaseItemInspection:
-        q = name_or_slug.strip()
+        q = translate_zh_query(name_or_slug.strip())
         if not q:
             raise LookupError("Base item name or poe2db_slug cannot be empty.")
 
@@ -1996,20 +1996,29 @@ class KnowledgeService:
         if row is None:
             fts_expr = sanitize_fts5_query(q_norm, operator="AND")
             if fts_expr:
-                hit = self.db.query_one(
+                q_tokens = [
+                    t.lower()
+                    for t in extract_query_tokens(q_norm)
+                    if t.lower() not in FTS_STOPWORDS and len(t) >= 3
+                ]
+                hits = self.db.query_all(
                     """
-                    SELECT doc_id FROM knowledge_fts
+                    SELECT doc_id, title FROM knowledge_fts
                     WHERE knowledge_fts MATCH ? AND doc_type = 'unique'
                     ORDER BY bm25(knowledge_fts, 0.0, 0.0, 10.0, 2.0, 1.0) ASC
-                    LIMIT 1
+                    LIMIT 5
                     """,
-                    (fts_expr,),
+                    (f"title : ({fts_expr})",),
                 )
-                if hit is not None:
-                    row = self.db.query_one(
-                        "SELECT * FROM uniques WHERE id = ?",
-                        (hit["doc_id"],),
-                    )
+                for hit in hits:
+                    title_low = str(hit["title"]).lower()
+                    if not q_tokens or all(tok in title_low for tok in q_tokens):
+                        row = self.db.query_one(
+                            "SELECT * FROM uniques WHERE id = ?",
+                            (hit["doc_id"],),
+                        )
+                        if row is not None:
+                            break
 
         if row is None:
             raise LookupError(f"No PoE2 {POE2_PATCH} unique item found matching '{name}'.")
@@ -2091,10 +2100,14 @@ class KnowledgeService:
         name_rows = self.db.query_all(
             """
             SELECT id, name, augment_type FROM augments
-            WHERE lower(name) = lower(?)
-               OR lower(name) LIKE lower(?)
-               OR lower(augment_type) = lower(?)
-            ORDER BY is_live_poe2 DESC, length(name) ASC
+            WHERE is_live_poe2 = 1
+              AND name NOT LIKE '[DNT%'
+              AND (
+                lower(name) = lower(?)
+                OR lower(name) LIKE lower(?)
+                OR lower(augment_type) = lower(?)
+              )
+            ORDER BY length(name) ASC
             LIMIT ?
             """,
             (q_norm, f"%{q_norm}%", q_norm.rstrip("s"), max(limit * 2, 16)),
@@ -2125,12 +2138,18 @@ class KnowledgeService:
                 if pts > scored_ids.get(aid, 0.0):
                     scored_ids[aid] = pts
 
-        ordered_ids = sorted(scored_ids.keys(), key=lambda k: -scored_ids[k])[:limit]
+        ordered_ids = sorted(scored_ids.keys(), key=lambda k: -scored_ids[k])
         results: list[AugmentSummary] = []
         for aid in ordered_ids:
-            row = self.db.query_one("SELECT * FROM augments WHERE id = ?", (aid,))
+            row = self.db.query_one(
+                "SELECT * FROM augments WHERE id = ? AND is_live_poe2 = 1 "
+                "AND name NOT LIKE '[DNT%'",
+                (aid,),
+            )
             if row is not None:
                 results.append(self._row_to_augment(row))
+                if len(results) >= limit:
+                    break
         return results
 
     def _row_to_runeforge(self, row: sqlite3.Row) -> RuneforgeRecipeSummary:
@@ -2161,7 +2180,7 @@ class KnowledgeService:
         )
 
     def search_runeforge(self, query: str, limit: int = 12) -> list[RuneforgeRecipeSummary]:
-        q = query.strip()
+        q = translate_zh_query(query.strip())
         if not q or limit <= 0:
             return []
 

@@ -532,7 +532,9 @@ class EconomyService:
         category: str | None = None,
         force_refresh: bool = False,
     ) -> CurrencyQuote | None:
-        query_clean = query_or_id.strip()
+        from poe2brain.knowledge.zh_aliases import translate_zh_query
+
+        query_clean = translate_zh_query(query_or_id.strip())
         if not query_clean:
             return None
 
@@ -577,7 +579,9 @@ class EconomyService:
         force_refresh: bool = False,
         min_score: float = 0.0,
     ) -> list[CurrencyQuote]:
-        query_slug = normalize_market_slug(query)
+        from poe2brain.knowledge.zh_aliases import translate_zh_query
+
+        query_slug = normalize_market_slug(translate_zh_query(query))
         if not query_slug:
             return []
 
@@ -1175,6 +1179,217 @@ class EconomyService:
             reverse=True,
         )
         return opportunities[: max(1, limit)]
+
+    def compare_boss_ev(
+        self,
+        league: str = DEFAULT_LEAGUE,
+        *,
+        encounter: str | None = None,
+        force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        """Compare live PoE2 0.5.5 Pinnacle Boss & Trial entry costs against chase unique drops."""
+        rates = self.get_reference_rates(league, force_refresh=force_refresh)
+        div_ex = max(1.0, float(rates.divine_exalted or 450.0))
+
+        boss_specs: list[dict[str, Any]] = [
+            {
+                "id": "arbiter_of_ash",
+                "name": "Arbiter of Ash (The Burning Monolith)",
+                "tickets": [
+                    ("Faded Crisis Fragment", 1),
+                    ("Ancient Crisis Fragment", 1),
+                    ("Weathered Crisis Fragment", 1),
+                ],
+                "drops": [
+                    ("Morior Invictus", False),
+                    ("Sacred Flame", False),
+                    ("Prism of Belief", True),
+                ],
+                "variance": "high",
+                "tip": (
+                    "3 Crisis Fragments required per attempt. Prism of Belief floor price reflects "
+                    "off-meta skills; +3 meta skill rolls sell for 15–80+ Divine."
+                ),
+            },
+            {
+                "id": "xesht_breach",
+                "name": "Xesht, We That Are One (Twisted Domain)",
+                "tickets": [("Breachstone", 1)],
+                "drops": [
+                    ("Controlled Metamorphosis", True),
+                    ("Hand of Wisdom and Action", False),
+                ],
+                "variance": "medium",
+                "tip": (
+                    "Consistent mid-variance boss farm; Controlled Metamorphosis ring radius "
+                    "(Massive / Very Large) drives top-end jackpots."
+                ),
+            },
+            {
+                "id": "simulacrum_kosis",
+                "name": "Simulacrum (Kosis & Omniphobia)",
+                "tickets": [("Simulacrum", 1)],
+                "drops": [
+                    ("Megalomaniac", True),
+                    ("Melting Maelstrom", False),
+                ],
+                "variance": "high",
+                "tip": (
+                    "Megalomaniac floor price is for bricked notables; 2–3 BIS notable combos "
+                    "and Distilled Liquid Emotions supply the real EV."
+                ),
+            },
+            {
+                "id": "king_in_the_mists",
+                "name": "The King in the Mists (Crux of Nothingness / Ritual)",
+                "tickets": [("An Audience with the King", 1)],
+                "drops": [
+                    ("From Nothing", True),
+                    ("Ingenuity", False),
+                ],
+                "variance": "low",
+                "tip": (
+                    "Low entry cost in Forbidden Rites; From Nothing keystones near top clusters "
+                    "and high-roll Ingenuity belts drive upside. In Boss Ritual maps, kill the map "
+                    "boss first so it respawns in subsequent Ritual altars."
+                ),
+            },
+            {
+                "id": "olroth_expedition",
+                "name": "Olroth, Origin of the Fall (Expedition Logbook)",
+                "tickets": [("Expedition Logbook", 1)],
+                "drops": [
+                    ("Olroth's Resolve", False),
+                    ("Svalinn", False),
+                ],
+                "variance": "medium",
+                "tip": (
+                    "Low ticket cost with huge fixed-roll chase drops (Olroth's Resolve, Svalinn) "
+                    "plus Verisium & Exotic Coinage side-loot."
+                ),
+            },
+            {
+                "id": "sekhema_zarokh",
+                "name": "Zarokh, the Temporal (Trial of the Sekhemas)",
+                "tickets": [("Djinn Barya", 1)],
+                "drops": [
+                    ("Against the Darkness", True),
+                    ("Temporalis", False),
+                ],
+                "variance": "low",
+                "tip": (
+                    "Stack 75%+ Honour Resistance + 120%+ Monster Relic Quantity so Zarokh drops "
+                    "double Unique Relics (hunting The Last Flame -> Temporalis) alongside "
+                    "guaranteed Against the Darkness & ascendancy carry income."
+                ),
+            },
+            {
+                "id": "trial_of_chaos",
+                "name": "The Trialmaster (Trial of Chaos)",
+                "tickets": [("Inscribed Ultimatum", 1)],
+                "drops": [
+                    ("The Adorned", False),
+                    ("Mahuxotl's Machination", False),
+                ],
+                "variance": "medium",
+                "tip": (
+                    "Guaranteed Soul Core & Fate drops per 10-room run buffer variance while "
+                    "assembling Deadly/Victorious/Cowardly Fates for The Adorned."
+                ),
+            },
+        ]
+
+        enc_filter = (encounter or "").strip().lower()
+        encounters_out: list[dict[str, Any]] = []
+        for spec in boss_specs:
+            if (
+                enc_filter
+                and enc_filter not in spec["id"]
+                and enc_filter not in spec["name"].lower()
+            ):
+                continue
+
+            ticket_rows: list[dict[str, Any]] = []
+            entry_ex = 0.0
+            entry_priced = True
+            for t_name, qty in spec["tickets"]:
+                q = self.get_price(t_name, league=league, force_refresh=False)
+                unit_ex = round(q.exalted, 2) if (q and q.exalted > 0) else None
+                if unit_ex is None:
+                    entry_priced = False
+                else:
+                    entry_ex += unit_ex * qty
+                ticket_rows.append(
+                    {
+                        "name": t_name,
+                        "quantity": qty,
+                        "unit_exalted": unit_ex,
+                        "unit_divine": round(unit_ex / div_ex, 3) if unit_ex is not None else None,
+                    }
+                )
+
+            drop_rows: list[dict[str, Any]] = []
+            best_fixed_ex = 0.0
+            best_fixed_name: str | None = None
+            for d_name, is_var in spec["drops"]:
+                q = self.get_price(d_name, league=league, force_refresh=False)
+                d_ex = round(q.exalted, 2) if (q and q.exalted > 0) else None
+                if d_ex is not None and d_name != "Temporalis" and d_ex > best_fixed_ex:
+                    best_fixed_ex = d_ex
+                    best_fixed_name = d_name
+                drop_rows.append(
+                    {
+                        "name": d_name,
+                        "exalted": d_ex,
+                        "divine": round(d_ex / div_ex, 3) if d_ex is not None else None,
+                        "is_variable_roll": is_var,
+                        "pricing_note": (
+                            "Floor price only — top meta rolls sell for multiples higher"
+                            if is_var
+                            else (
+                                "Requires The Last Flame Unique Relic no-hit run"
+                                if d_name == "Temporalis"
+                                else "Standard liquid unique quote"
+                            )
+                        ),
+                    }
+                )
+
+            breakeven_runs = (
+                round(best_fixed_ex / entry_ex, 1)
+                if (entry_priced and entry_ex > 0 and best_fixed_ex > 0)
+                else None
+            )
+            encounters_out.append(
+                {
+                    "id": spec["id"],
+                    "name": spec["name"],
+                    "entry_tickets": ticket_rows,
+                    "entry_cost_exalted": round(entry_ex, 2) if entry_priced else None,
+                    "entry_cost_divine": round(entry_ex / div_ex, 3) if entry_priced else None,
+                    "chase_drops": drop_rows,
+                    "top_standard_drop": best_fixed_name,
+                    "top_standard_drop_divine": (
+                        round(best_fixed_ex / div_ex, 2) if best_fixed_ex > 0 else None
+                    ),
+                    "jackpot_to_ticket_ratio": breakeven_runs,
+                    "variance": spec["variance"],
+                    "strategy_tip": spec["tip"],
+                }
+            )
+
+        encounters_out.sort(
+            key=lambda e: (
+                e["jackpot_to_ticket_ratio"] is not None,
+                e["jackpot_to_ticket_ratio"] or 0.0,
+            ),
+            reverse=True,
+        )
+        return {
+            "league": league,
+            "divine_exalted": round(div_ex, 2),
+            "encounters": encounters_out,
+        }
 
     def _resolve_scout_currency_item_id(self, item_id_or_query: int | str, *, league: str) -> int:
         if isinstance(item_id_or_query, int):

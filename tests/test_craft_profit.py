@@ -38,7 +38,7 @@ def test_curated_recipes_accounting_tiers_and_deterministic_variance(
         n_sims=1200,
         seed=77,
     )
-    assert report.total_recipes_evaluated == 13
+    assert report.total_recipes_evaluated == 15
     assert set(report.top_by_tier.keys()) == {"low", "mid", "high"}
     assert len(report.top_by_tier["low"]) >= 2
     assert len(report.top_by_tier["mid"]) >= 2

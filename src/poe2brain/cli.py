@@ -595,6 +595,43 @@ def wiki_regex_cmd(
             "--tablet-want", help="Desired Precursor Tablet mod keywords (CSV/repeatable)."
         ),
     ] = None,
+    tablet_preset: Annotated[
+        str | None,
+        typer.Option(
+            "--tablet-preset",
+            help=(
+                "Tablet preset (expedition_verisium, ritual_nameless, breach_juice, "
+                "delirium_splinters, boss_irradiated)."
+            ),
+        ),
+    ] = None,
+    vendor_preset: Annotated[
+        str | None,
+        typer.Option(
+            "--vendor-preset",
+            help=(
+                "Vendor regex preset (campaign_caster, campaign_attack, campaign_minion, "
+                "boots_ms, salvage_sockets)."
+            ),
+        ),
+    ] = None,
+    vendor_want: Annotated[
+        list[str] | None,
+        typer.Option("--vendor-want", help="Custom NPC vendor search tokens (CSV/repeatable)."),
+    ] = None,
+    relic_preset: Annotated[
+        str | None,
+        typer.Option(
+            "--relic-preset",
+            help=(
+                "Sekhema Relic preset (sekhema_starter, sekhema_quant_farm, sekhema_speed_carry)."
+            ),
+        ),
+    ] = None,
+    relic_want: Annotated[
+        list[str] | None,
+        typer.Option("--relic-want", help="Custom Sekhema Relic mod keywords (CSV/repeatable)."),
+    ] = None,
     min_waystone_drop: Annotated[
         int, typer.Option("--min-waystone-drop", help="Minimum +Waystone Drop Chance %.")
     ] = 120,
@@ -615,7 +652,7 @@ def wiki_regex_cmd(
     ] = 50,
     json_output: JsonOpt = False,
 ) -> None:
-    """Compile <=50-char PoE2 Waystone brick/safe/juicing & Precursor Tablet stash regexes."""
+    """Compile <=50-char PoE2 Waystone, Tablet, Vendor Shopping & Sekhema Relic regexes."""
 
     def _compute() -> dict[str, Any]:
         raw_ws = _read_item_input(file_path=file_path, text=item_text, allow_empty=True)
@@ -625,6 +662,11 @@ def wiki_regex_cmd(
             avoid_keywords=avoid,
             want_keywords=want,
             tablet_want_keywords=tablet_want,
+            tablet_preset=tablet_preset,
+            vendor_preset=vendor_preset,
+            vendor_want_keywords=vendor_want,
+            relic_preset=relic_preset,
+            relic_want_keywords=relic_want,
             min_waystone_drop_pct=min_waystone_drop,
             min_pack_size_pct=min_pack_size,
             item_text=raw_ws,
@@ -640,8 +682,12 @@ def wiki_regex_cmd(
             ("safe_runnable_regex", "Safe Runnable"),
             ("juicing_regex", "Waystone Juicing"),
             ("tablet_regex", "Tablet Rolling"),
+            ("vendor_regex", "Vendor Shopping"),
+            ("relic_regex", "Sekhema Relics"),
         ):
-            rx = data[key]
+            rx = data.get(key)
+            if not rx:
+                continue
             console.print(
                 f"  [bold]{label:<17}[/bold]: [green]{rx['regex']}[/green] "
                 f"({rx['char_length']}/{rx['max_chars']} chars)"
@@ -999,11 +1045,12 @@ def pob_weights_cmd(
 @pob_app.command("nodes")
 def pob_nodes_cmd(
     mode: Annotated[
-        str, typer.Option("--mode", help="Ranking mode: perPoint, total, or anoint.")
+        str,
+        typer.Option("--mode", help="Ranking mode: perPoint, total, anoint, or megalomaniac."),
     ] = "perPoint",
     slot: Annotated[str, typer.Option("--slot", help="Named PoB2 build slot.")] = "main",
     top: Annotated[
-        int, typer.Option("--top", help="Number of top notables/anoints to return.")
+        int, typer.Option("--top", help="Number of top notables/anoints/combos to return.")
     ] = 10,
     stat: Annotated[
         str, typer.Option("--stat", help="Target PoB2 stat (FullDPS or TotalEHP).")
@@ -1014,15 +1061,39 @@ def pob_nodes_cmd(
     include_keystones: Annotated[
         bool, typer.Option("--include-keystones", help="Include Keystones in ranking.")
     ] = False,
+    max_exalted: Annotated[
+        float | None,
+        typer.Option("--max-exalted", help="Optional max price in Exalted (megalomaniac mode)."),
+    ] = None,
+    securable_only: Annotated[
+        bool,
+        typer.Option("--securable-only", help="Instant Buyout only (megalomaniac mode)."),
+    ] = False,
+    league: Annotated[str, typer.Option("--league", help="PoE2 league name.")] = DEFAULT_LEAGUE,
     json_output: JsonOpt = False,
 ) -> None:
-    """Rank reachable passive notables (perPoint/total) or full-tree Amulet anoints (anoint)."""
+    """Rank reachable notables, Amulet anoints (anoint), or Megalomaniac combos + Trade2 URL."""
 
     def _compute() -> dict[str, Any]:
-        if mode not in ("perPoint", "total", "anoint"):
-            raise ValueError(f"Invalid --mode {mode!r}; expected perPoint, total, or anoint.")
+        if mode not in ("perPoint", "total", "anoint", "megalomaniac"):
+            raise ValueError(
+                f"Invalid --mode {mode!r}; expected perPoint, total, anoint, or megalomaniac."
+            )
         svc = get_build_service()
         ensure_pob_slot_loaded(svc, slot=slot, require_existing=True)
+        if mode == "megalomaniac":
+            rep = svc.find_megalomaniac_upgrades(
+                slot=slot,
+                stat=stat,
+                top_notables=max(top, 15),
+                top_combos=top,
+                max_exalted=max_exalted,
+                securable_only=securable_only,
+                league=league,
+            )
+            out = rep.model_dump(mode="json")
+            out["mode"] = "megalomaniac"
+            return out
         nodes = svc.rank_passive_upgrades(
             slot=slot,
             mode=mode,  # type: ignore[arg-type]
@@ -1040,6 +1111,21 @@ def pob_nodes_cmd(
         }
 
     def _render(data: dict[str, Any]) -> None:
+        if data.get("mode") == "megalomaniac":
+            table = Table(title=f"Top Megalomaniac 2-Notable Combos ({data['stat']})")
+            table.add_column("Notables", style="bold cyan")
+            table.add_column("Est Δ", justify="right")
+            table.add_column("Est %", justify="right")
+            for c in data.get("top_2_notable_combos", [])[:10]:
+                table.add_row(
+                    " + ".join(c["notables"]),
+                    f"{c['combined_delta']:+,.1f}",
+                    f"{c['combined_pct']:+.2f}%",
+                )
+            console.print(table)
+            if data.get("trade_url"):
+                console.print(f"[green]Trade2 URL[/green]: {data['trade_url']}")
+            return
         table = Table(title=f"Top Passive Upgrades ({data['mode']} | {data['stat']})")
         table.add_column("Notable", style="bold cyan")
         table.add_column("Dist", justify="right")
@@ -1051,6 +1137,73 @@ def pob_nodes_cmd(
                 n["name"], dist, f"{n['full_path_delta']:+,.1f}", f"{n['per_point_pct']:+.2f}%"
             )
         console.print(table)
+
+    _run_cli(json_output, _compute, _render)
+
+
+@pob_app.command("runes")
+def pob_runes_cmd(
+    slot: Annotated[str, typer.Option("--slot", help="Named PoB2 build slot.")] = "main",
+    objective: Annotated[
+        str,
+        typer.Option("--objective", help="Socket priority: balanced, dps, ehp, spirit, rarity."),
+    ] = "balanced",
+    max_budget: Annotated[
+        float | None,
+        typer.Option("--max-budget", help="Optional max Exalted budget for Runes/Soul Cores."),
+    ] = None,
+    league: Annotated[str, typer.Option("--league", help="PoE2 league name.")] = DEFAULT_LEAGUE,
+    offline_prices: Annotated[
+        bool, typer.Option("--offline-prices", help="Skip live economy quotes.")
+    ] = False,
+    json_output: JsonOpt = False,
+) -> None:
+    """Solve Resist Tetris & optimal Armour/Weapon Rune and Soul Core sockets in PoB2."""
+
+    def _compute() -> dict[str, Any]:
+        if objective not in ("balanced", "dps", "ehp", "spirit", "rarity"):
+            raise ValueError(
+                f"Invalid --objective {objective!r}; "
+                "expected balanced, dps, ehp, spirit, or rarity."
+            )
+        svc = get_build_service()
+        ensure_pob_slot_loaded(svc, slot=slot, require_existing=True)
+        return svc.optimize_rune_sockets(
+            slot=slot,
+            objective=objective,  # type: ignore[arg-type]
+            max_budget_exalted=max_budget,
+            league=league,
+            offline_prices=offline_prices,
+        ).model_dump(mode="json")
+
+    def _render(data: dict[str, Any]) -> None:
+        table = Table(
+            title=f"Rune & Soul Core Socket Plan ({data['slot_name']} | {data['objective']})"
+        )
+        table.add_column("Slot", style="cyan")
+        table.add_column("Augment", style="bold")
+        table.add_column("Qty", justify="right")
+        table.add_column("Purpose")
+        table.add_column("Est Ex", justify="right")
+        for r in data.get("recommendations", []):
+            cost_s = (
+                f"{r['total_cost_exalted']:,.1f}"
+                if r.get("total_cost_exalted") is not None
+                else "-"
+            )
+            table.add_row(
+                r["equipment_slot"],
+                r["augment_name"],
+                str(r["sockets_allocated"]),
+                r["purpose"],
+                cost_s,
+            )
+        console.print(table)
+        console.print(
+            f"PoB2 Verified Δ: DPS {data['pob_verified_dps_delta']:+,.1f} | "
+            f"EHP {data['pob_verified_ehp_delta']:+,.1f} | "
+            f"Est Cost: {data['estimated_total_cost_exalted']:,.1f} ex"
+        )
 
     _run_cli(json_output, _compute, _render)
 
@@ -1514,9 +1667,11 @@ def auth_login_cmd(
 
     _run_cli(
         json_output,
-        lambda: GggOAuthClient()
-        .login(timeout=timeout, open_browser=not no_browser)
-        .model_dump(mode="json"),
+        lambda: (
+            GggOAuthClient()
+            .login(timeout=timeout, open_browser=not no_browser)
+            .model_dump(mode="json")
+        ),
         lambda d: console.print(
             f"[bold green]GGG OAuth authenticated[/bold green] "
             f"(client={d['client_id']}, scopes={', '.join(d.get('scopes', []))})"
@@ -1870,6 +2025,71 @@ def econ_scan_cmd(
             vol_s = f"{opp['volume_divine']:.1f}" if opp.get("volume_divine") is not None else "-"
             chg_s = f"{opp['change_7d_pct']:+.1f}%" if opp.get("change_7d_pct") is not None else "-"
             table.add_row(opp["kind"], opp["name"], f"{opp['exalted']:,.1f}", vol_s, chg_s)
+        console.print(table)
+
+    _run_cli(json_output, _compute, _render)
+
+
+@econ_app.command("bosses")
+def econ_bosses_cmd(
+    encounter: Annotated[
+        str | None,
+        typer.Option(
+            "--encounter",
+            help="Optional filter (arbiter, xesht, simulacrum, king, olroth, sekhema, chaos).",
+        ),
+    ] = None,
+    league: Annotated[str, typer.Option("--league", help="PoE2 league name.")] = DEFAULT_LEAGUE,
+    force_refresh: Annotated[
+        bool, typer.Option("--refresh", help="Force live economy refresh.")
+    ] = False,
+    json_output: JsonOpt = False,
+) -> None:
+    """Compare live PoE2 0.5.5 Pinnacle Boss & Trial entry costs against chase unique drops."""
+
+    def _compute() -> dict[str, Any]:
+        econ = get_economy_service()
+        return econ.compare_boss_ev(
+            league=league,
+            encounter=encounter,
+            force_refresh=force_refresh,
+        )
+
+    def _render(data: dict[str, Any]) -> None:
+        div_ex = data["divine_exalted"]
+        table = Table(
+            title=f"Pinnacle Boss & Trial Ticket EV — {data['league']} (1 Div = {div_ex:.0f} ex)"
+        )
+        table.add_column("Encounter", style="bold cyan")
+        table.add_column("Entry (Div)", justify="right")
+        table.add_column("Top Drop", style="green")
+        table.add_column("Drop (Div)", justify="right")
+        table.add_column("Ratio", justify="right")
+        table.add_column("Variance")
+        for enc in data.get("encounters", []):
+            ent_s = (
+                f"{enc['entry_cost_divine']:.2f}"
+                if enc.get("entry_cost_divine") is not None
+                else "N/A"
+            )
+            drp_s = (
+                f"{enc['top_standard_drop_divine']:.2f}"
+                if enc.get("top_standard_drop_divine") is not None
+                else "-"
+            )
+            rat_s = (
+                f"{enc['jackpot_to_ticket_ratio']:.1f}x"
+                if enc.get("jackpot_to_ticket_ratio") is not None
+                else "-"
+            )
+            table.add_row(
+                enc["name"],
+                ent_s,
+                enc.get("top_standard_drop") or "-",
+                drp_s,
+                rat_s,
+                enc["variance"],
+            )
         console.print(table)
 
     _run_cli(json_output, _compute, _render)

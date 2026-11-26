@@ -205,7 +205,7 @@ uv run poe2brain-mcp
 
 ## 1:1 MCP Tool & CLI Command Reference
 
-Every single MCP tool maps 1:1 to a `poe2 ... --json` CLI command over the exact same typed domain services (**42 tools total**):
+Every single MCP tool maps 1:1 to a `poe2 ... --json` CLI command over the exact same typed domain services (**44 tools total**):
 
 <details open>
 <summary><strong>Expand / Collapse Full 42-Tool Reference Table</strong></summary>
@@ -229,7 +229,8 @@ Every single MCP tool maps 1:1 to a `poe2 ... --json` CLI command over the exact
 | **PoB2** | `poe2_pob_hc_audit` | `poe2 pob hc-audit [<code_url_or_file>] [--slot main] [--top-nodes 5] --json` | Audit HC Pinnacle Boss Max Hits, Bleed/Poison ES bypass, Chaos `2x` ES vulnerability, Charms, and top defensive EHP respecs. |
 | **PoB2** | `poe2_pob_eval_item` | `poe2 pob eval-item --equip-slot "<slot>" --item-text "<text>" [--slot main] --json` | Non-destructive `GetMiscCalculator()` item swap returning `ItemUpgradeDiff` (`full_dps_delta`, `total_ehp_delta`, `spirit_unreserved_delta`). |
 | **PoB2** | `poe2_pob_stat_weights` | `poe2 pob weights --equip-slot "<slot>" [--objective balanced\|dps\|ehp] [--slot main] --json` | Compute marginal PoB2 stat weights (`SlotStatWeights`) and unauthenticated-safe `trade2` filter JSON. |
-| **PoB2** | `poe2_pob_suggest_nodes` | `poe2 pob nodes [--mode perPoint\|total\|anoint] [--slot main] [--top 10] --json` | Rank reachable passive notables (`perPoint`/`total`) or full-tree Distilled Emotion Amulet anoints (`anoint`). |
+| **PoB2** | `poe2_pob_suggest_nodes` | `poe2 pob nodes [--mode perPoint\|total\|anoint\|megalomaniac] [--slot main] [--top 10] --json` | Rank reachable passive notables (`perPoint`/`total`), Amulet anoints (`anoint`), or `Megalomaniac` 2–3 notable combos + clickable `trade2` URL (`megalomaniac`). |
+| **PoB2** | `poe2_pob_optimize_runes` | `poe2 pob runes [--slot main] [--objective balanced\|dps\|ehp\|spirit\|rarity] [--max-budget <ex>] --json` | Solve Armour/Weapon Rune & Soul Core Resist Tetris & socket optimization using SQLite `0.5.5` slot effects and transactional PoB2 DPS/EHP/Resist verification. |
 | **PoB2** | `poe2_pob_calc_breakdown` | `poe2 pob calc-breakdown "<query>" [--slot main] [--skill-group <idx>] [--max-mods 40] --json` | Inspect exact PoB2 calculation formulas & `BASE`/`INC`/`MORE`/`FLAG` modifier provenance grouped by source (`CalcBreakdownReport`). |
 | **PoB2** | `poe2_pob_supports` | `poe2 pob supports [--slot main] [--group <idx>] [--replace-slot <n>] [--replace-gem "<name>"] [--max-tier <1..3>] [--include-lineage/--no-lineage] [--top 15] --json` | Rank all compatible PoE2 `0.5.5` Support Gems (Tier `I`–`III` + Lineage) by DPS/EHP delta, Mana sustain, Spirit overflow, and Lineage `max_copies=1` conflicts. |
 | **PoB2** | `poe2_pob_radius_jewels` | `poe2 pob radius-jewels ["<jewel>"] [--slot main] [--stat FullDPS] [--max-dist 10] [--top 10] --json` | Rank Passive Tree Jewel Sockets × radius rings (`Controlled Metamorphosis` / `Against the Darkness`) by per-point gain & travel points saved. |
@@ -238,6 +239,7 @@ Every single MCP tool maps 1:1 to a `poe2 ... --json` CLI command over the exact
 | **PoB2** | `poe2_pob_import_character` | `poe2 pob import-character [<character_name>] [--realm poe2] [--slot main] [--list] --json` | List or import private/Day-1 PoE2 characters via official GGG OAuth 2.1 PKCE (`poe2 auth login`, zero `POESESSID`). |
 | **Economy** | `poe2_currency_price` | `poe2 econ price "<query>" [--league "Forbidden Rites"] --json` | Live `CurrencyQuote` normalized to `{exalted, chaos, divine}` (`Exalted = 1.0`) with 7d trend and volume. |
 | **Economy** | `poe2_market_scan` | `poe2 econ scan [--category <cat>] [--min-volume-divine 5.0] [--league "Forbidden Rites"] --json` | High-liquidity exchange movers, numeraire-normalized cross-source spreads, and chanceable Uniques. |
+| **Economy** | `poe2_boss_ev` | `poe2 econ bosses [--encounter <id>] [--league "Forbidden Rites"] --json` | Live Pinnacle Boss & Trial entry costs vs chase unique drops (Arbiter, Xesht, Simulacrum, King in the Mists, Olroth, Sekhema, Trialmaster) with jackpot ratios & variable-roll notes. |
 | **Economy** | `poe2_scan_arbitrage` | `poe2 econ arbitrage [--budget 500\|5d] [--gold <g>] [--ladder-target-divine <d>] [--min-volume-divine 2.0] [--live-books/--no-live-books] --json` | Executable `0.5.5` conversions, Alva spreads, order books, `profit_ex_per_10k_gold`, trap warnings, or multi-rung capital & Gold compounding ladder. |
 | **Trade** | `poe2_parse_item` | `poe2 trade parse [--file <path> \| --text "<ctrl_c>"] --json` | Parse PoE2 `Ctrl+C` / `Ctrl+Alt+C` text into `ParsedItem` and PoB2 `Item.lua` text. |
 | **Trade** | `poe2_price_check` | `poe2 trade check [--file <path> \| --text "<ctrl_c>"] [--securable-only] [--league "Forbidden Rites"] --json` | 3-tier price check splitting **Instant Buyout (`securable`, Gold `fee`)** vs **In-Person (`whisper`)** with fixer warnings. |

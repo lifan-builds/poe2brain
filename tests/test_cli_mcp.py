@@ -77,7 +77,7 @@ def test_skill_readme_mcp_and_cli_1_to_1_parity() -> None:
 
     skill_tools = set(re.findall(r"\|\s*`?(poe2_[a-z0-9_]+)`?\s*\|", skill_text))
     readme_tools = set(re.findall(r"\|\s*`?(poe2_[a-z0-9_]+)`?\s*\|", readme_text))
-    assert len(skill_tools) == 42
+    assert len(skill_tools) == 44
     assert skill_tools == readme_tools
 
     registered_tools = {t.name for t in mcp_mod.mcp._tool_manager.list_tools()}
@@ -1244,7 +1244,7 @@ async def test_mcp_server_stdio_roundtrip(isolated_cli_env: dict[str, str], tmp_
             await session.initialize()
             tools_resp = await session.list_tools()
             names = {t.name for t in tools_resp.tools}
-            assert len(names) == 42
+            assert len(names) == 44
             assert {
                 "poe2_status",
                 "poe2_inspect_ascendancy",

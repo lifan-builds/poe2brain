@@ -191,6 +191,21 @@ class HcRipRisk(Poe2Model):
     mitigation: str = ""
 
 
+class WeaponSwapAudit(Poe2Model):
+    has_weapon_swap: bool = False
+    active_set: int = 1
+    alternate_set: int = 2
+    weapon_set1_passives: int = 0
+    weapon_set2_passives: int = 0
+    alternate_full_dps: float = 0.0
+    alternate_total_ehp: float = 0.0
+    ehp_drop_pct: float = 0.0
+    alternate_spirit_unreserved: int = 0
+    alternate_attributes_met: bool = True
+    alternate_resists: dict[str, float] = Field(default_factory=dict)
+    swap_warnings: list[str] = Field(default_factory=list)
+
+
 class DewateredAudit(Poe2Model):
     slot_name: str = "main"
     raw_stats: BuildStats
@@ -201,7 +216,58 @@ class DewateredAudit(Poe2Model):
     warnings: list[str] = Field(default_factory=list)
     bottlenecks: list[str] = Field(default_factory=list)
     hc_rip_risks: list[HcRipRisk] = Field(default_factory=list)
+    attribute_margins: dict[str, int] = Field(default_factory=dict)
+    weapon_swap_audit: WeaponSwapAudit | None = None
     pinnacle_ready: bool = True
+
+
+class MegalomaniacCombo(Poe2Model):
+    notables: list[str]
+    combined_delta: float
+    combined_pct: float
+    note: str = ""
+
+
+class MegalomaniacSearchReport(Poe2Model):
+    slot_name: str = "main"
+    stat: str = "FullDPS"
+    league: str = ""
+    top_notables: list[dict[str, Any]] = Field(default_factory=list)
+    top_2_notable_combos: list[MegalomaniacCombo] = Field(default_factory=list)
+    top_3_notable_combos: list[MegalomaniacCombo] = Field(default_factory=list)
+    matched_trade2_stat_count: int = 0
+    trade2_query: dict[str, Any] = Field(default_factory=dict)
+    trade_url: str | None = None
+    usage_note: str = ""
+
+
+class RuneSocketRecommendation(Poe2Model):
+    equipment_slot: str
+    item_name: str
+    socket_category: Literal["armour", "weapon", "shield", "focus", "other"]
+    sockets_allocated: int
+    augment_name: str
+    effect_summary: str
+    purpose: str
+    unit_cost_exalted: float | None = None
+    total_cost_exalted: float | None = None
+    can_overwrite_in_socket: bool = True
+
+
+class RuneOptimizationReport(Poe2Model):
+    slot_name: str = "main"
+    objective: str = "balanced"
+    league: str = ""
+    total_available_sockets: int = 0
+    armour_sockets: int = 0
+    weapon_sockets: int = 0
+    resist_deficits_before: dict[str, float] = Field(default_factory=dict)
+    recommendations: list[RuneSocketRecommendation] = Field(default_factory=list)
+    estimated_total_cost_exalted: float = 0.0
+    pob_verified_dps_delta: float = 0.0
+    pob_verified_ehp_delta: float = 0.0
+    pob_verified_resists_after: dict[str, float] = Field(default_factory=dict)
+    notes: list[str] = Field(default_factory=list)
 
 
 class GoldRespecEstimate(Poe2Model):

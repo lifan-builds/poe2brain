@@ -110,6 +110,8 @@ class WaystoneRegexPlan(Poe2Model):
     safe_runnable_regex: CompiledStashRegex
     juicing_regex: CompiledStashRegex
     tablet_regex: CompiledStashRegex
+    vendor_regex: CompiledStashRegex | None = None
+    relic_regex: CompiledStashRegex | None = None
     revive_schedule: list[WaystoneReviveRule] = Field(default_factory=list)
     atlas_warnings: list[str] = Field(default_factory=list)
     item_check: WaystoneItemCheckResult | None = None
@@ -117,13 +119,95 @@ class WaystoneRegexPlan(Poe2Model):
 
 @dataclass(frozen=True, slots=True)
 class _ModFamilyRecord:
-    domain_kind: Literal["waystone", "tablet"]
+    domain_kind: Literal["waystone", "tablet", "relic"]
     mod_type: str
     source_pool: str
     affix_side: str
     affix_names: tuple[str, ...]
     clean_templates: tuple[str, ...]
     rendered_samples: tuple[str, ...]
+
+
+TABLET_REGEX_PRESETS: dict[str, tuple[str, ...]] = {
+    "expedition_verisium": (
+        "Logbooks",
+        "Verisium",
+        "Increased Rarity",
+        "Rare Monsters",
+        "Runic Monsters",
+    ),
+    "ritual_nameless": (
+        "Omen",
+        "Tribute",
+        "Reroll",
+        "Defer",
+        "Nameless",
+    ),
+    "breach_juice": (
+        "Wombgifts",
+        "Hiveblood",
+        "Pack Size",
+        "Rare Breach",
+        "Vruun",
+    ),
+    "delirium_splinters": (
+        "Simulacrum Splinters",
+        "Delirium",
+        "Pack Size",
+        "Rare Monsters",
+    ),
+    "boss_irradiated": (
+        "Quantity of Waystones",
+        "Pack Size in Map",
+        "Rarity of Items",
+        "Rare Monsters",
+        "Boss",
+    ),
+}
+
+RELIC_REGEX_PRESETS: dict[str, tuple[str, ...]] = {
+    "sekhema_starter": (
+        "Honour Resistance",
+        "Maximum Honour",
+        "Merchant has",
+    ),
+    "sekhema_quant_farm": (
+        "Quantity of Relics",
+        "Movement Speed",
+        "Merchant has",
+    ),
+    "sekhema_speed_carry": (
+        "Movement Speed",
+        "Bosses take",
+        "Merchant has",
+        "Honour Resistance",
+    ),
+}
+
+VENDOR_REGEX_PRESETS: dict[str, tuple[tuple[str, str], ...]] = {
+    "campaign_caster": (
+        ("ms_boots", r"[23][05]%.*mov"),
+        ("skill_lvl", r"level of all.*spell"),
+        ("spirit", r"spirit"),
+        ("cast_spd", r"cast sp"),
+    ),
+    "campaign_attack": (
+        ("ms_boots", r"[23][05]%.*mov"),
+        ("phys_dmg", r"adds.*phys"),
+        ("atk_spd", r"attack sp"),
+        ("skill_lvl", r"level of all (proj|mel)"),
+    ),
+    "campaign_minion": (
+        ("ms_boots", r"[23][05]%.*mov"),
+        ("minion_lvl", r"level of all min"),
+        ("spirit", r"spirit"),
+    ),
+    "boots_ms": (("ms_20plus", r"[23][05]% increased mov"),),
+    "salvage_sockets": (
+        ("superior", r"superior"),
+        ("sockets", r"sockets:"),
+    ),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -572,6 +656,7 @@ class WaystoneRegexEngine:
         self.db = db if isinstance(db, GamedataDB) else GamedataDB(db or get_gamedata_db_path())
         self._waystone_families: dict[str, _ModFamilyRecord] = {}
         self._tablet_families: dict[str, _ModFamilyRecord] = {}
+        self._relic_families: dict[str, _ModFamilyRecord] = {}
         self._load_families()
 
     def close(self) -> None:
@@ -590,7 +675,11 @@ class WaystoneRegexEngine:
             SELECT DISTINCT
                 base_group_slug, source_pool, affix_side, affix_name, mod_type, stat_text
             FROM mod_tiers
-            WHERE (base_group_slug LIKE 'Waystones%' OR base_group_slug LIKE '%Tablet%')
+            WHERE (
+                base_group_slug LIKE 'Waystones%'
+                OR base_group_slug LIKE '%Tablet%'
+                OR base_group_slug LIKE '%_Relic'
+            )
               AND stat_text != ''
             ORDER BY base_group_slug, source_pool, mod_type
             """
@@ -598,8 +687,10 @@ class WaystoneRegexEngine:
         grouped: dict[tuple[str, str], dict[str, Any]] = {}
         for r in rows:
             slug = str(r["base_group_slug"])
-            dkind: Literal["waystone", "tablet"] = (
-                "waystone" if slug.startswith("Waystones") else "tablet"
+            dkind: Literal["waystone", "tablet", "relic"] = (
+                "waystone"
+                if slug.startswith("Waystones")
+                else ("relic" if slug.endswith("_Relic") else "tablet")
             )
             mtype = str(r["mod_type"])
             clean_txt = _sanitize_stat_text(str(r["stat_text"]))
@@ -637,6 +728,8 @@ class WaystoneRegexEngine:
             )
             if dkind == "waystone":
                 self._waystone_families[mtype] = rec
+            elif dkind == "relic":
+                self._relic_families[mtype] = rec
             else:
                 self._tablet_families[mtype] = rec
 
@@ -995,11 +1088,16 @@ class WaystoneRegexEngine:
         self,
         *,
         want_keywords: Sequence[str] | None = None,
+        tablet_preset: str | None = None,
         max_chars: int = POE2_STASH_REGEX_MAX_CHARS,
     ) -> CompiledStashRegex:
         """Compile a `<= 50` char PoE2 Stash Regex for rolling Precursor Tablets against SQLite."""
+        preset_kws = (
+            TABLET_REGEX_PRESETS.get(tablet_preset.strip().lower(), ()) if tablet_preset else ()
+        )
         effective_kws = list(
             want_keywords
+            or preset_kws
             or (
                 "Quantity of Waystones",
                 "Pack Size in Map",
@@ -1052,6 +1150,154 @@ class WaystoneRegexEngine:
             ),
         )
 
+    def compile_sekhema_relic_regex(
+        self,
+        *,
+        want_keywords: Sequence[str] | None = None,
+        relic_preset: str | None = None,
+        max_chars: int = POE2_STASH_REGEX_MAX_CHARS,
+    ) -> CompiledStashRegex:
+        """Compile a `<= 50` char Stash/Trade Regex for Trial of the Sekhemas Relics from SQLite."""
+        preset_key = (relic_preset or "sekhema_quant_farm").strip().lower()
+        effective_kws = list(
+            want_keywords
+            or RELIC_REGEX_PRESETS.get(preset_key)
+            or RELIC_REGEX_PRESETS["sekhema_quant_farm"]
+        )
+        hit_mtypes: set[str] = set()
+        target_groups: list[tuple[str, list[str]]] = []
+
+        for kw in effective_kws:
+            kw_low = kw.strip().lower()
+            if not kw_low:
+                continue
+            group_samples: list[str] = []
+            for mt, rec in self._relic_families.items():
+                hay = " ".join([mt, *rec.affix_names, *rec.clean_templates]).lower()
+                if kw_low in hay:
+                    hit_mtypes.add(mt)
+                    for smp in rec.rendered_samples:
+                        if smp not in group_samples:
+                            group_samples.append(smp)
+            if group_samples:
+                target_groups.append((kw, group_samples))
+            else:
+                target_groups.append((kw, [kw]))
+
+        negative_texts = [
+            "Item Class: Relics",
+            "Rarity: Magic",
+            "Tapestry Relic",
+            "Urn Relic",
+            "Seal Relic",
+            *[
+                smp
+                for mt, rec in self._relic_families.items()
+                if mt not in hit_mtypes
+                for smp in rec.rendered_samples
+            ],
+        ]
+        return compile_minimal_stash_regex(
+            "sekhema_relic",
+            target_groups,
+            negative_texts,
+            negate=False,
+            max_chars=max_chars,
+            usage_note=(
+                f"Paste into Stash/Vendor Search for Trial of the Sekhemas Relics ({preset_key}). "
+                "Target 75%+ Honour Resistance for safe clears or 120%+ Monster Relic Quantity "
+                "for double Unique Relic drops from Zarokh."
+            ),
+        )
+
+    def compile_vendor_shopping_regex(
+        self,
+        *,
+        vendor_preset: str | None = None,
+        want_keywords: Sequence[str] | None = None,
+        build: BuildStats | DewateredAudit | Mapping[str, Any] | None = None,
+        max_chars: int = POE2_STASH_REGEX_MAX_CHARS,
+    ) -> CompiledStashRegex:
+        """Compile a <=50-char NPC Vendor Shopping Regex (MS boots, +skills, salvage)."""
+        clauses: list[str] = []
+        chosen_preset = (vendor_preset or "").strip().lower()
+
+        if want_keywords:
+            for kw in want_keywords:
+                tok = re.sub(r'["\n\r]', "", kw.strip()).lower()
+                if tok and tok not in clauses:
+                    clauses.append(tok)
+        else:
+            if not chosen_preset and build is not None:
+                stats_obj = (
+                    build.sustainable_pinnacle_stats if isinstance(build, DewateredAudit) else build
+                )
+                skills_txt = " ".join(
+                    getattr(stats_obj, "active_skills", None)
+                    or (stats_obj.get("active_skills") if isinstance(stats_obj, Mapping) else [])
+                    or []
+                ).lower()
+                if any(k in skills_txt for k in ("skeleton", "minion", "spectre", "zombie")):
+                    chosen_preset = "campaign_minion"
+                elif any(
+                    k in skills_txt
+                    for k in ("arrow", "shot", "strike", "slam", "mace", "bow", "spear", "lance")
+                ):
+                    chosen_preset = "campaign_attack"
+                else:
+                    chosen_preset = "campaign_caster"
+            preset_pairs = VENDOR_REGEX_PRESETS.get(
+                chosen_preset or "campaign_caster", VENDOR_REGEX_PRESETS["campaign_caster"]
+            )
+            clauses = [pat for _, pat in preset_pairs]
+
+            # Auto-append uncapped elemental resistance token when hydrating from PoB2 build
+            if build is not None:
+                stats_obj = (
+                    build.sustainable_pinnacle_stats if isinstance(build, DewateredAudit) else build
+                )
+                for res_attr, res_tok in (
+                    ("fire_resist", "fire res"),
+                    ("cold_resist", "cold res"),
+                    ("lightning_resist", "light.*res"),
+                ):
+                    val = (
+                        getattr(stats_obj, res_attr, 75.0)
+                        if not isinstance(stats_obj, Mapping)
+                        else float(stats_obj.get(res_attr, 75.0) or 75.0)
+                    )
+                    if val < 75.0 and res_tok not in clauses:
+                        clauses.append(res_tok)
+                        break
+
+        hard_inner = max(6, max_chars - 2)
+        fitted: list[str] = []
+        for c in clauses:
+            cand = "|".join([*fitted, c])
+            if len(cand) <= hard_inner:
+                fitted.append(c)
+        if not fitted and clauses:
+            fitted = [clauses[0][:hard_inner]]
+
+        inner = "|".join(fitted)
+        regex_str = f'"{inner}"'
+        return CompiledStashRegex(
+            purpose="vendor_shopping",
+            regex=regex_str,
+            char_length=len(regex_str),
+            max_chars=max_chars,
+            within_client_limit=len(regex_str) <= max_chars,
+            tokens=fitted,
+            matched_target_count=len(fitted),
+            total_targets=len(clauses),
+            false_negatives=max(0, len(clauses) - len(fitted)),
+            false_positives=0,
+            usage_note=(
+                f"Paste into town NPC Vendor Search every level-up ({chosen_preset or 'custom'}) "
+                "to spot MS boots, +skill weapons, Spirit gear, or salvage sockets instantly."
+            ),
+        )
+
     def build_plan(
         self,
         build: BuildStats | DewateredAudit | Mapping[str, Any] | None = None,
@@ -1060,6 +1306,11 @@ class WaystoneRegexEngine:
         avoid_keywords: Sequence[str] | None = None,
         want_keywords: Sequence[str] | None = None,
         tablet_want_keywords: Sequence[str] | None = None,
+        tablet_preset: str | None = None,
+        vendor_preset: str | None = None,
+        vendor_want_keywords: Sequence[str] | None = None,
+        relic_preset: str | None = None,
+        relic_want_keywords: Sequence[str] | None = None,
         min_waystone_drop_pct: int = 120,
         min_pack_size_pct: int | None = 20,
         waystone_item: ParsedItem | str | None = None,
@@ -1137,7 +1388,27 @@ class WaystoneRegexEngine:
         )
         tablet_rx = self.compile_tablet_rolling_regex(
             want_keywords=tablet_want_keywords,
+            tablet_preset=tablet_preset,
             max_chars=max_chars,
+        )
+        vendor_rx = (
+            self.compile_vendor_shopping_regex(
+                vendor_preset=vendor_preset,
+                want_keywords=vendor_want_keywords,
+                build=build,
+                max_chars=max_chars,
+            )
+            if (vendor_preset or vendor_want_keywords)
+            else None
+        )
+        relic_rx = (
+            self.compile_sekhema_relic_regex(
+                want_keywords=relic_want_keywords,
+                relic_preset=relic_preset,
+                max_chars=max_chars,
+            )
+            if (relic_preset or relic_want_keywords)
+            else None
         )
         revive_sched = build_revive_schedule()
 
@@ -1175,6 +1446,8 @@ class WaystoneRegexEngine:
             safe_runnable_regex=safe_rx,
             juicing_regex=juicing_rx,
             tablet_regex=tablet_rx,
+            vendor_regex=vendor_rx,
+            relic_regex=relic_rx,
             revive_schedule=revive_sched,
             atlas_warnings=atlas_warnings,
             item_check=item_check,
@@ -1247,6 +1520,11 @@ def build_waystone_regex_plan(
     avoid_keywords: Sequence[str] | None = None,
     want_keywords: Sequence[str] | None = None,
     tablet_want_keywords: Sequence[str] | None = None,
+    tablet_preset: str | None = None,
+    vendor_preset: str | None = None,
+    vendor_want_keywords: Sequence[str] | None = None,
+    relic_preset: str | None = None,
+    relic_want_keywords: Sequence[str] | None = None,
     min_waystone_drop_pct: int = 120,
     min_pack_size_pct: int | None = 20,
     waystone_item: ParsedItem | str | None = None,
@@ -1254,7 +1532,7 @@ def build_waystone_regex_plan(
     max_chars: int = POE2_STASH_REGEX_MAX_CHARS,
     db: GamedataDB | Path | str | None = None,
 ) -> WaystoneRegexPlan:
-    """Top-level convenience entrypoint for PoB2-aware Waystone & Tablet Stash Regex compilation."""
+    """Top-level convenience entrypoint for PoB2-aware Waystone, Tablet, Vendor & Relic Regexes."""
     with WaystoneRegexEngine(db=db) as eng:
         return eng.build_plan(
             build=build,
@@ -1262,6 +1540,11 @@ def build_waystone_regex_plan(
             avoid_keywords=avoid_keywords,
             want_keywords=want_keywords,
             tablet_want_keywords=tablet_want_keywords,
+            tablet_preset=tablet_preset,
+            vendor_preset=vendor_preset,
+            vendor_want_keywords=vendor_want_keywords,
+            relic_preset=relic_preset,
+            relic_want_keywords=relic_want_keywords,
             min_waystone_drop_pct=min_waystone_drop_pct,
             min_pack_size_pct=min_pack_size_pct,
             waystone_item=waystone_item,

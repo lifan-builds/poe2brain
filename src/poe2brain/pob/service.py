@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import atexit
+import json
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -31,14 +32,19 @@ from poe2brain.models.builds import (
     HcRipAuditReport,
     HcRipRisk,
     ItemUpgradeDiff,
+    MegalomaniacCombo,
+    MegalomaniacSearchReport,
     RadiusJewelCandidate,
     RadiusJewelRankingReport,
+    RuneOptimizationReport,
+    RuneSocketRecommendation,
     SkillGroupDiff,
     SlotStatWeights,
     StatWeightEntry,
     StrippedPobFlag,
     SupportGemCandidate,
     SupportGemRankingReport,
+    WeaponSwapAudit,
     WhatIfPieceAttribution,
     WhatIfReport,
     WhatIfScenarioPoint,
@@ -1917,12 +1923,13 @@ class BuildService:
                 )
         if sust_stats.spirit_unreserved < 0:
             warnings.append(
-                f"Spirit is over-reserved ({sust_stats.spirit_reserved}/{sust_stats.spirit_total})."
+                f"Spirit is over-reserved ({sust_stats.spirit_unreserved} unreserved / "
+                f"{sust_stats.spirit_total} total)."
             )
         if not apply_dewater and not res.get("restoredVerified", True):
             warnings.append("Warning: Post-audit snapshot verification drifted.")
 
-        summary_items = (
+        summary_items = res.get("items") or (
             self.bridge.call("get_build_summary", {"slot": slot, "includeItemRaw": False}).get(
                 "items"
             )
@@ -1943,7 +1950,92 @@ class BuildService:
             ):
                 warnings.append(f"[{risk.severity.upper()}] {risk.title}")
 
+        # Attribute headroom margins (catches razor-thin gear-swap bricks)
+        attr_margins: dict[str, int] = {}
+        for attr_label, have_v, req_v in (
+            ("str", sust_stats.str_total, sust_stats.req_str),
+            ("dex", sust_stats.dex_total, sust_stats.req_dex),
+            ("int", sust_stats.int_total, sust_stats.req_int),
+        ):
+            if req_v > 0:
+                attr_margins[attr_label] = int(have_v - req_v)
+
+        # Weapon Swap Safety Audit (Reddit/Bilibili #1 hidden death trap)
+        weapon_swap_audit: WeaponSwapAudit | None = None
+        ws_raw = res.get("weaponSwap")
+        if isinstance(ws_raw, Mapping) and ws_raw.get("hasWeaponSwap"):
+            alt_stats = _to_build_stats(
+                ws_raw.get("alternateStats") or {},
+                character=char_info,
+                skills=skills_info,
+                tree=tree_info,
+            )
+            swap_warns: list[str] = []
+            if not alt_stats.attributes_met:
+                swap_warns.append(
+                    f"Weapon Set {ws_raw.get('alternateSet', 2)} FAILS attribute requirements "
+                    f"(Str {alt_stats.str_total}/{alt_stats.req_str}, "
+                    f"Dex {alt_stats.dex_total}/{alt_stats.req_dex}, "
+                    f"Int {alt_stats.int_total}/{alt_stats.req_int}) — "
+                    "swapping silently disables gear/gems!"
+                )
+            if alt_stats.spirit_unreserved < 0:
+                swap_warns.append(
+                    f"Weapon Set {ws_raw.get('alternateSet', 2)} over-reserves Spirit "
+                    f"({alt_stats.spirit_unreserved} unreserved / {alt_stats.spirit_total} total) "
+                    "— swapping turns off buffs/minions!"
+                )
+            for rn, base_r, alt_r in (
+                ("Fire", sust_stats.fire_resist, alt_stats.fire_resist),
+                ("Cold", sust_stats.cold_resist, alt_stats.cold_resist),
+                ("Lightning", sust_stats.lightning_resist, alt_stats.lightning_resist),
+            ):
+                if sust_stats.level >= 65 and base_r >= 75.0 and alt_r < 75.0:
+                    swap_warns.append(
+                        f"Swapping to Weapon Set {ws_raw.get('alternateSet', 2)} "
+                        f"uncaps {rn} Resistance ({base_r:.0f}% -> {alt_r:.0f}%)."
+                    )
+            ehp_drop = (
+                ((sust_stats.total_ehp - alt_stats.total_ehp) / sust_stats.total_ehp * 100.0)
+                if sust_stats.total_ehp > 0
+                else 0.0
+            )
+            if ehp_drop >= 20.0:
+                swap_warns.append(
+                    f"Swapping to Weapon Set {ws_raw.get('alternateSet', 2)} cuts TotalEHP by "
+                    f"-{ehp_drop:.1f}% ({sust_stats.total_ehp:,.0f} -> {alt_stats.total_ehp:,.0f})."
+                )
+            weapon_swap_audit = WeaponSwapAudit(
+                has_weapon_swap=True,
+                active_set=int(ws_raw.get("activeSet") or 1),
+                alternate_set=int(ws_raw.get("alternateSet") or 2),
+                weapon_set1_passives=int(ws_raw.get("weaponSet1Passives") or 0),
+                weapon_set2_passives=int(ws_raw.get("weaponSet2Passives") or 0),
+                alternate_full_dps=round(alt_stats.effective_dps, 2),
+                alternate_total_ehp=round(alt_stats.total_ehp, 2),
+                ehp_drop_pct=round(ehp_drop, 2),
+                alternate_spirit_unreserved=alt_stats.spirit_unreserved,
+                alternate_attributes_met=alt_stats.attributes_met,
+                alternate_resists={
+                    "fire": round(alt_stats.fire_resist, 1),
+                    "cold": round(alt_stats.cold_resist, 1),
+                    "lightning": round(alt_stats.lightning_resist, 1),
+                    "chaos": round(alt_stats.chaos_resist, 1),
+                },
+                swap_warnings=swap_warns,
+            )
+            for sw in swap_warns:
+                warnings.append(f"[WEAPON SWAP] {sw}")
+
         bottlenecks: list[str] = []
+        if weapon_swap_audit and weapon_swap_audit.swap_warnings:
+            bottlenecks.append(f"Weapon Swap Trap: {weapon_swap_audit.swap_warnings[0]}")
+        tight_attrs = [f"{k.upper()} +{v}" for k, v in attr_margins.items() if 0 <= v <= 10]
+        if tight_attrs:
+            bottlenecks.append(
+                f"Razor-thin attribute margin ({', '.join(tight_attrs)}) — "
+                "swapping jewelry/weapons may silently disable gems or armour."
+            )
         uncapped_ele = [
             f"{rn} {val:.0f}%"
             for rn, val in (
@@ -1969,8 +2061,9 @@ class BuildService:
             )
         if sust_stats.spirit_unreserved < 0:
             bottlenecks.append(
-                f"Over-reserved Spirit ({sust_stats.spirit_reserved}/{sust_stats.spirit_total}) — "
-                "add Spirit on Body Armour/Amulet/Sceptre or disable a secondary aura."
+                f"Over-reserved Spirit ({sust_stats.spirit_unreserved} unreserved / "
+                f"{sust_stats.spirit_total} total) — add Spirit on Body Armour/Amulet/Sceptre "
+                "or disable a secondary aura."
             )
         if not sust_stats.mana_sustainable and sust_stats.mana_per_second_cost > 0:
             bottlenecks.append(
@@ -2003,8 +2096,10 @@ class BuildService:
             ehp_inflation_pct=round(total_ehp_inf, 2),
             stripped_flags=stripped,
             warnings=warnings,
-            bottlenecks=bottlenecks[:5],
+            bottlenecks=bottlenecks[:6],
             hc_rip_risks=hc_risks,
+            attribute_margins=attr_margins,
+            weapon_swap_audit=weapon_swap_audit,
             pinnacle_ready=pinnacle_ready,
         )
 
@@ -3182,12 +3277,7 @@ class BuildService:
                     remove_mod_substrings=remove_mod_substrings,
                     set_quality=set_quality,
                 )
-                if (
-                    borrow_from_slot
-                    or equip_items
-                    or alloc_node_ids
-                    or dealloc_node_ids
-                ):
+                if borrow_from_slot or equip_items or alloc_node_ids or dealloc_node_ids:
                     _record_piece_probe(
                         f"edit:{edit_slot}",
                         "edited_item",
@@ -3371,6 +3461,495 @@ class BuildService:
                 self.bridge.call("delete_slot", {"slot": work_slot})
             except Exception:
                 pass
+
+    # ------------------------------------------------------------------
+    # 12. Megalomaniac Build-Specific Notable & Trade2 Finder
+    # ------------------------------------------------------------------
+
+    def find_megalomaniac_upgrades(
+        self,
+        slot: str = "main",
+        *,
+        stat: str = "FullDPS",
+        top_notables: int = 20,
+        top_combos: int = 10,
+        min_match_count: int = 2,
+        max_exalted: float | None = None,
+        securable_only: bool = False,
+        league: str = DEFAULT_LEAGUE,
+    ) -> MegalomaniacSearchReport:
+        """Rank unallocated Notables for a Megalomaniac Jewel and compile a Trade2 search."""
+        from poe2brain.trade.ee2_bundle import get_default_bundle
+
+        ranked = self.rank_passive_upgrades(
+            slot=slot,
+            mode="anoint",
+            stat=stat,
+            top_n=max(top_notables, 25),
+        )
+        positive = [n for n in ranked if n.single_node_delta > 0]
+        picked = positive[:top_notables]
+
+        # Resolve `Allocates <Notable>` official Trade2 explicit stat IDs
+        bundle = get_default_bundle()
+        explicit_map = bundle.official_stats_by_domain.get("explicit") or {}
+        enchant_map = bundle.official_stats_by_domain.get("enchant") or {}
+
+        stat_filters: list[dict[str, Any]] = []
+        top_notable_rows: list[dict[str, Any]] = []
+        for n in picked:
+            alloc_text = f"Allocates {n.name}"
+            stat_ids = explicit_map.get(alloc_text) or enchant_map.get(alloc_text) or []
+            stat_id = stat_ids[0] if stat_ids else None
+            if stat_id:
+                stat_filters.append({"id": stat_id})
+            top_notable_rows.append(
+                {
+                    "name": n.name,
+                    "node_id": n.node_id,
+                    "single_node_delta": round(n.single_node_delta, 2),
+                    "single_node_pct": round(n.single_node_pct, 2),
+                    "stats": n.stats[:3],
+                    "trade2_stat_id": stat_id,
+                }
+            )
+
+        pool_for_combos = picked[: min(12, len(picked))]
+        combos_2: list[MegalomaniacCombo] = []
+        for i in range(len(pool_for_combos)):
+            for j in range(i + 1, len(pool_for_combos)):
+                a, b = pool_for_combos[i], pool_for_combos[j]
+                combos_2.append(
+                    MegalomaniacCombo(
+                        notables=[a.name, b.name],
+                        combined_delta=round(a.single_node_delta + b.single_node_delta, 2),
+                        combined_pct=round(a.single_node_pct + b.single_node_pct, 2),
+                        note="Additive estimate of two independent unallocated Notables.",
+                    )
+                )
+        combos_2.sort(key=lambda c: c.combined_delta, reverse=True)
+
+        combos_3: list[MegalomaniacCombo] = []
+        top_triple = picked[: min(8, len(picked))]
+        for i in range(len(top_triple)):
+            for j in range(i + 1, len(top_triple)):
+                for k in range(j + 1, len(top_triple)):
+                    a, b, c = top_triple[i], top_triple[j], top_triple[k]
+                    combos_3.append(
+                        MegalomaniacCombo(
+                            notables=[a.name, b.name, c.name],
+                            combined_delta=round(
+                                a.single_node_delta + b.single_node_delta + c.single_node_delta, 2
+                            ),
+                            combined_pct=round(
+                                a.single_node_pct + b.single_node_pct + c.single_node_pct, 2
+                            ),
+                            note="3-notable chase Megalomaniac combination.",
+                        )
+                    )
+        combos_3.sort(key=lambda c: c.combined_delta, reverse=True)
+
+        trade_filters: dict[str, Any] = {}
+        if max_exalted is not None and max_exalted > 0:
+            trade_filters["trade_filters"] = {
+                "filters": {
+                    "price": {"option": "exalted", "max": int(max_exalted)},
+                }
+            }
+        # Unauth GGG trade2 allows up to 35 filters cleanly in a single `count` group
+        capped_filters = stat_filters[:30]
+        trade2_query: dict[str, Any] = {
+            "query": {
+                "status": {"option": "securable" if securable_only else "available"},
+                "name": "Megalomaniac",
+                "type": "Diamond",
+                "stats": (
+                    [
+                        {
+                            "type": "count",
+                            "value": {"min": max(1, min(min_match_count, len(capped_filters)))},
+                            "filters": capped_filters,
+                        }
+                    ]
+                    if capped_filters
+                    else []
+                ),
+                **({"filters": trade_filters} if trade_filters else {}),
+            },
+            "sort": {"price": "asc"},
+        }
+        enc_league = url_quote(league, safe="")
+        q_encoded = url_quote(json.dumps(trade2_query, separators=(",", ":")), safe="")
+        trade_url = f"{GGG_TRADE2_WEB_BASE_URL}/{enc_league}?q={q_encoded}"
+
+        return MegalomaniacSearchReport(
+            slot_name=slot,
+            stat=stat,
+            league=league,
+            top_notables=top_notable_rows,
+            top_2_notable_combos=combos_2[:top_combos],
+            top_3_notable_combos=combos_3[: min(top_combos, 6)],
+            matched_trade2_stat_count=len(capped_filters),
+            trade2_query=trade2_query,
+            trade_url=trade_url,
+            usage_note=(
+                f"Open trade_url to list live Megalomaniac Diamonds matching at least "
+                f"{min_match_count} of your build's top {len(capped_filters)} unallocated "
+                f"{stat} Notables; paste promising hits into `poe2 pob eval-item --equip-slot "
+                '"Jewel 1"` to verify exact synergistic DPS/EHP.'
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # 13. Rune & Soul Core Socket "Resist Tetris" Optimizer
+    # ------------------------------------------------------------------
+
+    def optimize_rune_sockets(
+        self,
+        slot: str = "main",
+        *,
+        objective: Literal["balanced", "dps", "ehp", "spirit", "rarity"] = "balanced",
+        max_budget_exalted: float | None = None,
+        league: str = DEFAULT_LEAGUE,
+        offline_prices: bool = False,
+    ) -> RuneOptimizationReport:
+        """Solve Resist Tetris & optimal Armour/Weapon Rune/Soul Core socket allocation in PoB2."""
+        from poe2brain.knowledge.service import KnowledgeService
+
+        stats = self.get_stats(slot=slot)
+        summary = self.bridge.call("get_build_summary", {"slot": slot, "includeItemRaw": False})
+        items = summary.get("items") or []
+
+        armour_slots = {"Body Armour", "Helmet", "Gloves", "Boots"}
+        weapon_slots = {"Weapon 1", "Weapon 2"}
+
+        # Catalog available sockets (existing gear slots with rune sockets)
+        slot_entries: list[tuple[str, str, str, int]] = []
+        armour_socks = 0
+        weapon_socks = 0
+        for it in items:
+            if not isinstance(it, Mapping):
+                continue
+            s_name = str(it.get("slot") or "")
+            s_cnt = int(it.get("runeSockets") or 0)
+            if s_cnt <= 0:
+                continue
+            item_type = str(it.get("type") or "").lower()
+            item_title = str(it.get("name") or it.get("baseName") or s_name)
+            if s_name in armour_slots:
+                cat: Literal["armour", "weapon", "shield", "focus", "other"] = "armour"
+                armour_socks += s_cnt
+            elif s_name in weapon_slots:
+                if "shield" in item_type:
+                    cat = "shield"
+                    armour_socks += s_cnt
+                elif "focus" in item_type:
+                    cat = "focus"
+                    armour_socks += s_cnt
+                else:
+                    cat = "weapon"
+                    weapon_socks += s_cnt
+            else:
+                continue
+            slot_entries.append((s_name, item_title, cat, s_cnt))
+
+        # Default fallback socket budget if PoB2 item metadata had 0 explicit sockets listed
+        if not slot_entries:
+            slot_entries = [
+                ("Body Armour", "Body Armour (2 sockets)", "armour", 2),
+                ("Helmet", "Helmet (1 socket)", "armour", 1),
+                ("Gloves", "Gloves (1 socket)", "armour", 1),
+                ("Boots", "Boots (1 socket)", "armour", 1),
+                ("Weapon 1", "Weapon 1 (2 sockets)", "weapon", 2),
+            ]
+            armour_socks = 5
+            weapon_socks = 2
+
+        res_deficits = {
+            "fire": round(max(0.0, 75.0 - stats.fire_resist), 1),
+            "cold": round(max(0.0, 75.0 - stats.cold_resist), 1),
+            "lightning": round(max(0.0, 75.0 - stats.lightning_resist), 1),
+            "chaos": (0.0 if stats.chaos_immune else round(max(0.0, 60.0 - stats.chaos_resist), 1)),
+        }
+
+        # Live economy price helper (never default missing to 0)
+        price_cache: dict[str, float | None] = {}
+        econ = None if offline_prices else self._economy_service
+        if not offline_prices and econ is None:
+            try:
+                from poe2brain.trade.economy import EconomyService
+
+                self._economy_service = EconomyService(client=self.http_client)
+                econ = self._economy_service
+            except Exception:
+                econ = None
+
+        def _quote_ex(aug_name: str) -> float | None:
+            if aug_name in price_cache:
+                return price_cache[aug_name]
+            val: float | None = None
+            if econ is not None:
+                try:
+                    q = econ.get_price(aug_name, league=league)
+                    if q is not None and q.exalted > 0:
+                        val = round(float(q.exalted), 2)
+                except Exception:
+                    val = None
+            price_cache[aug_name] = val
+            return val
+
+        # Look up verified slot effects directly from SQLite Patch 0.5.5 augments
+        ks = KnowledgeService()
+        _aug_cache: dict[str, tuple[dict[str, Any], bool]] = {}
+
+        def _aug_slot_mod(
+            aug_name: str, slot_keys: tuple[str, ...], fallback: str
+        ) -> tuple[str, bool]:
+            if aug_name not in _aug_cache:
+                eff_map: dict[str, Any] = {}
+                overw = True
+                try:
+                    for h in ks.inspect_augment(aug_name, limit=4):
+                        if h.name.lower() == aug_name.lower():
+                            eff_map = dict(h.slot_effects or {})
+                            overw = h.can_overwrite_in_socket
+                            break
+                except Exception:
+                    pass
+                _aug_cache[aug_name] = (eff_map, overw)
+            eff_map, overw = _aug_cache[aug_name]
+            for sk in slot_keys:
+                vals = eff_map.get(sk)
+                if vals:
+                    line = vals[0] if isinstance(vals, list) else str(vals)
+                    return str(line), overw
+            return fallback, overw
+
+        # Allocate Armour sockets: 1) cap Fire/Cold/Lightning -> 2) Chaos -> 3) objective
+        remaining_deficits = dict(res_deficits)
+        recs: list[RuneSocketRecommendation] = []
+        custom_mod_lines: list[str] = []
+        running_cost = 0.0
+        notes: list[str] = []
+
+        # SQLite-verified Patch 0.5.5 Armour resistance runes (+18% single ele, +13% chaos)
+        ele_rune_specs = [
+            ("fire", "Greater Desert Rune", 18.0, "+18% to Fire Resistance"),
+            ("cold", "Greater Glacial Rune", 18.0, "+18% to Cold Resistance"),
+            ("lightning", "Greater Storm Rune", 18.0, "+18% to Lightning Resistance"),
+        ]
+        is_es_heavy = stats.energy_shield > stats.life * 1.1
+        is_caster = any(
+            k in " ".join(stats.active_skills).lower()
+            for k in ("spark", "comet", "arc", "ball", "orb", "nova", "curse", "totem", "minion")
+        )
+
+        def _can_afford(unit_ex: float | None) -> bool:
+            if max_budget_exalted is None or unit_ex is None:
+                return True
+            return (running_cost + unit_ex) <= max_budget_exalted
+
+        for s_name, item_title, cat, s_cnt in slot_entries:
+            free_socks = s_cnt
+            slot_allocs: dict[tuple[str, str, str], int] = {}
+
+            if cat in ("armour", "shield", "focus"):
+                # Priority 1: Cap Elemental Resistances to 75% (+18% Greater Ele Runes)
+                for res_key, r_name, gain_pct, fallback_line in ele_rune_specs:
+                    while free_socks > 0 and remaining_deficits[res_key] > 0:
+                        u_cost = _quote_ex(r_name)
+                        if not _can_afford(u_cost):
+                            break
+                        mod_line, _ = _aug_slot_mod(r_name, ("Armour",), fallback_line)
+                        slot_allocs[(r_name, mod_line, f"Cap {res_key.title()} Resistance")] = (
+                            slot_allocs.get(
+                                (r_name, mod_line, f"Cap {res_key.title()} Resistance"), 0
+                            )
+                            + 1
+                        )
+                        remaining_deficits[res_key] = max(
+                            0.0, remaining_deficits[res_key] - gain_pct
+                        )
+                        custom_mod_lines.append(mod_line)
+                        if u_cost is not None:
+                            running_cost += u_cost
+                        free_socks -= 1
+
+                # Priority 2: Chaos Resistance (+13% Soul Core of Tacati, unless CI)
+                while free_socks > 0 and remaining_deficits["chaos"] >= 10.0:
+                    r_name = "Soul Core of Tacati"
+                    u_cost = _quote_ex(r_name)
+                    if not _can_afford(u_cost):
+                        break
+                    mod_line, _ = _aug_slot_mod(r_name, ("Armour",), "+13% to Chaos Resistance")
+                    slot_allocs[(r_name, mod_line, "Mitigate Chaos 2x ES / Poison hits")] = (
+                        slot_allocs.get((r_name, mod_line, "Mitigate Chaos 2x ES / Poison hits"), 0)
+                        + 1
+                    )
+                    remaining_deficits["chaos"] = max(0.0, remaining_deficits["chaos"] - 13.0)
+                    custom_mod_lines.append(mod_line)
+                    if u_cost is not None:
+                        running_cost += u_cost
+                    free_socks -= 1
+
+                # Priority 3: Fill remaining Armour sockets by objective (0.5.5 slot effects)
+                while free_socks > 0:
+                    if objective == "rarity" and s_name == "Gloves":
+                        r_name = "Soul Core of Azcapa"
+                        mod_line, _ = _aug_slot_mod(
+                            r_name,
+                            ("Gloves",),
+                            "10% increased Quantity of Gold Dropped by Slain Enemies",
+                        )
+                        purpose = "Scale Gloves Gold / farm utility"
+                    elif objective == "dps" and s_name == "Helmet" and is_caster:
+                        r_name = "Soul Core of Zalatl"
+                        mod_line, _ = _aug_slot_mod(
+                            r_name, ("Helmet",), "5% increased maximum Mana"
+                        )
+                        purpose = "Scale Caster / Archmage Max Mana"
+                    elif is_es_heavy:
+                        r_name = "Greater Iron Rune"
+                        mod_line, _ = _aug_slot_mod(
+                            r_name, ("Armour",), "18% increased Armour, Evasion and Energy Shield"
+                        )
+                        purpose = "Scale global Energy Shield / Defences"
+                    else:
+                        r_name = "Greater Body Rune"
+                        mod_line, _ = _aug_slot_mod(r_name, ("Armour",), "+60 to maximum Life")
+                        purpose = "Scale Maximum Life EHP"
+                    u_cost = _quote_ex(r_name)
+                    if not _can_afford(u_cost):
+                        r_name = "Greater Body Rune" if not is_es_heavy else "Greater Iron Rune"
+                        mod_line, _ = _aug_slot_mod(
+                            r_name,
+                            ("Armour",),
+                            "+60 to maximum Life"
+                            if not is_es_heavy
+                            else "18% increased Armour, Evasion and Energy Shield",
+                        )
+                        u_cost = _quote_ex(r_name)
+                    slot_allocs[(r_name, mod_line, purpose)] = (
+                        slot_allocs.get((r_name, mod_line, purpose), 0) + 1
+                    )
+                    custom_mod_lines.append(mod_line)
+                    if u_cost is not None:
+                        running_cost += u_cost
+                    free_socks -= 1
+
+            elif cat == "weapon":
+                is_wand_or_staff = (
+                    any(k in item_title.lower() for k in ("wand", "staff", "sceptre")) or is_caster
+                )
+                while free_socks > 0:
+                    if (
+                        objective == "spirit" or stats.spirit_unreserved < 0
+                    ) and not is_wand_or_staff:
+                        r_name = "Soul Core of Azcapa"
+                        mod_line, _ = _aug_slot_mod(r_name, ("Martial Weapon",), "+15 to Spirit")
+                        purpose = "Add Martial Weapon Spirit headroom"
+                    elif is_wand_or_staff:
+                        r_name = "Greater Iron Rune"
+                        mod_line, _ = _aug_slot_mod(
+                            r_name, ("Wand or Staff",), "30% increased Spell Damage"
+                        )
+                        purpose = "Scale Wand/Staff Spell Damage"
+                    else:
+                        r_name = "Greater Iron Rune"
+                        mod_line, _ = _aug_slot_mod(
+                            r_name, ("Martial Weapon",), "18% increased Physical Damage"
+                        )
+                        purpose = "Scale Martial Weapon Physical DPS"
+                    u_cost = _quote_ex(r_name)
+                    slot_allocs[(r_name, mod_line, purpose)] = (
+                        slot_allocs.get((r_name, mod_line, purpose), 0) + 1
+                    )
+                    custom_mod_lines.append(mod_line)
+                    if u_cost is not None:
+                        running_cost += u_cost
+                    free_socks -= 1
+
+            for (r_name, mod_line, purpose), cnt in slot_allocs.items():
+                u_cost = _quote_ex(r_name)
+                _, overwritable = _aug_slot_mod(
+                    r_name, ("Armour", "Martial Weapon", "Wand or Staff"), mod_line
+                )
+                recs.append(
+                    RuneSocketRecommendation(
+                        equipment_slot=s_name,
+                        item_name=item_title,
+                        socket_category=cat,
+                        sockets_allocated=cnt,
+                        augment_name=r_name,
+                        effect_summary=mod_line,
+                        purpose=purpose,
+                        unit_cost_exalted=u_cost,
+                        total_cost_exalted=round(u_cost * cnt, 2) if u_cost is not None else None,
+                        can_overwrite_in_socket=overwritable,
+                    )
+                )
+
+        # Verify exact DPS/EHP/Resist outcome inside PoB2 via transactional what_if!
+        dps_delta = 0.0
+        ehp_delta = 0.0
+        res_after = {
+            "fire": round(stats.fire_resist, 1),
+            "cold": round(stats.cold_resist, 1),
+            "lightning": round(stats.lightning_resist, 1),
+            "chaos": round(stats.chaos_resist, 1),
+        }
+        if custom_mod_lines:
+            pob_mod_lines = [
+                "18% increased Global Defences"
+                if "increased Armour, Evasion and Energy Shield" in ln
+                else ln
+                for ln in custom_mod_lines
+            ]
+            try:
+                wf = self.what_if(
+                    slot=slot,
+                    set_config={"customMods": "\n".join(pob_mod_lines)},
+                    apply=False,
+                )
+                dps_delta = wf.effective_dps_delta
+                ehp_delta = wf.total_ehp_delta
+                res_after = {
+                    "fire": round(wf.after_stats.fire_resist, 1),
+                    "cold": round(wf.after_stats.cold_resist, 1),
+                    "lightning": round(wf.after_stats.lightning_resist, 1),
+                    "chaos": round(wf.after_stats.chaos_resist, 1),
+                }
+            except Exception as exc:
+                notes.append(f"PoB2 delta verification skipped: {exc}")
+
+        if any(v > 0 for v in remaining_deficits.values()):
+            uncapped = ", ".join(
+                f"{k.title()} (-{v:.0f}%)" for k, v in remaining_deficits.items() if v > 0
+            )
+            notes.append(
+                f"Remaining resist gaps after socket cap ({uncapped}): add 1 Ring/Boots resist "
+                "roll or Artificer's Orb sockets on un-socketed gear."
+            )
+        notes.append(
+            "In PoE2 0.5.5, standard Runes & Soul Cores can be freely overwritten in sockets; "
+            "Masterwork / Bonded runes require Shaman Bonded or Verisium Anvil planning."
+        )
+
+        return RuneOptimizationReport(
+            slot_name=slot,
+            objective=objective,
+            league=league,
+            total_available_sockets=armour_socks + weapon_socks,
+            armour_sockets=armour_socks,
+            weapon_sockets=weapon_socks,
+            resist_deficits_before=res_deficits,
+            recommendations=recs,
+            estimated_total_cost_exalted=round(running_cost, 2),
+            pob_verified_dps_delta=round(dps_delta, 2),
+            pob_verified_ehp_delta=round(ehp_delta, 2),
+            pob_verified_resists_after=res_after,
+            notes=notes,
+        )
 
 
 _DEFAULT_SERVICE: BuildService | None = None

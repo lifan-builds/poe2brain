@@ -232,7 +232,8 @@ class EE2Bundle:
                         continue
                     items_by_name.setdefault((ns, key_name), []).append(it)
                     items_by_any_name.setdefault(key_name, []).append(it)
-                    if ns == "ITEM":
+                    craft_cat = (it.get("craftable") or {}).get("category")
+                    if ns == "ITEM" and craft_cat != "Currency":
                         base_names.add(key_name)
                     if it.get("tradeTag"):
                         trade_tag_by_name[key_name] = it["tradeTag"]
@@ -287,14 +288,18 @@ class EE2Bundle:
         for prefix in ("Superior ", "Exceptional "):
             if cleaned.startswith(prefix):
                 cleaned = cleaned[len(prefix) :]
-        for base in self.base_item_names_desc:
-            idx = cleaned.find(base)
-            if idx != -1:
-                before_ok = idx == 0 or cleaned[idx - 1] == " "
-                end = idx + len(base)
-                after_ok = end == len(cleaned) or cleaned[end] == " "
-                if before_ok and after_ok:
-                    return base
+        candidates = [cleaned]
+        if "Precursor Tablet" in cleaned:
+            candidates.append(cleaned.replace("Precursor Tablet", "Tablet"))
+        for probe in candidates:
+            for base in self.base_item_names_desc:
+                idx = probe.find(base)
+                if idx != -1:
+                    before_ok = idx == 0 or probe[idx - 1] == " "
+                    end = idx + len(base)
+                    after_ok = end == len(probe) or probe[end] == " "
+                    if before_ok and after_ok:
+                        return base
         return None
 
 

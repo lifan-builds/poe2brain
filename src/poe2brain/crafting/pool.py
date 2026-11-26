@@ -471,10 +471,17 @@ class ModPoolEngine:
         return entry
 
     def resolve_base(self, base_name_or_slug: str) -> BaseItemEntry:
-        clean = base_name_or_slug.strip()
+        from poe2brain.knowledge.zh_aliases import translate_zh_query
+
+        clean = translate_zh_query(base_name_or_slug.strip())
         for prefix in ("Superior ", "Exceptional ", "Runeforged ", "Runemastered "):
             if clean.startswith(prefix):
                 clean = clean[len(prefix) :].strip()
+        # PoE2 0.5.5 shortened "<Type> Precursor Tablet" -> "<Type> Tablet"
+        if clean.lower() == "precursor tablet":
+            clean = "Irradiated Tablet"
+        elif "precursor tablet" in clean.lower():
+            clean = re.sub(r"\bPrecursor\s+Tablet\b", "Tablet", clean, flags=re.I).strip()
 
         cache_key = clean.lower()
         if cache_key in self._bases_cache:

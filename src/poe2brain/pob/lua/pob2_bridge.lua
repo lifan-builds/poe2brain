@@ -859,6 +859,14 @@ local function extractItemsInfo(includeRaw)
 		local itemId = slotCtrl.selItemId or 0
 		if itemId ~= 0 and build.itemsTab.items[itemId] then
 			local item = build.itemsTab.items[itemId]
+			local runesList = {}
+			if type(item.runes) == "table" then
+				for _, rName in ipairs(item.runes) do
+					if type(rName) == "string" and rName ~= "" and rName ~= "None" then
+						runesList[#runesList + 1] = rName
+					end
+				end
+			end
 			local entry = {
 				slot = slotName,
 				itemId = itemId,
@@ -868,7 +876,9 @@ local function extractItemsInfo(includeRaw)
 				type = item.type or "",
 				rarity = item.rarity or "NORMAL",
 				active = slotCtrl.active == true,
+				corrupted = item.corrupted == true,
 				runeSockets = item.itemSocketCount or 0,
+				runes = runesList,
 			}
 			if includeRaw then
 				entry.raw = item:BuildRaw()
@@ -2176,7 +2186,10 @@ methods.set_config = function(params)
 	pushUndoSnapshot(entry)
 	if params and type(params.values) == "table" then
 		for k, v in pairs(params.values) do
-			if v == dkjson.null then
+			if k == "customMods" then
+				local txt = (v == dkjson.null) and "" or tostring(v)
+				setActiveCustomModsText(txt)
+			elseif v == dkjson.null then
 				build.configTab.input[k] = nil
 			else
 				build.configTab.input[k] = v
@@ -2688,8 +2701,50 @@ methods.audit_build = function(params)
 			sustainableStats = evalCalculatorBuildStats()
 		end
 
+		-- Evaluate alternate Weapon Set (Weapon Swap safety check) when swap weapons or passives exist
+		local weaponSwap = nil
+		local activeItemSet = build.itemsTab and build.itemsTab.activeItemSet
+		if activeItemSet then
+			local swap1 = build.itemsTab.slots["Weapon 1 Swap"]
+			local swap2 = build.itemsTab.slots["Weapon 2 Swap"]
+			local hasSwapItem = ((swap1 and (swap1.selItemId or 0) ~= 0) or (swap2 and (swap2.selItemId or 0) ~= 0))
+			local ws1Used, ws2Used = 0, 0
+			if build.spec and build.spec.CountAllocNodes then
+				local okCnt, _, _, _, _, c1, c2 = pcall(function() return build.spec:CountAllocNodes() end)
+				if okCnt then
+					ws1Used = tonumber(c1) or 0
+					ws2Used = tonumber(c2) or 0
+				end
+			end
+			if hasSwapItem or ws1Used > 0 or ws2Used > 0 then
+				local origUseSecond = activeItemSet.useSecondWeaponSet == true
+				local okSwap, altStats = pcall(function()
+					activeItemSet.useSecondWeaponSet = not origUseSecond
+					if build.itemsTab.BuildModList then
+						build.itemsTab:BuildModList()
+					end
+					return evalCalculatorBuildStats()
+				end)
+				activeItemSet.useSecondWeaponSet = origUseSecond
+				if build.itemsTab.BuildModList then
+					pcall(function() build.itemsTab:BuildModList() end)
+				end
+				if okSwap and type(altStats) == "table" then
+					weaponSwap = {
+						hasWeaponSwap = true,
+						activeSet = origUseSecond and 2 or 1,
+						alternateSet = origUseSecond and 1 or 2,
+						weaponSet1Passives = ws1Used,
+						weaponSet2Passives = ws2Used,
+						alternateStats = altStats,
+					}
+				end
+			end
+		end
+
 		return {
 			sustainableStats = sustainableStats,
+			weaponSwap = weaponSwap,
 			culprits = culprits,
 			checkedLevers = #actions,
 		}
@@ -2734,6 +2789,7 @@ methods.audit_build = function(params)
 		items = extractItemsInfo(false),
 		rawStats = rawStats,
 		sustainableStats = auditResult.sustainableStats,
+		weaponSwap = auditResult.weaponSwap,
 		totalDpsInflationPct = totalDpsInflationPct,
 		totalEhpInflationPct = totalEhpInflationPct,
 		checkedLevers = auditResult.checkedLevers,
