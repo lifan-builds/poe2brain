@@ -26,6 +26,8 @@
 
 </div>
 
+> **Inspiration & Shoutout:** Inspired by **[流放降临-某雷](https://space.bilibili.com/2132384)** and [`exilemoulei/pob4agents`](https://github.com/exilemoulei/pob4agents) for pioneering agentic *Path of Exile 1* workflows. `poe2brain` is an independent clean-room engine built from the ground up specifically for **Path of Exile 2 (`0.5.5`)** — if you play PoE1, go check out [`pob4agents`](https://github.com/exilemoulei/pob4agents)!
+
 ---
 
 ## Why `poe2brain`?
