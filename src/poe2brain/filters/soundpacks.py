@@ -649,6 +649,11 @@ def _try_render_tts_wav(
                 if params.voice_name in ("alloy", "echo", "fable", "onyx", "nova", "shimmer")
                 else "onyx"
             )
+            api_key = (
+                os.environ.get("QUOTASWITCH_API_KEY")
+                or os.environ.get("OPENAI_API_KEY")
+                or "quotaswitch-local"
+            )
             req = urllib.request.Request(
                 "http://127.0.0.1:18455/v1/audio/speech",
                 data=json.dumps(
@@ -661,7 +666,7 @@ def _try_render_tts_wav(
                 ).encode("utf-8"),
                 headers={
                     "Content-Type": "application/json",
-                    "Authorization": f"Bearer {os.environ.get('QUOTASWITCH_API_KEY') or os.environ.get('OPENAI_API_KEY') or 'quotaswitch-local'}",
+                    "Authorization": f"Bearer {api_key}",
                 },
                 method="POST",
             )

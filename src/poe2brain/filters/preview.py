@@ -47,7 +47,7 @@ SHAPE_GLYPHS: dict[str, str] = {
 
 SAMPLE_ITEMS_FOR_TIER: tuple[tuple[str, str, str], ...] = (
     ("s_plus", "Divine Orb", "S+ Jackpot Currency"),
-    ("s", "Zarokh's Reliquary Key: Against the Darkness", "S Tier Vault Key / Chase"),
+    ("s", "Azmeri Reliquary Key", "S Tier Vault Key / Chase"),
     ("a", "Greater Jeweller's Orb", "A Tier High Currency"),
     ("build_upgrade", "Slicing Quarterstaff (Tier 4 Unid)", "PoB2 Build Priority Base (ilvl 82)"),
     ("waystone_high", "Waystone (Tier 15)", "Endgame Atlas Sustain"),
@@ -293,11 +293,12 @@ def render_filter_preview_html(
             ".beam-temp { animation:pulseBeam 1.8s ease-in-out infinite; }",
             "@keyframes pulseBeam { 0%,100% { opacity:0.9; height:92px; }"
             " 50% { opacity:0.25; height:56px; } }",
-            ".plate-wrap { position:relative; z-index:2; margin-bottom:18px; }",
-            ".nameplate { display:inline-flex; align-items:center; gap:6px;"
-            " padding:5px 14px; border:2px solid; font-weight:700;"
+            ".plate-wrap { position:relative; z-index:2; margin-bottom:18px; max-width:100%;"
+            " display:flex; justify-content:center; }",
+            ".nameplate { display:inline-flex; align-items:center; gap:6px; max-width:100%;"
+            " box-sizing:border-box; padding:5px 14px; border:2px solid; font-weight:700;"
             " letter-spacing:0.025em; box-shadow:0 6px 20px rgba(0,0,0,0.72);"
-            " user-select:none; white-space:nowrap; }",
+            " user-select:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }",
             ".card-footer { width:100%; display:flex; flex-direction:column;"
             " gap:3px; text-align:center; z-index:2; }",
             ".tier-pill { font-size:12px; font-weight:600; color:#e2e8f0; }",
