@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import shutil
 import struct
@@ -658,7 +659,10 @@ def _try_render_tts_wav(
                         "response_format": "mp3",
                     }
                 ).encode("utf-8"),
-                headers={"Content-Type": "application/json", "Authorization": "Bearer local"},
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {os.environ.get('QUOTASWITCH_API_KEY') or os.environ.get('OPENAI_API_KEY') or 'quotaswitch-local'}",
+                },
                 method="POST",
             )
             with urllib.request.urlopen(req, timeout=5.0) as resp:
