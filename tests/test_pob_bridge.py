@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: GPL-3.0-only
 # Copyright (C) 2026 lifan-builds. poe2brain; Section 7 attribution terms in ATTRIBUTION.md.
 from __future__ import annotations
 
@@ -28,7 +28,8 @@ def test_failed_hibernation_preserves_build(
     with Pob2Bridge(use_daemon=False, idle_timeout_seconds=0.0) as bridge:
         bridge.call("switch_slot", {"slot": "candidate"})
         proc = bridge._proc
-        activity = bridge._last_activity_ts
+        activity = bridge._last_activity_ts - 1.0
+        bridge._last_activity_ts = activity
         epoch = bridge.state_epoch
         with monkeypatch.context() as patch:
             patch.setattr(bridge, "_send_and_recv_locked", snapshot)
