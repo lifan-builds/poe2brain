@@ -24,7 +24,8 @@ import threading
 import time
 import urllib.parse
 import webbrowser
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
@@ -153,7 +154,25 @@ class GggOAuthClient:
             return None
 
     def save_tokens(self, tokens: OAuthTokenSet) -> None:
+        with self._token_lock():
+            self._write_tokens(tokens)
+
+    @contextmanager
+    def _token_lock(self) -> Iterator[None]:
         self.token_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.token_path.with_name("oauth_tokens.lock").open("a+b") as lock:
+            try:
+                import fcntl
+            except ImportError:
+                import msvcrt
+
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+            yield
+
+    def _write_tokens(self, tokens: OAuthTokenSet) -> None:
         tmp = self.token_path.with_suffix(".tmp")
         tmp.write_text(tokens.model_dump_json(indent=2) + "\n", encoding="utf-8")
         if os.name != "nt":
@@ -164,9 +183,10 @@ class GggOAuthClient:
         tmp.replace(self.token_path)
 
     def logout(self) -> dict[str, Any]:
-        existed = self.token_path.is_file()
-        if existed:
-            self.token_path.unlink()
+        with self._token_lock():
+            existed = self.token_path.is_file()
+            if existed:
+                self.token_path.unlink()
         return {
             "logged_out": True,
             "had_saved_token": existed,
@@ -328,63 +348,60 @@ class GggOAuthClient:
             client_id=self.client_id,
         )
 
-    def ensure_valid_token(self) -> OAuthTokenSet:
-        tok = self.load_tokens()
-        if tok is None:
-            raise GggOAuthError(
-                "Not authenticated with GGG OAuth 2.1. Run 'poe2 auth login' first "
-                "(or use 'poe2 pob import-local' to load saved local PoB2 builds without login)."
+    def ensure_valid_token(self, *, force_refresh_token: str | None = None) -> OAuthTokenSet:
+        with self._token_lock():
+            tok = self.load_tokens()
+            if tok is None:
+                raise GggOAuthError(
+                    "Not authenticated with GGG OAuth 2.1. Run 'poe2 auth login' first "
+                    "(or use 'poe2 pob import-local' to load saved local PoB2 builds "
+                    "without login)."
+                )
+            if tok.access_token != force_refresh_token and tok.expires_at > time.time() + 60:
+                return tok
+            if not tok.refresh_token:
+                raise GggOAuthError(
+                    "No GGG OAuth refresh_token is available. Run 'poe2 auth login' again."
+                )
+            refreshed = self._exchange_token(
+                {
+                    "client_id": tok.client_id or self.client_id,
+                    "grant_type": "refresh_token",
+                    "refresh_token": tok.refresh_token,
+                }
             )
-        if tok.expires_at > time.time() + 60:
-            return tok
-        if not tok.refresh_token:
-            raise GggOAuthError(
-                "GGG OAuth access token expired and no refresh_token is available. "
-                "Run 'poe2 auth login' again."
-            )
-        refreshed = self._exchange_token(
-            {
-                "client_id": tok.client_id or self.client_id,
-                "grant_type": "refresh_token",
-                "refresh_token": tok.refresh_token,
-            }
-        )
-        if not refreshed.refresh_token:
-            refreshed.refresh_token = tok.refresh_token
-        if not refreshed.username:
-            refreshed.username = tok.username
-        self.save_tokens(refreshed)
-        return refreshed
+            if not refreshed.refresh_token:
+                refreshed.refresh_token = tok.refresh_token
+            if not refreshed.username:
+                refreshed.username = tok.username
+            self._write_tokens(refreshed)
+            return refreshed
 
     def _api_get_json(self, path: str) -> Any:
         tok = self.ensure_valid_token()
         url = f"{GGG_API_BASE_URL}{path}"
-        headers = {
-            "Authorization": f"Bearer {tok.access_token}",
-            "User-Agent": USER_AGENT,
-            "Accept": "application/json",
-        }
-        if self._http is not None:
-            return self._http.get_json(
-                url,
-                headers=headers,
-                ttl_seconds=0.0,
-                rate_limit_group="ggg_oauth_api",
-            )
-        with httpx.Client(headers=headers, timeout=30.0) as client:
-            resp = client.get(url)
-            if resp.status_code == 401 and tok.refresh_token:
-                tok.expires_at = 0.0
-                self.save_tokens(tok)
-                tok = self.ensure_valid_token()
-                headers["Authorization"] = f"Bearer {tok.access_token}"
-                resp = client.get(url, headers=headers)
-            if resp.status_code >= 400:
+        for attempt in range(2):
+            headers = {
+                "Authorization": f"Bearer {tok.access_token}",
+                "User-Agent": USER_AGENT,
+                "Accept": "application/json",
+            }
+            if self._http is None:
+                with httpx.Client(headers=headers, timeout=30.0) as client:
+                    resp = client.get(url)
+                if resp.status_code < 400:
+                    return resp.json()
+            else:
+                try:
+                    return self._http.get_json(url, headers=headers)
+                except httpx.HTTPStatusError as exc:
+                    resp = exc.response
+            if resp.status_code != 401 or attempt == 1:
                 raise GggOAuthError(
                     f"GGG API GET {path} failed with HTTP {resp.status_code}: "
                     f"{resp.text.strip()[:400]}"
                 )
-            return resp.json()
+            tok = self.ensure_valid_token(force_refresh_token=tok.access_token)
 
     def list_characters(self, *, realm: str = "poe2") -> list[GggCharacterSummary]:
         suffix = "" if realm == "pc" else f"/{urllib.parse.quote(realm, safe='')}"

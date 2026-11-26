@@ -93,8 +93,8 @@ def _idle_watchdog_entry(
             if (
                 bridge._active_calls == 0
                 and (time.monotonic() - bridge._last_activity_ts) >= eff_timeout
+                and bridge._hibernate_locked()
             ):
-                bridge._hibernate_locked()
                 return
         finally:
             bridge._lock.release()
@@ -130,6 +130,8 @@ class Pob2Bridge:
         self._sock_rfile: TextIO | None = None
         self._next_id = 0
         self._hibernated_snapshot: dict[str, Any] | None = None
+        self._snapshot_response_pending = False
+        self._win_read_queue: queue.Queue[tuple[str | None, BaseException | None]] | None = None
         self._last_activity_ts = time.monotonic()
         self._active_calls = 0
         self._state_epoch = 0
@@ -334,20 +336,31 @@ class Pob2Bridge:
             self._start_idle_watchdog_locked(proc)
 
     def hibernate(self) -> bool:
-        """Snapshot all build slots in Python memory and terminate the idle LuaJIT child."""
+        """Terminate the idle LuaJIT child after saving all build slots in memory."""
         with self._lock:
             return self._hibernate_locked()
 
     def _hibernate_locked(self) -> bool:
-        if self._sock is not None or self._proc is None:
+        proc = self._proc
+        if self._sock is not None or proc is None:
             return False
-        if self._proc.poll() is None:
+        if proc.poll() is None:
             try:
                 snap = self._send_and_recv_locked("snapshot_all_slots", {}, timeout=5.0)
-                if isinstance(snap, Mapping) and "slots" in snap:
-                    self._hibernated_snapshot = dict(snap)
             except Exception:
-                pass
+                snap = None
+            if (
+                isinstance(snap, Mapping)
+                and isinstance(slots := snap.get("slots"), Mapping)
+                and all(
+                    isinstance(entry, Mapping) and isinstance(xml := entry.get("xml"), str) and xml
+                    for entry in slots.values()
+                )
+            ):
+                self._hibernated_snapshot = dict(snap)
+            elif proc.poll() is None:
+                self._last_activity_ts = time.monotonic()
+                return False
         self._kill_locked(preserve_snapshot=self._hibernated_snapshot is not None)
         return self._hibernated_snapshot is not None
 
@@ -390,6 +403,8 @@ class Pob2Bridge:
         fin = self._proc_finalizer
         self._proc = None
         self._proc_finalizer = None
+        self._snapshot_response_pending = False
+        self._win_read_queue = None
         self._idle_wake_event.set()
         if not preserve_snapshot:
             self._hibernated_snapshot = None
@@ -414,21 +429,24 @@ class Pob2Bridge:
     def _readline_with_timeout(self, proc: subprocess.Popen[str], timeout: float) -> str:
         assert proc.stdout is not None
         if os.name == "nt":
-            out_q: queue.Queue[tuple[str | None, BaseException | None]] = queue.Queue(maxsize=1)
+            if self._win_read_queue is None:
+                out_q: queue.Queue[tuple[str | None, BaseException | None]] = queue.Queue(maxsize=1)
+                self._win_read_queue = out_q
 
-            def _reader() -> None:
-                try:
-                    assert proc.stdout is not None
-                    out_q.put((proc.stdout.readline(), None))
-                except BaseException as exc:
-                    out_q.put((None, exc))
+                def _reader() -> None:
+                    try:
+                        assert proc.stdout is not None
+                        out_q.put((proc.stdout.readline(), None))
+                    except BaseException as exc:
+                        out_q.put((None, exc))
 
-            t = threading.Thread(target=_reader, name="poe2brain-win-readline", daemon=True)
-            t.start()
+                t = threading.Thread(target=_reader, name="poe2brain-win-readline", daemon=True)
+                t.start()
             try:
-                line, err = out_q.get(timeout=timeout)
+                line, err = self._win_read_queue.get(timeout=timeout)
             except queue.Empty as exc:
                 raise TimeoutError(f"PoB2 bridge timed out after {timeout:.1f}s") from exc
+            self._win_read_queue = None
             if err is not None:
                 raise err
             return line or ""
@@ -527,16 +545,27 @@ class Pob2Bridge:
         if proc.stdin is None or proc.stdout is None:
             raise Pob2BridgeError("PoB2 bridge stdio pipes are closed")
 
+        is_snapshot = method == "snapshot_all_slots"
         try:
+            if self._snapshot_response_pending:
+                # Lua replies in request order. Drain the outstanding reply before sending.
+                deadline = time.monotonic() + timeout
+                self._readline_with_timeout(proc, timeout)
+                self._snapshot_response_pending = False
+                timeout = max(0.0, deadline - time.monotonic())
             proc.stdin.write(frame + "\n")
             proc.stdin.flush()
+            self._snapshot_response_pending = is_snapshot
             line = self._readline_with_timeout(proc, timeout)
+            self._snapshot_response_pending = False
         except TimeoutError as exc:
-            self._kill_locked(preserve_snapshot=False)
+            if not (is_snapshot or self._snapshot_response_pending):
+                self._kill_locked(preserve_snapshot=False)
             raise Pob2BridgeError(f"Timeout calling PoB2 method '{method}': {exc}") from exc
         except OSError as exc:
             stderr_tail = self._read_stderr_tail(proc)
-            self._kill_locked(preserve_snapshot=False)
+            if not (is_snapshot or self._snapshot_response_pending):
+                self._kill_locked(preserve_snapshot=False)
             raise Pob2BridgeError(
                 f"Broken pipe calling PoB2 method '{method}': {exc} {stderr_tail}".strip()
             ) from exc
@@ -544,7 +573,8 @@ class Pob2Bridge:
         if not line:
             rc = proc.poll()
             stderr_tail = self._read_stderr_tail(proc)
-            self._kill_locked(preserve_snapshot=False)
+            if not is_snapshot:
+                self._kill_locked(preserve_snapshot=False)
             raise Pob2BridgeError(
                 f"PoB2 bridge exited unexpectedly (rc={rc}) on '{method}'. {stderr_tail}".strip()
             )
