@@ -4,6 +4,10 @@
 
 `poe2brain` 专门针对 Windows 玩家做了零编译适配：初始化无头 Path of Building 2 引擎时，会自动检测你电脑里已安装的桌面版 PoB2，或者自动拉取合规的 MIT 开源 x64 `lua51.dll` 运行时，全程纯命令行 3 分钟跑通。
 
+> **懒人最快方式（不懂命令行也能用）：** 如果你已经装了 **Cursor / Claude Code / Codex / Antigravity**，直接把下面这句话发给它，让 AI 全自动帮你执行下面所有步骤：
+>
+> > *「帮我把 `https://github.com/lifan-builds/poe2brain` 克隆到 `C:\dev\poe2brain`，按 `docs/zh/QUICKSTART_WINDOWS.md` 装好 `uv`、执行 `uv sync` 和 `uv run poe2 bootstrap pob2`，最后跑 `uv run poe2 version --json` 确认成功并帮我配好 MCP。」*
+
 ---
 
 ## 1. 安装 Git 与 `uv`
@@ -92,6 +96,27 @@ uv run poe2 pob load "eN..." --slot main
 ---
 
 ## 5. 常见问题排查（FAQ）
+
+### Q0：卡在第三步报错 `Failed to spawn: poe2` 怎么办？
+99% 是下面三个原因之一，按顺序检查即可解决：
+
+1. **当前 PowerShell 目录不在 `poe2brain` 文件夹里**（比如新开了一个终端窗口，或者下载 ZIP 解压后多套了一层 `poe2brain-main\poe2brain-main`）：
+   先确认当前目录里能看到 `pyproject.toml` 文件：
+   ```powershell
+   cd C:\dev\poe2brain
+   dir pyproject.toml
+   ```
+   如果提示找不到 `pyproject.toml`，说明还在外层目录，再 `cd` 进有 `pyproject.toml` 的那一层。
+2. **上一步 `uv sync` 没有完整跑完**（例如国内网络超时中断，导致 `.venv\Scripts\poe2.exe` 没生成）：
+   先配好代理（见下方 Q2），再重新执行：
+   ```powershell
+   uv sync
+   uv run poe2 bootstrap pob2
+   ```
+3. **不想切目录，直接显式指定路径运行**：
+   ```powershell
+   uv --directory C:\dev\poe2brain run poe2 bootstrap pob2
+   ```
 
 ### Q1：PowerShell 输出中文乱码或报编码错怎么办？
 `poe2brain` 已内置 UTF-8 自动重配置；如果旧版 Windows 终端仍显示乱码，先执行：

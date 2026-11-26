@@ -38,7 +38,7 @@
 | 玩家 / AI 常见痛点 | 直接问普通 AI / 手工查表 | 用 `poe2brain` (`Patch 0.5.5`) |
 | :--- | :--- | :--- |
 | **拿流放 1 规则套流放 2** | 瞎编 75% 格挡、工艺台、已删除通货 | **离线 SQLite + FTS5 真值库**：769 条官方弹窗、49 条防幻觉铁律、23 升华，**支持中文直接搜** |
-| **抄到「PoB 战神」水货 BD** | 只看勾满药剂/满感电的虚假面板 | **本地后台真跑 PoB2**：一键**去水审计 (`pob audit`)** + 自动列出前 5 项配装瓶颈 |
+| **抄到「PoB 战神」水货 BD** | 只看勾满药剂/满感电的虚假面板 | **本地后台真跑 PoB2**：一键**去水审计 (`pob audit`)**（含怒火锤炼/召唤契约等条件辅助与虚高攻速预警）+ 前 5 项配装瓶颈 |
 | **想找冷门高伤高速黑马 BD** | 榜一全是天价镜子装或烂大街 Meta | **内置 353 套预去水排行榜**：一句 `--preset sleeper` 1 秒算出真实 DPS × 移速 × 稀有度黑马榜 |
 | **市集被密语压价号钓鱼** | 最低价全是 1 崇高不卖人的脚本号 | 自动拆分 **金币一口价 (`securable`，离线秒买)** vs **密语 (`whisper`)**，自动补满 20% 品质与符文再跑分 |
 | **做装靠感觉容易血本无归** | 不懂 0.5.5 阶梯通货等级下限与词池互斥 | **精确条件词池 MDP + 蒙特卡洛 (`p50`/`p80`/`p95`)**，直接算出「自己做 vs 市集买」谁更赚 |
@@ -102,7 +102,11 @@ flowchart TB
 
 ## Windows / macOS 3 分钟上手
 
-> 完整 Windows 保姆级避坑文档（含 PowerShell 中文乱码处理、本地 PoB2 自动识别）：[docs/zh/QUICKSTART_WINDOWS.md](docs/zh/QUICKSTART_WINDOWS.md)
+> **不会命令行？最省心的方法（推荐）：** 直接把下面这句话发给你的 AI 编程/桌面客户端（**Claude Code / Cursor / Codex / Antigravity**），让 AI 全自动帮你装好：
+>
+> > *「请帮我克隆 `https://github.com/lifan-builds/poe2brain`，按照里面的 `docs/zh/QUICKSTART_WINDOWS.md` 帮我装好 `uv`、执行 `uv sync`、`uv run poe2 bootstrap pob2`，验证 `uv run poe2 version --json` 通过后帮我接好 MCP。」*
+>
+> 完整 Windows 保姆级避坑文档（含 **`Failed to spawn: poe2` 排查**、PowerShell 中文乱码、本地 PoB2 自动识别）：[docs/zh/QUICKSTART_WINDOWS.md](docs/zh/QUICKSTART_WINDOWS.md)
 
 ### 第 1 步：安装 `uv`（极速 Python 环境管理器）
 
@@ -225,6 +229,22 @@ uv run poe2 filter generate --slot main --strictness strict \
 | **过滤器工坊 (5)** | `poe2_filter_presets`, `poe2_filter_generate`, `poe2_filter_restyle`, `poe2_filter_validate`, `poe2_filter_heal` | `poe2 filter presets/generate/restyle/validate/heal` | 7 类报错校验、老过滤器自动修复、色盲主题、双人组队合并、2AM 护耳/语音播报音效 |
 
 </details>
+
+---
+
+## 国服（腾讯服）vs 国际服 & 1.0 更新计划
+
+| 功能模块 | 国际服 | 国服（腾讯服） | 说明 |
+| :--- | :---: | :---: | :--- |
+| **本地 PoB2 算伤 / 去水审计 / 切武器检查 / 符文选配** | ✅ | ✅ | 纯本地离线计算，直接读电脑里的 PoB2 存档 |
+| **0.5.5 中英文机制真值库 & 引路石/圣物/碑牌正则** | ✅ | ✅ | 内置中文检索，≤50 字符搜索正则直接粘进仓库 |
+| **国服中文剪贴板解析（含带空格 `稀 有 度:`）** | ✅ | ✅ | 支持直接 `Ctrl+C` 复制国服装备做解析与词缀评估 |
+| **防崩过滤器生成 & 老过滤器修复 & 护耳音效** | ✅ | ✅ | 本地生成/校验 `.filter`，进游戏零报错 |
+| **精确做装词池概率 & 防砸词规划 (`craft odds/plan`)** | ✅ | ✅ | 离线概率与步骤计算；自定义通货汇率即可算国服成本 |
+| **实时市集一口价捡漏 & `poe.ninja` 榜单** | ✅ | ⏳ 评估中 | 目前接入国际服公开只读接口；国服实时物价后续视零 Cookie 合规接口可行性持续跟进 |
+
+- **1.0 正式版跟进计划：** 离线数据库构建管线与无头 PoB2 引擎均为自动化更新结构；1.0 解包数据与 PoB2 天赋树发布后会第一时间同步升级。
+- **近期路线图：** 多点天赋树路径自动优化（目前支持单点/短路径推荐与可控蜕变/妄想症选孔）、按赛季实时物价自动刷新过滤器分级。
 
 ---
 

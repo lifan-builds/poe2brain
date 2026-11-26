@@ -26,6 +26,10 @@
 
 </div>
 
+> **中文玩家请直接点这里：** [**简体中文完整说明 (`README_ZH.md`)**](README_ZH.md) ｜ [**Windows 零编译保姆安装 & 报错排查**](docs/zh/QUICKSTART_WINDOWS.md) ｜ [**接入 Cursor / Claude / Cherry Studio & 中文提示词**](docs/zh/AGENT_SETUP.md)
+>
+> **不会命令行？** 直接把仓库地址 `https://github.com/lifan-builds/poe2brain` 发给你的 AI 助手（Claude Code / Cursor / Codex / Antigravity），说一句 *「帮我把 poe2brain 克隆下来并按 README_ZH.md 装好依赖、初始化 PoB2 并接入 MCP」* 即可全自动完成！
+
 > **Inspiration & Shoutout:** Inspired by **[流放降临-某雷](https://space.bilibili.com/2132384)** and [`exilemoulei/pob4agents`](https://github.com/exilemoulei/pob4agents) for pioneering agentic *Path of Exile 1* workflows. `poe2brain` is an independent clean-room engine built from the ground up specifically for **Path of Exile 2 (`0.5.5`)** — if you play PoE1, go check out [`pob4agents`](https://github.com/exilemoulei/pob4agents)!
 
 ---

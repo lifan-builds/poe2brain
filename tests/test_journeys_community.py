@@ -269,3 +269,58 @@ def test_journeys_12_and_13_pob2_weapon_swap_megalomaniac_and_rune_optimizer() -
         assert runes.pob_verified_ehp_delta > 0
     finally:
         svc.close()
+
+
+def test_conditional_support_and_speed_padding_detection() -> None:
+    from poe2brain.models.builds import BuildStats
+    from poe2brain.pob.service import _detect_conditional_support_padding
+
+    skills_padded = {
+        "socketGroups": [
+            {
+                "enabled": True,
+                "isMainSkill": True,
+                "mainActiveSkillName": "Ice Shot",
+                "gems": [
+                    {"name": "Ice Shot", "enabled": True, "isSupport": False},
+                    {"name": "Rageforged II", "enabled": True, "isSupport": True},
+                    {"name": "Minion Pact I", "enabled": True, "isSupport": True},
+                    {"name": "Ambush", "enabled": True, "isSupport": True},
+                    {"name": "Martial Tempo", "enabled": True, "isSupport": True},
+                ],
+            }
+        ]
+    }
+    stats_padded = BuildStats(
+        attack_cast_speed=11.4,
+        mana_regen=85.0,
+        mana_per_second_cost=420.0,
+        mana_sustainable=False,
+    )
+    flags = _detect_conditional_support_padding(skills_padded, stats_padded)
+    joined = "\n".join(flags)
+    assert "Rageforged II" in joined
+    assert "Minion Pact I" in joined
+    assert "Ambush" in joined
+    assert "Martial Tempo" not in joined
+    assert "11.40/s" in joined
+
+    skills_clean = {
+        "socketGroups": [
+            {
+                "enabled": True,
+                "isMainSkill": True,
+                "gems": [
+                    {"name": "Spark", "enabled": True, "isSupport": False},
+                    {"name": "Considered Casting", "enabled": True, "isSupport": True},
+                ],
+            }
+        ]
+    }
+    stats_clean = BuildStats(
+        attack_cast_speed=4.2,
+        mana_regen=220.0,
+        mana_per_second_cost=150.0,
+        mana_sustainable=True,
+    )
+    assert _detect_conditional_support_padding(skills_clean, stats_clean) == []

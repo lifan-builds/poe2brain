@@ -300,6 +300,85 @@ class LiveSlotUpgradeReport(Poe2Model):
     candidates: list[LiveUpgradeCandidate] = Field(default_factory=list)
 
 
+_CONDITIONAL_PADDING_SUPPORTS: tuple[tuple[str, str], ...] = (
+    (
+        "rageforged",
+        "Rageforged (怒火锤炼) consumes Rage per hit for conditional More damage — "
+        "verify Rage generation sustains 100% uptime in Pinnacle fights.",
+    ),
+    (
+        "minion pact",
+        "Minion Pact (召唤契约) sacrifices Minion life for conditional More damage — "
+        "verify disposable minions stay alive every cast/attack.",
+    ),
+    (
+        "ambush",
+        "Ambush only applies on Full-Life / opening hits and severely inflates sustained Boss DPS.",
+    ),
+    (
+        "execute",
+        "Execute only applies against Low-Life enemies — "
+        "check true sustained DPS rather than execute-window tooltip.",
+    ),
+    (
+        "hourglass",
+        "Hourglass adds a long cooldown for burst More damage — check sustained rotation uptime.",
+    ),
+    (
+        "exploit weakness",
+        "Exploit Weakness requires consuming Broken Armour — "
+        "verify reliable Armour Break application on bosses.",
+    ),
+    (
+        "close combat",
+        "Close Combat requires point-blank range for full More damage — "
+        "account for boss movement downtime.",
+    ),
+)
+
+
+def _detect_conditional_support_padding(
+    skills_block: Mapping[str, Any] | None,
+    sust_stats: BuildStats,
+) -> list[str]:
+    """Flag conditional burst/bait support gems and unsustainable attack/cast speed padding."""
+    flags: list[str] = []
+    if isinstance(skills_block, Mapping):
+        groups = [
+            g
+            for g in (skills_block.get("socketGroups") or [])
+            if isinstance(g, Mapping) and g.get("enabled", True)
+        ]
+        target_groups = [g for g in groups if g.get("isMainSkill")] or groups[:1]
+        seen_keys: set[str] = set()
+        for grp in target_groups:
+            for gem in grp.get("gems") or []:
+                if not isinstance(gem, Mapping) or not gem.get("enabled", True):
+                    continue
+                if not gem.get("isSupport"):
+                    continue
+                raw_name = str(gem.get("name") or "").strip()
+                low = raw_name.lower()
+                for prefix, note in _CONDITIONAL_PADDING_SUPPORTS:
+                    if low.startswith(prefix) and prefix not in seen_keys:
+                        seen_keys.add(prefix)
+                        flags.append(f"Conditional support padding ({raw_name}): {note}")
+                        break
+
+    if (
+        sust_stats.attack_cast_speed >= 8.0
+        and sust_stats.mana_per_second_cost > 0
+        and not sust_stats.mana_sustainable
+    ):
+        flags.append(
+            f"Inflated attack/cast speed ({sust_stats.attack_cast_speed:.2f}/s) exceeds "
+            f"sustainable mana recovery ({sust_stats.mana_regen:.0f}/s vs "
+            f"{sust_stats.mana_per_second_cost:.0f}/s cost) — "
+            "sheet DPS may be padded by unplayable APS/CPS."
+        )
+    return flags
+
+
 def _active_skill_names(skills_block: Mapping[str, Any] | None) -> tuple[str | None, list[str]]:
     if not isinstance(skills_block, Mapping):
         return None, []
@@ -1929,6 +2008,10 @@ class BuildService:
         if not apply_dewater and not res.get("restoredVerified", True):
             warnings.append("Warning: Post-audit snapshot verification drifted.")
 
+        support_padding_flags = _detect_conditional_support_padding(skills_info, sust_stats)
+        for sp_warn in support_padding_flags:
+            warnings.append(f"[PADDING] {sp_warn}")
+
         summary_items = res.get("items") or (
             self.bridge.call("get_build_summary", {"slot": slot, "includeItemRaw": False}).get(
                 "items"
@@ -2087,6 +2170,8 @@ class BuildService:
                 f"High PoB inflation (+{total_dps_inf:.0f}%, top culprit: {top_culprit}) — "
                 "evaluate upgrades against sustainable Pinnacle DPS rather than padded tooltip."
             )
+        if support_padding_flags:
+            bottlenecks.append(support_padding_flags[0])
 
         return DewateredAudit(
             slot_name=slot,
