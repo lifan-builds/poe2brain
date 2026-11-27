@@ -80,24 +80,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="build-index"
-          UPDATED_AT="$(python3 -c 'import json; print(json.load(open("dist/build-index/manifest.json"))["updated_at"])')"
-          SUMMARY="$(python3 -c '
+          UPDATED_AT="$(uv run python -c "import json; print(json.load(open('dist/build-index/manifest.json'))['updated_at'])")"
+          SUMMARY="$(uv run python - <<'PY'
           import json
-          m = json.load(open("dist/build-index/manifest.json"))
+          with open("dist/build-index/manifest.json", encoding="utf-8") as fh:
+              m = json.load(fh)
+          patch = m["patch"]
+          updated = m["updated_at"]
           lines = [
-            f"Rolling automated PoE2 `{m[\"patch\"]}` audited build index (updated `{m[\"updated_at\"]}`).",
-            "",
-            "| League | Mode | Builds | Live Refreshed | PoB2 Audited | Sources |",
-            "|---|---|---:|---:|---:|---|",
+              f"Rolling automated PoE2 `{patch}` audited build index (updated `{updated}`).",
+              "",
+              "| League | Mode | Builds | Live Refreshed | PoB2 Audited | Sources |",
+              "|---|---|---:|---:|---:|---|",
           ]
           for s in m["slices"]:
-            lines.append(
-              f"| {s[\"league\"]} | `{s[\"mode\"]}` | {s[\"build_count\"]} | "
-              f"{s[\"live_refreshed_count\"]} | {s[\"pob2_audited_count\"]} | "
-              f"`{\", \".join(s[\"sources\"])}` |"
-            )
+              sources = ", ".join(s["sources"])
+              lines.append(
+                  f"| {s['league']} | `{s['mode']}` | {s['build_count']} | "
+                  f"{s['live_refreshed_count']} | {s['pob2_audited_count']} | `{sources}` |"
+              )
           print("\n".join(lines))
-          ')"
+          PY
+          )"
 
           if gh release view "${TAG}" >/dev/null 2>&1; then
             gh release upload "${TAG}" dist/build-index/* --clobber
