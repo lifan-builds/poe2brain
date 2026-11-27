@@ -18,7 +18,7 @@ powershell -ExecutionPolicy ByPass -File .\scripts\install_cn.ps1
 ```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://cn.poe2brain.clifan.com/install_cn.ps1 | iex"
 ```
-*(国内代码与文档自动同步镜像：**[GitCode poe2brain](https://gitcode.com/gcw_rYL140He/poe2brain)**；只想免安装先体验的话，直接浏览器打开国内直连轻量网页版 **[cn.poe2brain.clifan.com](https://cn.poe2brain.clifan.com/)**。)*
+*(国内代码与文档自动同步镜像：**[GitCode poe2brain](https://gitcode.com/lifan-builds/poe2brain)**；只想免安装先体验的话，直接浏览器打开国内直连轻量网页版 **[cn.poe2brain.clifan.com](https://cn.poe2brain.clifan.com/)**。)*
 
 脚本会自动完成以下 5 件事：
 1. 写入国内镜像配置（**南京大学** `python-build-standalone` 镜像 + **阿里云** PyPI 镜像，失败自动切清华源）。

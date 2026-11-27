@@ -8,7 +8,7 @@
 
 param(
     [string]$InstallDir = "C:\dev\poe2brain",
-    [string]$CnGitRepoUrl = "https://gitcode.com/gcw_rYL140He/poe2brain.git",
+    [string]$CnGitRepoUrl = "https://gitcode.com/lifan-builds/poe2brain.git",
     [string]$GitRepoUrl = "https://github.com/lifan-builds/poe2brain.git",
     [string]$GitHubMirror = "https://ghfast.top/",
     [string]$PyPiMirror = "https://mirrors.aliyun.com/pypi/simple/",
