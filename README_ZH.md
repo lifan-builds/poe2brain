@@ -1,12 +1,15 @@
 <div align="center">
 
-<img src="docs/assets/hero-banner.svg" alt="poe2brain — 流放之路 2 (0.5.5) AI 智能引擎" width="100%" />
+<a href="https://poe2brain.clifan.com/">
+  <img src="docs/assets/hero-banner.jpg" alt="poe2brain — 流放之路 2 (0.5.5) AI 智能引擎" width="100%" />
+</a>
 
 <br/>
 
+[![在线体验](https://img.shields.io/badge/免安装在线体验-poe2brain.clifan.com-f0c774?style=flat-square&logo=cloudflare&logoColor=08090d)](https://poe2brain.clifan.com/)
 [![CI (Windows + macOS)](https://img.shields.io/github/actions/workflow/status/lifan-builds/poe2brain/ci.yml?branch=main&style=flat-square&label=CI%20Windows%20%2B%20macOS)](https://github.com/lifan-builds/poe2brain/actions/workflows/ci.yml)
-[![版本](https://img.shields.io/badge/流放之路2-0.5.5%20禁忌仪式-d4a24c?style=flat-square)](https://github.com/lifan-builds/poe2brain)
-[![工具数](https://img.shields.io/badge/MCP%20%2B%20CLI-42%20个全功能工具-38bdf8?style=flat-square)](#完整工具与命令速查)
+[![版本](https://img.shields.io/badge/流放之路2-0.5.5%20禁忌秘仪-d4a24c?style=flat-square)](https://github.com/lifan-builds/poe2brain)
+[![工具数](https://img.shields.io/badge/MCP%20%2B%20CLI-44%20个全功能工具-38bdf8?style=flat-square)](#完整工具与命令速查)
 [![平台](https://img.shields.io/badge/支持系统-Windows%20%7C%20macOS%20%7C%20Linux-64748b?style=flat-square)](#windows--macos-3-分钟上手)
 [![免费开源](https://img.shields.io/badge/协议-GPL--3.0--only%20完全免费开源-e11d48?style=flat-square)](LICENSE)
 
@@ -16,6 +19,7 @@
 </h3>
 
 <p>
+  <a href="https://poe2brain.clifan.com/"><strong>免安装在线实战台 ↗</strong></a> ·
   <a href="README.md">English</a> ·
   <a href="README_ZH.md"><strong>简体中文</strong></a> ·
   <a href="docs/zh/QUICKSTART_WINDOWS.md"><strong>Windows 零编译保姆教程</strong></a> ·
@@ -25,15 +29,23 @@
 
 </div>
 
+> **5 秒免安装在线体验：** 直接打开 **[poe2brain.clifan.com](https://poe2brain.clifan.com/)** —— 不用配 Python/命令行，浏览器里就能直接体验 PoB2 一键去水审计、0.5.5 真值在线问答、353 套黑马 BD 筛选、50 字防翻车引路石正则和 2AM 护耳过滤器工坊！
+>
 > **灵感致谢：** 特别感谢 UP 主 **[流放降临-某雷](https://space.bilibili.com/2132384)** 与他的流放 1 开源项目 [`exilemoulei/pob4agents`](https://github.com/exilemoulei/pob4agents) 把「PoE 接 AI 助手」这条路趟了出来！`poe2brain` 是受其启发、专为 **《流放之路 2》（`Patch 0.5.5`）** 从零独立编写的姊妹引擎；玩一代的兄弟强烈推荐去支持雷哥的 [`pob4agents`](https://github.com/exilemoulei/pob4agents)！
 
 ---
+
+<p align="center">
+  <a href="https://poe2brain.clifan.com/">
+    <img src="docs/assets/web-showcase.jpg" alt="poe2brain.clifan.com 流放之路 2 暗黑金色在线实战台预览" width="96%" />
+  </a>
+</p>
 
 ## 为什么做 `poe2brain`？（告别 AI 拿流放 1 规则胡说八道）
 
 直接拿通用大模型问《流放之路 2》配装、做装或市集捡漏，90% 会翻车：AI 会用流放 1 的老黄历告诉你「75% 格挡上限」「改造石洗词缀」「用工艺台」「用 0.4 就删掉的同质化预兆」，甚至把 PoB 战神勾选的虚高面板当成真实伤害。
 
-**`poe2brain`** 是一套 **完全免费开源、跨平台（Windows 零编译）** 的 PoE2 专属智能引擎：同一套核心同时提供 **命令行 (`poe2`)** 与 **MCP Server (`poe2brain-mcp`，42 个 1:1 工具)**，把本地后台真跑的 **Path of Building 2**、Patch `0.5.5` 离线真值数据库、实时市集一口价捡漏、做装期望求解器和防崩过滤器工坊直接交给你的 AI 助手。
+**`poe2brain`** 是一套 **完全免费开源、跨平台（Windows 零编译）** 的 PoE2 专属智能引擎：同一套核心同时提供 **命令行 (`poe2`)** 与 **MCP Server (`poe2brain-mcp`，44 个 1:1 工具)**，把本地后台真跑的 **Path of Building 2**、Patch `0.5.5` 离线真值数据库、实时市集一口价捡漏、做装期望求解器和防崩过滤器工坊直接交给你的 AI 助手。
 
 | 玩家 / AI 常见痛点 | 直接问普通 AI / 手工查表 | 用 `poe2brain` (`Patch 0.5.5`) |
 | :--- | :--- | :--- |
@@ -86,7 +98,7 @@ uv run poe2 ninja search --preset sleeper --limit 5
 flowchart TB
     A["玩家 & AI 助手<br/>Claude Code · Cursor · Antigravity · Codex · Cherry Studio"]
     A -->|JSON 命令行| CLI["poe2 (CLI)"]
-    A -->|MCP 协议| MCP["poe2brain-mcp (42 个 1:1 工具)"]
+    A -->|MCP 协议| MCP["poe2brain-mcp (44 个 1:1 工具)"]
     CLI --> CORE["Python 3.12+ 强类型核心引擎"]
     MCP --> CORE
 

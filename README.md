@@ -1,22 +1,25 @@
 <div align="center">
 
-<img src="docs/assets/hero-banner.svg" alt="poe2brain — Agent-Native Path of Exile 2 (0.5.5) Intelligence Engine" width="100%" />
+<a href="https://poe2brain.clifan.com/">
+  <img src="docs/assets/hero-banner.jpg" alt="poe2brain — Agent-Native Path of Exile 2 (0.5.5) Intelligence Engine" width="100%" />
+</a>
 
 <br/>
 
+[![Live Web App](https://img.shields.io/badge/Live%20Playground-poe2brain.clifan.com-f0c774?style=flat-square&logo=cloudflare&logoColor=08090d)](https://poe2brain.clifan.com/)
 [![CI (Windows + macOS)](https://img.shields.io/github/actions/workflow/status/lifan-builds/poe2brain/ci.yml?branch=main&style=flat-square&label=CI%20Windows%20%2B%20macOS)](https://github.com/lifan-builds/poe2brain/actions/workflows/ci.yml)
 [![Patch](https://img.shields.io/badge/PoE2-0.5.5%20Forbidden%20Rites-d4a24c?style=flat-square)](https://github.com/lifan-builds/poe2brain)
-[![MCP Tools](https://img.shields.io/badge/MCP%20%2B%20CLI-42%20Tools%20(1%3A1)-38bdf8?style=flat-square)](#11-mcp-tool--cli-command-reference)
+[![MCP Tools](https://img.shields.io/badge/MCP%20%2B%20CLI-44%20Tools%20(1%3A1)-38bdf8?style=flat-square)](#11-mcp-tool--cli-command-reference)
 [![Platforms](https://img.shields.io/badge/OS-Windows%20%7C%20macOS%20%7C%20Linux-64748b?style=flat-square)](#60-second-quickstart)
-[![Python](https://img.shields.io/badge/Python-3.12%2B-3776ab?style=flat-square)](pyproject.toml)
 [![License](https://img.shields.io/badge/License-GPL--3.0--only-e11d48?style=flat-square)](LICENSE)
 
 <h3>
-  Give Claude Code, Cursor, Antigravity, Codex, or any MCP agent<br/>
-  real Path of Exile 2 (<code>0.5.5</code>) math — zero PoE1 hallucinations, zero <code>POESESSID</code>.
+  Give yourself — and Claude Code, Cursor, Antigravity, Codex, or Cherry Studio —<br/>
+  real Path of Exile 2 (<code>0.5.5</code>) math. Zero PoE1 hallucinations. Zero <code>POESESSID</code>.
 </h3>
 
 <p>
+  <a href="https://poe2brain.clifan.com/"><strong>Try Live Web App ↗</strong></a> ·
   <a href="README.md"><strong>English</strong></a> ·
   <a href="README_ZH.md"><strong>简体中文</strong></a> ·
   <a href="docs/zh/QUICKSTART_WINDOWS.md">Windows 保姆安装</a> ·
@@ -26,19 +29,29 @@
 
 </div>
 
-> **中文玩家请直接点这里：** [**简体中文完整说明 (`README_ZH.md`)**](README_ZH.md) ｜ [**Windows 零编译保姆安装 & 报错排查**](docs/zh/QUICKSTART_WINDOWS.md) ｜ [**接入 Cursor / Claude / Cherry Studio & 中文提示词**](docs/zh/AGENT_SETUP.md)
+> **Try It in 5 Seconds (Zero Install):** Open **[poe2brain.clifan.com](https://poe2brain.clifan.com/)** to run live PoB2 dewatering audits, ask Patch `0.5.5` questions with grounded tool receipts, explore 353 pre-audited sleeper builds, compile `<=50`-char Waystone stash regexes, and preview 2AM CVD-safe loot filters right in your browser.
+>
+> **中文玩家请直接点这里：** [**免安装在线体验 (`poe2brain.clifan.com`)**](https://poe2brain.clifan.com/) ｜ [**简体中文完整说明 (`README_ZH.md`)**](README_ZH.md) ｜ [**Windows 零编译保姆安装**](docs/zh/QUICKSTART_WINDOWS.md) ｜ [**AI 客户端接入与提示词**](docs/zh/AGENT_SETUP.md)
 >
 > **不会命令行？** 直接把仓库地址 `https://github.com/lifan-builds/poe2brain` 发给你的 AI 助手（Claude Code / Cursor / Codex / Antigravity），说一句 *「帮我把 poe2brain 克隆下来并按 README_ZH.md 装好依赖、初始化 PoB2 并接入 MCP」* 即可全自动完成！
-
+>
 > **Inspiration & Shoutout:** Inspired by **[流放降临-某雷](https://space.bilibili.com/2132384)** and [`exilemoulei/pob4agents`](https://github.com/exilemoulei/pob4agents) for pioneering agentic *Path of Exile 1* workflows. `poe2brain` is an independent clean-room engine built from the ground up specifically for **Path of Exile 2 (`0.5.5`)** — if you play PoE1, go check out [`pob4agents`](https://github.com/exilemoulei/pob4agents)!
 
 ---
+
+## Live Browser Workbench & Local Power Tier
+
+<p align="center">
+  <a href="https://poe2brain.clifan.com/">
+    <img src="docs/assets/web-showcase.jpg" alt="poe2brain.clifan.com live dark-fantasy PoE2 workbench featuring Rare Item Tooltip normalization, 5 live portals, and glowing loot beams" width="96%" />
+  </a>
+</p>
 
 ## Why `poe2brain`?
 
 General-purpose LLMs constantly hallucinate **Path of Exile 1** mechanics onto **Path of Exile 2** — quoting `75%` Block caps, Scouring Orbs, Crafting Bench mods, removed `0.4` Homogenising Omens, or fake PoB-warrior DPS inflated by unsustainable flasks and 100% Shock.
 
-**`poe2brain`** replaces guesswork with a single typed Python 3.12+ engine exposing **42 MCP tools** (`poe2brain-mcp`) and **1:1 JSON CLI commands** (`poe2 ... --json`) backed by live headless **PathOfBuilding-PoE2**, an offline Patch `0.5.5` SQLite + FTS5 database, official `trade2` pricing, exact crafting probability solvers, and a self-validating loot filter studio.
+**`poe2brain`** replaces guesswork with a single typed Python 3.12+ engine exposing **44 MCP tools** (`poe2brain-mcp`) and **1:1 JSON CLI commands** (`poe2 ... --json`) backed by live headless **PathOfBuilding-PoE2**, an offline Patch `0.5.5` SQLite + FTS5 database, official `trade2` pricing, exact crafting probability solvers, and a self-validating loot filter studio.
 
 | Problem Players & AI Agents Hit | Generic LLM / Ad-Hoc Scripts | `poe2brain` (`Patch 0.5.5`) |
 | :--- | :--- | :--- |
@@ -107,7 +120,7 @@ uv run poe2 filter generate --slot main --strictness strict \
 flowchart TB
     A["AI Agents & Players<br/>Claude Code · Cursor · Antigravity · Codex · Devin · Terminal"]
     A -->|JSON-first CLI| CLI["poe2 (Typer)"]
-    A -->|stdio MCP| MCP["poe2brain-mcp (42 Tools, 1:1 Parity)"]
+    A -->|stdio MCP| MCP["poe2brain-mcp (44 Tools, 1:1 Parity)"]
     CLI --> CORE["Typed Python 3.12+ Domain Core"]
     MCP --> CORE
 
