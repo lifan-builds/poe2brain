@@ -14,10 +14,11 @@ cd C:\dev\poe2brain
 powershell -ExecutionPolicy ByPass -File .\scripts\install_cn.ps1
 ```
 
-### 方式 2：全自动拉取 + 安装（自动走国内镜像，没装 Git 也能用）
+### 方式 2：全自动拉取 + 安装（走国内镜像站直连，无需 Git 也不卡 GitHub）
 ```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://ghfast.top/https://raw.githubusercontent.com/lifan-builds/poe2brain/main/scripts/install_cn.ps1 | iex"
+powershell -ExecutionPolicy ByPass -c "irm https://cn.poe2brain.clifan.com/install_cn.ps1 | iex"
 ```
+*(备用镜像链接：`irm https://ghfast.top/https://raw.githubusercontent.com/lifan-builds/poe2brain/main/scripts/install_cn.ps1 | iex`；只想免安装先体验的话，直接浏览器打开国内直连轻量网页版 **[cn.poe2brain.clifan.com](https://cn.poe2brain.clifan.com/)**。)*
 
 脚本会自动完成以下 5 件事：
 1. 写入国内镜像配置（**南京大学** `python-build-standalone` 镜像 + **阿里云** PyPI 镜像，失败自动切清华源）。

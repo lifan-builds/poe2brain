@@ -8,9 +8,9 @@
 > ```powershell
 > powershell -ExecutionPolicy ByPass -File .\scripts\install_cn.ps1
 > ```
-> 或在线一行拉取并安装（详见 **[国内免代理一键装 &amp; Cherry Studio / Trae 零 JSON 接入指南](CN_FREE_SETUP.md)**）：
+> 或在线一行拉取并安装（走国内镜像站直连，详见 **[国内免代理一键装 &amp; Cherry Studio / Trae 零 JSON 接入指南](CN_FREE_SETUP.md)**）：
 > ```powershell
-> powershell -ExecutionPolicy ByPass -c "irm https://ghfast.top/https://raw.githubusercontent.com/lifan-builds/poe2brain/main/scripts/install_cn.ps1 | iex"
+> powershell -ExecutionPolicy ByPass -c "irm https://cn.poe2brain.clifan.com/install_cn.ps1 | iex"
 > ```
 > 装完直接跑 `uv run poe2 setup-mcp --client cherry --profile core --copy`（或 `--client trae` / `cursor`）即可零 JSON 接入；排错用 `uv run poe2 doctor --network`，后续升 1.0 用 `uv run poe2 update --cn --force-pob2`，卸载用 `uv run poe2 uninstall`。
 

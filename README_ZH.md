@@ -141,7 +141,7 @@ flowchart TB
 >
 > 完整 Windows 保姆级避坑文档（含 **`Failed to spawn: poe2` 排查**、PowerShell 中文乱码、本地 PoB2 自动识别）：[docs/zh/QUICKSTART_WINDOWS.md](docs/zh/QUICKSTART_WINDOWS.md)
 >
-> **可选网页试用：** 另有轻量网页版 [poe2brain.clifan.com](https://poe2brain.clifan.com/)（部署在海外节点，国内网络可能无法直连；完整无头 PoB2、本地存档与 MCP 接入推荐使用下方本地安装）。
+> **可选网页试用：** 另有免安装轻量网页版 —— **国内直连镜像 [cn.poe2brain.clifan.com](https://cn.poe2brain.clifan.com/)**（腾讯云 EdgeOne 边缘节点）｜海外主站 [poe2brain.clifan.com](https://poe2brain.clifan.com/)；完整无头 PoB2、本地存档与 MCP 接入推荐使用下方本地安装。
 
 ### 第 1 步：安装 `uv`（极速 Python 环境管理器）
 
