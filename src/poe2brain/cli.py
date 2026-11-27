@@ -283,13 +283,21 @@ def wiki_mechanic_cmd(
             help="Mechanic topic or abbreviation (e.g. conversion, block, CI, ES, support)."
         ),
     ],
-    limit: Annotated[int, typer.Option("--limit", "-n", help="Max facts/keywords to return.")] = 6,
+    limit: Annotated[int, typer.Option("--limit", "-n", help="Max facts/keywords to return.")] = 4,
+    compact: Annotated[
+        bool,
+        typer.Option("--compact", help="Omit verbose keyword popups and duplicate trap warnings."),
+    ] = False,
     json_output: JsonOpt = False,
 ) -> None:
     """Explain a PoE2 0.5.5 mechanic with anti-hallucination trap warnings and exact formulas."""
 
     def _compute() -> dict[str, Any]:
-        return get_knowledge_service().explain_mechanic(topic, limit=limit).model_dump(mode="json")
+        return (
+            get_knowledge_service()
+            .explain_mechanic(topic, limit=limit, compact=compact)
+            .model_dump(mode="json")
+        )
 
     def _render(data: dict[str, Any]) -> None:
         console.print(f"[bold cyan]PoE2 0.5.5 Mechanic:[/bold cyan] {topic}")
@@ -1205,10 +1213,12 @@ def pob_runes_cmd(
                 cost_s,
             )
         console.print(table)
+        cost_val = data.get("estimated_total_cost_exalted")
+        cost_str = f"{cost_val:,.1f} ex" if isinstance(cost_val, (int, float)) else "unavailable"
         console.print(
             f"PoB2 Verified Δ: DPS {data['pob_verified_dps_delta']:+,.1f} | "
             f"EHP {data['pob_verified_ehp_delta']:+,.1f} | "
-            f"Est Cost: {data['estimated_total_cost_exalted']:,.1f} ex"
+            f"Est Cost: {cost_str}"
         )
 
     _run_cli(json_output, _compute, _render)
@@ -1294,6 +1304,20 @@ def pob_supports_cmd(
         str | None,
         typer.Option("--replace-gem", help="Existing support gem name substring to swap out."),
     ] = None,
+    best_swap: Annotated[
+        bool,
+        typer.Option(
+            "--best-swap",
+            help="When 5/5 supports are filled, auto-replace the weakest socketed support.",
+        ),
+    ] = False,
+    dewater: Annotated[
+        bool,
+        typer.Option(
+            "--dewater",
+            help="Rank supports against dewatered sustainable Pinnacle config (non-destructive).",
+        ),
+    ] = False,
     max_tier: Annotated[
         int | None,
         typer.Option("--max-tier", help="Maximum Uncut Support Gem Tier (1-5)."),
@@ -1322,6 +1346,8 @@ def pob_supports_cmd(
             group_index=group_index,
             replace_gem_slot=replace_gem_slot,
             replace_gem=replace_gem,
+            best_swap=best_swap,
+            dewater=dewater,
             max_tier=max_tier,
             include_lineage=include_lineage,
             exclude_lineage_conflicts=exclude_lineage_conflicts,
@@ -1329,6 +1355,8 @@ def pob_supports_cmd(
         )
 
     def _render(data: dict[str, Any]) -> None:
+        for w in data.get("warnings", []):
+            console.print(f"[yellow]Warning:[/yellow] {w}")
         cur_supps = ", ".join(data.get("current_supports", [])) or "none"
         table = Table(
             title=(
@@ -1354,6 +1382,8 @@ def pob_supports_cmd(
                 notes.append("mana-unsustainable")
             if c.get("spirit_overflow"):
                 notes.append("spirit-overflow")
+            elif c.get("spirit_already_overflowing"):
+                notes.append("spirit-already-over")
             if not c.get("attributes_met_after", True):
                 notes.append("attr-short")
             table.add_row(

@@ -1,0 +1,18 @@
+Item Class: Wands
+Rarity: Normal
+Siphoning Wand
+--------
+Quality: +20% (augmented)
+--------
+Item Level: 82
+
+Item Class: Rings
+Rarity: Rare
+Bramble Coil
+Iron Ring
+--------
+Item Level: 68
+--------
++12 to maximum Life
++8% to Fire Resistance
++5 to Accuracy Rating

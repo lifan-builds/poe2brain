@@ -267,7 +267,7 @@ class RuneOptimizationReport(Poe2Model):
     weapon_sockets: int = 0
     resist_deficits_before: dict[str, float] = Field(default_factory=dict)
     recommendations: list[RuneSocketRecommendation] = Field(default_factory=list)
-    estimated_total_cost_exalted: float = 0.0
+    estimated_total_cost_exalted: float | None = None
     pob_verified_dps_delta: float = 0.0
     pob_verified_ehp_delta: float = 0.0
     pob_verified_resists_after: dict[str, float] = Field(default_factory=dict)
@@ -498,6 +498,7 @@ class SupportGemCandidate(Poe2Model):
     mana_sustainable_after: bool = True
     spirit_unreserved_before: int = 0
     spirit_unreserved_after: int = 0
+    spirit_already_overflowing: bool = False
     spirit_overflow: bool = False
     attributes_met_after: bool = True
 
@@ -508,6 +509,11 @@ class SupportGemRankingReport(Poe2Model):
     replace_gem_slot: int | None = None
     active_skill_label: str = ""
     current_supports: list[str] = Field(default_factory=list)
+    max_support_sockets: int = 5
+    supports_full: bool = False
+    hypothetical_extra_socket: bool = False
+    best_swap: bool = False
+    dewatered: bool = False
     max_tier: int | None = None
     include_lineage: bool = True
     total_valid: int = 0

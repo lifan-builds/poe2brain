@@ -19,6 +19,50 @@ _NEGATION_WINDOW_RE = re.compile(
 )
 _BACKTICK_RE = re.compile(r"`([^`\n]+)`")
 _QUOTED_EXCL_RE = re.compile(r'!"([^"\n]+)"')
+_QUOTED_POS_RE = re.compile(r'"([^"\n]+)"')
+
+
+def _eval_poe2_juicing_regex(answer: str, check: dict[str, Any]) -> tuple[bool, str]:
+    max_chars = int(check.get("max_chars", 50))
+    must_match = check.get("must_match_mods", [])
+    must_not_match = check.get("must_not_match_mods", [])
+
+    candidates: list[str] = []
+    for m in _BACKTICK_RE.finditer(answer):
+        s = m.group(1).strip()
+        if s.startswith('"') and s.endswith('"') and len(s) >= 3:
+            candidates.append(s)
+        elif "|" in s and not s.startswith("!"):
+            candidates.append(f'"{s}"')
+    for m in _QUOTED_POS_RE.finditer(answer):
+        s = m.group(0).strip()
+        if "|" in s and not answer[max(0, m.start() - 1) : m.start()] == "!":
+            candidates.append(s)
+
+    seen: set[str] = set()
+    uniq = [c for c in candidates if not (c in seen or seen.add(c))]
+    if not uniq:
+        return False, "No positive PoE2 stash juicing regex found in answer"
+
+    best_err = ""
+    for cand in uniq:
+        if len(cand) > max_chars:
+            best_err = f"Candidate `{cand}` has length {len(cand)} > {max_chars}"
+            continue
+        inner = cand[1:-1]
+        try:
+            compiled = re.compile(inner, re.IGNORECASE)
+        except re.error as exc:
+            best_err = f"Invalid regex `{inner}`: {exc}"
+            continue
+        missed = [mod for mod in must_match if not compiled.search(mod)]
+        false_pos = [mod for mod in must_not_match if compiled.search(mod)]
+        if not missed and not false_pos:
+            return True, f"Valid {len(cand)}-char PoE2 juicing regex `{cand}`"
+        best_err = (
+            f"Candidate `{cand}` (len={len(cand)}) missed={len(missed)} false_pos={len(false_pos)}"
+        )
+    return False, best_err or "No valid PoE2 juicing regex matched all targets"
 
 
 def _normalize_text(text: str) -> str:
@@ -150,6 +194,10 @@ def _eval_check(raw_answer: str, norm_answer: str, check: dict[str, Any]) -> dic
 
     if ctype == "poe2_waystone_regex":
         ok, detail = _eval_poe2_waystone_regex(raw_answer, check)
+        return {"id": cid, "label": label, "passed": ok, "detail": detail}
+
+    if ctype == "poe2_juicing_regex":
+        ok, detail = _eval_poe2_juicing_regex(raw_answer, check)
         return {"id": cid, "label": label, "passed": ok, "detail": detail}
 
     raise ValueError(f"Unknown check type: {ctype}")

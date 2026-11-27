@@ -1,7 +1,7 @@
 {
   "benchmark_id": "PoE2Bench-0.5.5",
   "patch": "0.5.5",
-  "run_at_utc": "2026-11-27T05:14:45.290950+00:00",
+  "run_at_utc": "2026-11-27T06:13:04.672052+00:00",
   "runner": "codex-cli",
   "model": "gpt-6.2-astra",
   "modes": {
@@ -9,48 +9,48 @@
       "summary": {
         "benchmark_id": "PoE2Bench-0.5.5",
         "patch": "0.5.5",
-        "total_questions": 16,
-        "questions_passed": 5,
-        "pass_rate_pct": 31.2,
-        "checks_passed": 28,
-        "checks_total": 52,
-        "check_accuracy_pct": 53.8,
-        "hallucinated_questions": 3,
-        "hallucination_rate_pct": 18.8,
+        "total_questions": 22,
+        "questions_passed": 6,
+        "pass_rate_pct": 27.3,
+        "checks_passed": 38,
+        "checks_total": 75,
+        "check_accuracy_pct": 50.7,
+        "hallucinated_questions": 4,
+        "hallucination_rate_pct": 18.2,
         "by_pillar": {
           "Mechanics & Defences": {
             "total": 4,
             "passed": 2,
-            "checks_passed": 8,
+            "checks_passed": 10,
             "checks_total": 12,
             "hallucinated": 1
           },
           "Roster & Bases": {
-            "total": 2,
-            "passed": 1,
-            "checks_passed": 5,
-            "checks_total": 6,
+            "total": 3,
+            "passed": 2,
+            "checks_passed": 8,
+            "checks_total": 9,
             "hallucinated": 0
           },
           "Crafting": {
             "total": 4,
-            "passed": 1,
-            "checks_passed": 5,
+            "passed": 0,
+            "checks_passed": 4,
             "checks_total": 13,
             "hallucinated": 1
           },
           "Atlas & Regex": {
-            "total": 3,
-            "passed": 0,
-            "checks_passed": 2,
-            "checks_total": 8,
-            "hallucinated": 1
+            "total": 4,
+            "passed": 1,
+            "checks_passed": 4,
+            "checks_total": 10,
+            "hallucinated": 2
           },
           "Headless PoB2": {
-            "total": 2,
+            "total": 6,
             "passed": 0,
-            "checks_passed": 3,
-            "checks_total": 8,
+            "checks_passed": 7,
+            "checks_total": 26,
             "hallucinated": 0
           },
           "Loot Filters": {
@@ -98,9 +98,9 @@
             "title": "Passive Block Cap (50%), Glancing Blows & Deflection Layer",
             "pillar": "Mechanics & Defences",
             "passed": false,
-            "checks_passed": 0,
+            "checks_passed": 2,
             "total_checks": 3,
-            "check_accuracy": 0.0,
+            "check_accuracy": 0.6667,
             "hallucinated": true,
             "triggered_traps": [
               {
@@ -116,8 +116,8 @@
               {
                 "id": "block_cap_50",
                 "label": "Base passive Block cap is 50%",
-                "passed": false,
-                "detail": "missing"
+                "passed": true,
+                "detail": "matched"
               },
               {
                 "id": "glancing_blows_evade_deflect",
@@ -128,8 +128,8 @@
               {
                 "id": "deflection_40_95",
                 "label": "Deflection prevents 40% damage and caps at 95% chance",
-                "passed": false,
-                "detail": "missing 1/3"
+                "passed": true,
+                "detail": "matched"
               }
             ]
           },
@@ -297,10 +297,10 @@
             "id": "Q08",
             "title": "Removed 0.4/0.5 Levers, Perfect Essences, Fracturing & Whittling",
             "pillar": "Crafting",
-            "passed": true,
-            "checks_passed": 3,
+            "passed": false,
+            "checks_passed": 2,
             "total_checks": 3,
-            "check_accuracy": 1.0,
+            "check_accuracy": 0.6667,
             "hallucinated": false,
             "triggered_traps": [],
             "check_results": [
@@ -313,8 +313,8 @@
               {
                 "id": "perfect_vs_regular_essence",
                 "label": "Regular Essences: Magic->Rare; Perfect Essences: Rare remove-1 add-1",
-                "passed": true,
-                "detail": "matched"
+                "passed": false,
+                "detail": "missing 1/2"
               },
               {
                 "id": "fracture_4_and_whittling_level",
@@ -442,12 +442,17 @@
             "checks_passed": 0,
             "total_checks": 1,
             "check_accuracy": 0.0,
-            "hallucinated": false,
-            "triggered_traps": [],
+            "hallucinated": true,
+            "triggered_traps": [
+              {
+                "id": "bad_quote_negation",
+                "label": "Put `!` inside quotes (`\"!...\"`) instead of PoE2's `!...` outside quotes"
+              }
+            ],
             "check_results": [
               {
                 "id": "valid_poe2_safe_regex",
-                "label": "Contains a valid <=50-char PoE2 negated stash regex (!\"...\") matching all 4 es_ci brick mods",
+                "label": "Contains a valid <=50-char PoE2 negated stash regex (!\"...\") matching all 6 es_ci brick mods",
                 "passed": false,
                 "detail": "No PoE2 negated stash regex (!\"...\") found in answer"
               }
@@ -501,9 +506,9 @@
             "title": "Headless PoB2 Exact Support Gem Sweep (Amazon Ice Shot 0.5.5)",
             "pillar": "Headless PoB2",
             "passed": false,
-            "checks_passed": 1,
+            "checks_passed": 0,
             "total_checks": 3,
-            "check_accuracy": 0.3333,
+            "check_accuracy": 0.0,
             "hallucinated": false,
             "triggered_traps": [],
             "check_results": [
@@ -522,8 +527,8 @@
               {
                 "id": "no_spirit_overflow",
                 "label": "Confirms adding it does not cause Spirit overflow (false)",
-                "passed": true,
-                "detail": "matched"
+                "passed": false,
+                "detail": "missing"
               }
             ]
           },
@@ -600,6 +605,222 @@
                 "detail": "missing 2/3"
               }
             ]
+          },
+          {
+            "id": "Q17",
+            "title": "Headless PoB2 Legal 6-Link Dewatered Support Swap (--best-swap --dewater)",
+            "pillar": "Headless PoB2",
+            "passed": false,
+            "checks_passed": 0,
+            "total_checks": 5,
+            "check_accuracy": 0.0,
+            "hallucinated": false,
+            "triggered_traps": [],
+            "check_results": [
+              {
+                "id": "weakest_stoicism",
+                "label": "Identifies Stoicism II as weakest socketed support replaced",
+                "passed": false,
+                "detail": "missing"
+              },
+              {
+                "id": "top_swap_hit_and_run",
+                "label": "Identifies Hit and Run as #1 legal 6-link swap",
+                "passed": false,
+                "detail": "missing"
+              },
+              {
+                "id": "dewatered_after_170344",
+                "label": "Reports dewatered DPS after swap ≈ 170,344 (±3%) and +40.0% gain (±2pp)",
+                "passed": false,
+                "detail": "target 170344.0 not within tolerance (closest diff=67592.62360001)"
+              },
+              {
+                "id": "dewatered_gain_40",
+                "label": "Reports ~40.0% DPS gain (±2pp)",
+                "passed": false,
+                "detail": "target 40.0 not within tolerance (closest diff=None)"
+              },
+              {
+                "id": "elemental_focus_attrs_met",
+                "label": "Confirms Elemental Focus meets attribute requirements (true)",
+                "passed": false,
+                "detail": "missing"
+              }
+            ]
+          },
+          {
+            "id": "Q18",
+            "title": "Headless PoB2 HC Pinnacle Audit, Spirit Reconciliation & Dewatered Defensive Passives",
+            "pillar": "Headless PoB2",
+            "passed": false,
+            "checks_passed": 2,
+            "total_checks": 4,
+            "check_accuracy": 0.5,
+            "hallucinated": false,
+            "triggered_traps": [],
+            "check_results": [
+              {
+                "id": "hc_max_hits",
+                "label": "Reports exact Max Hits: 3,340 Phys, 11,296 Ele, 3,877 Chaos",
+                "passed": true,
+                "detail": "matched"
+              },
+              {
+                "id": "spirit_reconciled",
+                "label": "Reconciles Spirit: 139 total, 235 reserved, -96 unreserved",
+                "passed": true,
+                "detail": "matched"
+              },
+              {
+                "id": "shimmering_21pct",
+                "label": "Identifies Shimmering (~21.0% dewatered EHP gain)",
+                "passed": false,
+                "detail": "missing 1/2"
+              },
+              {
+                "id": "careful_consideration_31_6pct",
+                "label": "Identifies Careful Consideration (~31.6% dewatered EHP gain)",
+                "passed": false,
+                "detail": "missing 1/2"
+              }
+            ]
+          },
+          {
+            "id": "Q19",
+            "title": "Headless PoB2 Rune Resist Tetris with Socket-Bound Augment Lock",
+            "pillar": "Headless PoB2",
+            "passed": false,
+            "checks_passed": 2,
+            "total_checks": 5,
+            "check_accuracy": 0.4,
+            "hallucinated": false,
+            "triggered_traps": [],
+            "check_results": [
+              {
+                "id": "eleven_sockets_kolrs_hunt",
+                "label": "11 overwriteable sockets; Kolr's Hunt on Sol Claw Gloves locked",
+                "passed": true,
+                "detail": "matched"
+              },
+              {
+                "id": "tacati_3_to_60_chaos",
+                "label": "3 Soul Core of Tacati raising Chaos Resistance to 60%",
+                "passed": false,
+                "detail": "missing 2/3"
+              },
+              {
+                "id": "true_net_dps_delta",
+                "label": "True net DPS delta ≈ -43,108 (±4%)",
+                "passed": false,
+                "detail": "target -43108.0 not within tolerance (closest diff=43110.0)"
+              },
+              {
+                "id": "true_net_ehp_delta",
+                "label": "True net EHP delta ≈ +2,017 (±5%)",
+                "passed": false,
+                "detail": "target 2017.0 not within tolerance (closest diff=1942.0)"
+              },
+              {
+                "id": "offline_cost_null",
+                "label": "Reports offline estimated_total_cost_exalted as null/unavailable",
+                "passed": true,
+                "detail": "matched"
+              }
+            ]
+          },
+          {
+            "id": "Q20",
+            "title": "Bilingual Chinese (zh-CN) Lookup & Tencent Spaced Clipboard Parsing",
+            "pillar": "Roster & Bases",
+            "passed": true,
+            "checks_passed": 3,
+            "total_checks": 3,
+            "check_accuracy": 1.0,
+            "hallucinated": false,
+            "triggered_traps": [],
+            "check_results": [
+              {
+                "id": "zh_stormweaver",
+                "label": "Sorceress / Stormweaver with 10 notables and Elemental Storm",
+                "passed": true,
+                "detail": "matched"
+              },
+              {
+                "id": "zh_rakiata_flow",
+                "label": "Rakiata's Flow Lineage Support, max 1 copy per char",
+                "passed": true,
+                "detail": "matched"
+              },
+              {
+                "id": "zh_bow_parsed_vals",
+                "label": "Parsed ilvl 82, 20% quality, and explicit rolls 145, 22-44, 18, 27",
+                "passed": true,
+                "detail": "matched"
+              }
+            ]
+          },
+          {
+            "id": "Q21",
+            "title": "Compiled <=50-Char Waystone Juicing Regex (120%/20%) & Max-Res Math",
+            "pillar": "Atlas & Regex",
+            "passed": true,
+            "checks_passed": 2,
+            "total_checks": 2,
+            "check_accuracy": 1.0,
+            "hallucinated": false,
+            "triggered_traps": [],
+            "check_results": [
+              {
+                "id": "valid_juicing_regex",
+                "label": "Valid <=50-char PoE2 juicing regex matching 120%/1000% drop & 20%/100% pack, rejecting 119%/19%",
+                "passed": true,
+                "detail": "Valid 50-char PoE2 juicing regex `\"(p c.*\\+(1[2-9]|[2-9].|...)|size:..([2-9]|..))\\d\"`"
+              },
+              {
+                "id": "max_res_12_to_32",
+                "label": "Reports 12% to 32% more elemental damage taken",
+                "passed": true,
+                "detail": "matched"
+              }
+            ]
+          },
+          {
+            "id": "Q22",
+            "title": "Headless PoB2 Exact What-If Delta & Offline Quad-Tab Triage",
+            "pillar": "Headless PoB2",
+            "passed": false,
+            "checks_passed": 1,
+            "total_checks": 4,
+            "check_accuracy": 0.25,
+            "hallucinated": false,
+            "triggered_traps": [],
+            "check_results": [
+              {
+                "id": "rage0_after_160418",
+                "label": "Reports DPS after multiplierRage=0 ≈ 160,418 (±3%)",
+                "passed": false,
+                "detail": "target 160418.0 not within tolerance (closest diff=22602.436648829986)"
+              },
+              {
+                "id": "rage0_drop_32_6pct",
+                "label": "Reports ~-32.6% (or 32.6%) DPS drop (±2pp)",
+                "passed": false,
+                "detail": "missing"
+              },
+              {
+                "id": "wand_3p_3s_open",
+                "label": "Reports 3 open prefixes and 3 open suffixes on Normal Siphoning Wand",
+                "passed": true,
+                "detail": "matched"
+              },
+              {
+                "id": "ring_salvage_or_vendor",
+                "label": "Assigns Iron Ring to salvage_or_vendor bucket",
+                "passed": false,
+                "detail": "missing"
+              }
+            ]
           }
         ]
       },
@@ -609,144 +830,198 @@
           "mode": "baseline",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 10.83,
-          "answer": "(a) **0%.** Converted damage scales with its final damage type. After 100% Physical-to-Lightning conversion, global increased Physical Damage has no effect on that Lightning damage.\n\n(b) **Multiplicative.** At 20% Quality, the weapon’s local physical damage is multiplied by **1.20** after local increased Physical Damage is applied.\n\n(c) **+100%** base Critical Hit Damage Bonus, for a total critical hit multiplier of **2.00×**.",
-          "stderr_tail": "ical damage to Lightning, how much does global '% increased Physical Damage' on the passive tree scale that converted Lightning damage? (b) Is +20% Quality on a Martial Weapon additive with local '% increased Physical Damage' or multiplicative (MORE)? (c) What is a player's inherent base Critical Hit Damage Bonus (and total crit multiplier)?\n\ncodex\n(a) **0%.** Converted damage scales with its final damage type. After 100% Physical-to-Lightning conversion, global increased Physical Damage has no effect on that Lightning damage.\n\n(b) **Multiplicative.** At 20% Quality, the weapon’s local physical damage is multiplied by **1.20** after local increased Physical Damage is applied.\n\n(c) **+100%** base Critical Hit Damage Bonus, for a total critical hit multiplier of **2.00×**.\ntokens used\n7,038\n"
+          "elapsed_s": 10.81,
+          "answer": "(a) **0%.** After 100% Physical-to-Lightning conversion, the damage scales as Lightning. Global increased Physical Damage on the passive tree gives it no bonus.\n\n(b) **Multiplicative.** At +20% Quality, a Martial Weapon’s physical damage is **1.20×** its value at 0% Quality, including local increased Physical Damage.\n\n(c) **+100% Critical Hit Damage Bonus**, for a total base crit multiplier of **200% (2×)**.",
+          "stderr_tail": "nverts 100% of Physical damage to Lightning, how much does global '% increased Physical Damage' on the passive tree scale that converted Lightning damage? (b) Is +20% Quality on a Martial Weapon additive with local '% increased Physical Damage' or multiplicative (MORE)? (c) What is a player's inherent base Critical Hit Damage Bonus (and total crit multiplier)?\n\ncodex\n(a) **0%.** After 100% Physical-to-Lightning conversion, the damage scales as Lightning. Global increased Physical Damage on the passive tree gives it no bonus.\n\n(b) **Multiplicative.** At +20% Quality, a Martial Weapon’s physical damage is **1.20×** its value at 0% Quality, including local increased Physical Damage.\n\n(c) **+100% Critical Hit Damage Bonus**, for a total base crit multiplier of **200% (2×)**.\ntokens used\n1,772\n"
         },
         "Q04": {
           "id": "Q04",
           "mode": "baseline",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 13.36,
-          "answer": "(a) **Yes.** You can use the same standard Support Gem on multiple skills, with a limit of **one copy per skill**.\n\n(b) **No.** Rakiata’s Flow is a drop-only Lineage Support. You can socket **one copy per character** across all skills.\n\n(c) **No.** Grim Feast no longer grants Energy Shield overflow.",
-          "stderr_tail": "search the web or run external game-data tools. Give a concise, direct, technically precise answer covering every sub-question with exact numbers and rules.\n\nQuestion (Q04):\nIn PoE2 Patch 0.5.5: (a) Can you equip multiple copies of the same standard Support Gem across different skills on one character? (b) Can you engrave 'Rakiata's Flow' from an Uncut Support Gem, and what is the per-character copy limit on it? (c) Does 'Grim Feast' still grant Energy Shield overflow?\n\ncodex\n(a) **Yes.** You can use the same standard Support Gem on multiple skills, with a limit of **one copy per skill**.\n\n(b) **No.** Rakiata’s Flow is a drop-only Lineage Support. You can socket **one copy per character** across all skills.\n\n(c) **No.** Grim Feast no longer grants Energy Shield overflow.\ntokens used\n7,183\n"
+          "elapsed_s": 12.6,
+          "answer": "(a) **Yes.** Different skills can each use a copy of the same standard Support Gem. A single skill can use only **1 copy** of that support.\n\n(b) **No.** Rakiata’s Flow is a drop-only Lineage Support and cannot be engraved from an Uncut Support Gem. You can equip **1 copy per character**.\n\n(c) **No.** Grim Feast no longer grants Energy Shield overflow.",
+          "stderr_tail": "a concise, direct, technically precise answer covering every sub-question with exact numbers and rules.\n\nQuestion (Q04):\nIn PoE2 Patch 0.5.5: (a) Can you equip multiple copies of the same standard Support Gem across different skills on one character? (b) Can you engrave 'Rakiata's Flow' from an Uncut Support Gem, and what is the per-character copy limit on it? (c) Does 'Grim Feast' still grant Energy Shield overflow?\n\ncodex\n(a) **Yes.** Different skills can each use a copy of the same standard Support Gem. A single skill can use only **1 copy** of that support.\n\n(b) **No.** Rakiata’s Flow is a drop-only Lineage Support and cannot be engraved from an Uncut Support Gem. You can equip **1 copy per character**.\n\n(c) **No.** Grim Feast no longer grants Energy Shield overflow.\ntokens used\n7,111\n"
         },
         "Q01": {
           "id": "Q01",
           "mode": "baseline",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 17.3,
-          "answer": "**(a)** Non-poison Chaos hits damage Energy Shield first. Each 1 point of Chaos damage after mitigation removes 2 Energy Shield. Once the shield is depleted, any remaining Chaos damage applies to Life at 1:1.\n\n**(b)** Yes. Both Bleeding and Poison bypass Energy Shield and deal their damage over time directly to Life.\n\n**(c)** No. Only physical hit damage dealt to **Life** contributes to Bleeding. A hit fully absorbed by Energy Shield cannot inflict it. If a hit takes the CI character’s sole point of Life, the hit itself kills them.",
-          "stderr_tail": ".5.5: (a) Does non-poison Chaos hit damage bypass Energy Shield, or how does it interact with Energy Shield? (b) Do Bleeding and Poison bypass Energy Shield? (c) Does a 1-Life Chaos Inoculation (CI) character die instantly to Bleeding?\n\ncodex\n**(a)** Non-poison Chaos hits damage Energy Shield first. Each 1 point of Chaos damage after mitigation removes 2 Energy Shield. Once the shield is depleted, any remaining Chaos damage applies to Life at 1:1.\n\n**(b)** Yes. Both Bleeding and Poison bypass Energy Shield and deal their damage over time directly to Life.\n\n**(c)** No. Only physical hit damage dealt to **Life** contributes to Bleeding. A hit fully absorbed by Energy Shield cannot inflict it. If a hit takes the CI character’s sole point of Life, the hit itself kills them.\ntokens used\n13,976\n"
+          "elapsed_s": 17.52,
+          "answer": "(a) **Non-poison Chaos hits do not bypass Energy Shield (ES).** Each 1 point of Chaos hit damage after mitigation removes 2 ES. Any damage the shield cannot absorb reaches Life.\n\n(b) **Both Bleeding and Poison bypass ES.** Their damage over time goes directly to Life.\n\n(c) **No.** A hit must deal damage to Life to inflict Bleeding. If ES absorbs the whole hit, it cannot inflict Bleeding. If the hit takes the CI character’s only Life point, the hit itself kills them.",
+          "stderr_tail": "exact numbers and rules.\n\nQuestion (Q01):\nIn Path of Exile 2 Patch 0.5.5: (a) Does non-poison Chaos hit damage bypass Energy Shield, or how does it interact with Energy Shield? (b) Do Bleeding and Poison bypass Energy Shield? (c) Does a 1-Life Chaos Inoculation (CI) character die instantly to Bleeding?\n\ncodex\n(a) **Non-poison Chaos hits do not bypass Energy Shield (ES).** Each 1 point of Chaos hit damage after mitigation removes 2 ES. Any damage the shield cannot absorb reaches Life.\n\n(b) **Both Bleeding and Poison bypass ES.** Their damage over time goes directly to Life.\n\n(c) **No.** A hit must deal damage to Life to inflict Bleeding. If ES absorbs the whole hit, it cannot inflict Bleeding. If the hit takes the CI character’s only Life point, the hit itself kills them.\ntokens used\n2,058\n"
         },
         "Q06": {
           "id": "Q06",
           "mode": "baseline",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 15.22,
-          "answer": "(a) **No.** “Expert Hexer’s Robe” is not a live endgame Body Armour base in 0.5.5. The old Advanced and Expert tiers were replaced by individually named bases.\n\n(b) **No.** You can overwrite a socketed standard Rune or Soul Core with another compatible socketable. Doing so destroys the original Rune or Soul Core.\n\n(c) **A Talisman is a two-handed melee weapon.** It occupies both weapon hands and enables shapeshifting.",
-          "stderr_tail": "e answer covering every sub-question with exact numbers and rules.\n\nQuestion (Q06):\nIn PoE2 Patch 0.5.5: (a) Does 'Expert Hexer's Robe' exist as a live endgame Body Armour base? (b) Once you socket a standard Rune or Soul Core into an item, is that socket permanently locked forever? (c) What equipment slot / item class is a 'Talisman' in PoE2 0.5.5?\n\ncodex\n(a) **No.** “Expert Hexer’s Robe” is not a live endgame Body Armour base in 0.5.5. The old Advanced and Expert tiers were replaced by individually named bases.\n\n(b) **No.** You can overwrite a socketed standard Rune or Soul Core with another compatible socketable. Doing so destroys the original Rune or Soul Core.\n\n(c) **A Talisman is a two-handed melee weapon.** It occupies both weapon hands and enables shapeshifting.\ntokens used\n15,047\n"
+          "elapsed_s": 15.71,
+          "answer": "(a) **No.** `Expert Hexer's Robe` is not a live endgame Body Armour base in 0.5.5.\n\n(b) **No.** You can overwrite a socketed Rune or Soul Core with another compatible Rune or Soul Core. Doing so destroys the original. You cannot remove it intact for reuse.\n\n(c) A **Talisman** is a two-handed melee weapon used for shapeshifting. It occupies both weapon hands.",
+          "stderr_tail": "al game-data tools. Give a concise, direct, technically precise answer covering every sub-question with exact numbers and rules.\n\nQuestion (Q06):\nIn PoE2 Patch 0.5.5: (a) Does 'Expert Hexer's Robe' exist as a live endgame Body Armour base? (b) Once you socket a standard Rune or Soul Core into an item, is that socket permanently locked forever? (c) What equipment slot / item class is a 'Talisman' in PoE2 0.5.5?\n\ncodex\n(a) **No.** `Expert Hexer's Robe` is not a live endgame Body Armour base in 0.5.5.\n\n(b) **No.** You can overwrite a socketed Rune or Soul Core with another compatible Rune or Soul Core. Doing so destroys the original. You cannot remove it intact for reuse.\n\n(c) A **Talisman** is a two-handed melee weapon used for shapeshifting. It occupies both weapon hands.\ntokens used\n1,897\n"
         },
         "Q02": {
           "id": "Q02",
           "mode": "baseline",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 32.73,
-          "answer": "(a) **75%** is the base maximum passive Block chance.\n\n(b) **Glancing Blows** doubles your passive Block chance, subject to the same cap. You take **65%** of the damage from a blocked hit, so blocking prevents **35%**.\n\n(c) **Deflection** replaced Spell Suppression on Dexterity gear. A deflected hit deals **40% less damage** by default, and the maximum chance to deflect is **75%**.",
-          "stderr_tail": "overing every sub-question with exact numbers and rules.\n\nQuestion (Q02):\nIn PoE2 Patch 0.5.5: (a) What is the base maximum passive Block chance (without +maximum block modifiers)? (b) What does the Glancing Blows keystone actually do? (c) What defensive mechanic replaced PoE1's Spell Suppression on Dexterity gear, and what are its default hit damage mitigation % and maximum chance cap?\n\ncodex\n(a) **75%** is the base maximum passive Block chance.\n\n(b) **Glancing Blows** doubles your passive Block chance, subject to the same cap. You take **65%** of the damage from a blocked hit, so blocking prevents **35%**.\n\n(c) **Deflection** replaced Spell Suppression on Dexterity gear. A deflected hit deals **40% less damage** by default, and the maximum chance to deflect is **75%**.\ntokens used\n8,034\n"
-        },
-        "Q07": {
-          "id": "Q07",
-          "mode": "baseline",
-          "model": "gpt-6.2-astra",
-          "returncode": 0,
-          "elapsed_s": 19.62,
-          "answer": "**(a)** T1 is the **best** modifier tier on in-game item tooltips.\n\n**(b)** The minimum modifier levels are:\n\n| Orb | Greater | Perfect |\n|---|---:|---:|\n| Transmutation or Augmentation | 55 | 70 |\n| Regal, Exalted, or Chaos | 35 | 50 |\n\n**(c)** No. An Orb of Alchemy requires a **Normal** item and upgrades it to **Rare** with four modifiers. A Regal Orb upgrades a **Magic** item to Rare.",
-          "stderr_tail": "y sub-question with exact numbers and rules.\n\nQuestion (Q07):\nIn PoE2 Patch 0.5.5: (a) On in-game item tooltips, is Tier 1 (T1) the BEST or WORST modifier tier? (b) What are the exact Minimum Modifier Level floors for Greater and Perfect Transmutation/Augmentation Orbs vs. Greater and Perfect Regal/Exalted/Chaos Orbs? (c) Can an Orb of Alchemy be applied directly to a Magic item?\n\ncodex\n**(a)** T1 is the **best** modifier tier on in-game item tooltips.\n\n**(b)** The minimum modifier levels are:\n\n| Orb | Greater | Perfect |\n|---|---:|---:|\n| Transmutation or Augmentation | 55 | 70 |\n| Regal, Exalted, or Chaos | 35 | 50 |\n\n**(c)** No. An Orb of Alchemy requires a **Normal** item and upgrades it to **Rare** with four modifiers. A Regal Orb upgrades a **Magic** item to Rare.\ntokens used\n15,233\n"
+          "elapsed_s": 38.21,
+          "answer": "(a) **75%** is the base maximum passive Block chance.\n\n(b) **Glancing Blows** doubles passive Block chance, subject to the same cap. A blocked hit still deals **50%** of its damage.\n\n(c) **Deflection** is the Dexterity defence. A successful deflection prevents **40%** of a hit’s damage and can apply to attacks and spells alike. My recollection is that the chance caps at **95%**, but I’m uncertain of that cap for patch 0.5.5.",
+          "stderr_tail": " and rules.\n\nQuestion (Q02):\nIn PoE2 Patch 0.5.5: (a) What is the base maximum passive Block chance (without +maximum block modifiers)? (b) What does the Glancing Blows keystone actually do? (c) What defensive mechanic replaced PoE1's Spell Suppression on Dexterity gear, and what are its default hit damage mitigation % and maximum chance cap?\n\ncodex\n(a) **75%** is the base maximum passive Block chance.\n\n(b) **Glancing Blows** doubles passive Block chance, subject to the same cap. A blocked hit still deals **50%** of its damage.\n\n(c) **Deflection** is the Dexterity defence. A successful deflection prevents **40%** of a hit’s damage and can apply to attacks and spells alike. My recollection is that the chance caps at **95%**, but I’m uncertain of that cap for patch 0.5.5.\ntokens used\n16,200\n"
         },
         "Q05": {
           "id": "Q05",
           "mode": "baseline",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 29.79,
-          "answer": "(a) **8 playable base classes** and **20 Ascendancies** in total.\n\n(b) **Druid is playable. Shadow is not playable** in 0.5.5.\n\n(c) **Abyssal Lich** belongs to the **Witch** and replaces **Lich**.",
-          "stderr_tail": "ly referenced in the question (for example a `.xml` PoB2 build file or `.filter` file in the current directory), you may read that file directly. Do NOT search the web or run external game-data tools. Give a concise, direct, technically precise answer covering every sub-question with exact numbers and rules.\n\nQuestion (Q05):\nIn PoE2 Patch 0.5.5: (a) Exactly how many playable base classes and how many Ascendancies exist in total? (b) Are Druid and Shadow playable right now in 0.5.5? (c) Which base class does 'Abyssal Lich' belong to, and which Ascendancy does it replace?\n\ncodex\n(a) **8 playable base classes** and **20 Ascendancies** in total.\n\n(b) **Druid is playable. Shadow is not playable** in 0.5.5.\n\n(c) **Abyssal Lich** belongs to the **Witch** and replaces **Lich**.\ntokens used\n23,029\n"
+          "elapsed_s": 35.32,
+          "answer": "(a) **8 playable base classes and 20 standard Ascendancies**, or **21** when counting Abyssal Lich as a distinct variant.  \n(b) **Druid is playable. Shadow is unavailable.**  \n(c) **Abyssal Lich belongs to the Witch** and replaces her **Lich** Ascendancy.",
+          "stderr_tail": "uild file or `.filter` file in the current directory), you may read that file directly. Do NOT search the web or run external game-data tools. Give a concise, direct, technically precise answer covering every sub-question with exact numbers and rules.\n\nQuestion (Q05):\nIn PoE2 Patch 0.5.5: (a) Exactly how many playable base classes and how many Ascendancies exist in total? (b) Are Druid and Shadow playable right now in 0.5.5? (c) Which base class does 'Abyssal Lich' belong to, and which Ascendancy does it replace?\n\ncodex\n(a) **8 playable base classes and 20 standard Ascendancies**, or **21** when counting Abyssal Lich as a distinct variant.  \n(b) **Druid is playable. Shadow is unavailable.**  \n(c) **Abyssal Lich belongs to the Witch** and replaces her **Lich** Ascendancy.\ntokens used\n2,948\n"
         },
         "Q09": {
           "id": "Q09",
           "mode": "baseline",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 11.08,
-          "answer": "The exact pool weights can’t be determined from the target weight of 25 and the level cutoffs alone. The missing data are the patch 0.5.5 spawn weights for all eligible Warmonger Bow affixes.\n\n| Orb | Eligible mod-pool weight | T1 hit probability | Expected independent attempts |\n|---|---:|---:|---:|\n| Greater Exalted | \\(W_G\\) = total weight for mod levels 35–82 inclusive | \\((2500/W_G)\\%\\) | \\(W_G/25\\) |\n| Perfect Exalted | \\(W_P\\) = total weight for mod levels 50–82 inclusive | \\((2500/W_P)\\%\\) | \\(W_P/25\\) |\n\nThe Perfect Orb keeps the T1 target weight at 25 and removes the weight of eligible mods at levels 35–49. Its hit chance is therefore higher if that range has positive weight. Each attempt assumes a fresh bow in the same starting state.",
-          "stderr_tail": "hit for both orbs.\n\ncodex\nThe exact pool weights can’t be determined from the target weight of 25 and the level cutoffs alone. The missing data are the patch 0.5.5 spawn weights for all eligible Warmonger Bow affixes.\n\n| Orb | Eligible mod-pool weight | T1 hit probability | Expected independent attempts |\n|---|---:|---:|---:|\n| Greater Exalted | \\(W_G\\) = total weight for mod levels 35–82 inclusive | \\((2500/W_G)\\%\\) | \\(W_G/25\\) |\n| Perfect Exalted | \\(W_P\\) = total weight for mod levels 50–82 inclusive | \\((2500/W_P)\\%\\) | \\(W_P/25\\) |\n\nThe Perfect Orb keeps the T1 target weight at 25 and removes the weight of eligible mods at levels 35–49. Its hit chance is therefore higher if that range has positive weight. Each attempt assumes a fresh bow in the same starting state.\ntokens used\n7,210\n"
+          "elapsed_s": 14.77,
+          "answer": "The exact odds require the patch 0.5.5 Warmonger Bow mod weights. The target weight of 25 and the two level cutoffs alone do not determine either pool total.\n\n| Orb | Eligible pool weight at ilvl 82 | Hit probability | Expected independent attempts |\n|---|---:|---:|---:|\n| Greater Exalted | \\(W_G=\\sum_{35\\le L\\le82}w\\) | \\((2500/W_G)\\%\\) | \\(W_G/25\\) |\n| Perfect Exalted | \\(W_P=\\sum_{50\\le L\\le82}w\\) | \\((2500/W_P)\\%\\) | \\(W_P/25\\) |\n\nHere \\(L\\) is each eligible mod’s level and \\(w\\) is its spawn weight on the bow. **Perfect has better odds** by a factor of \\(W_G/W_P\\): it removes the weight of mod levels 35–49 while retaining the T1 target’s full weight of 25.",
+          "stderr_tail": "ive the exact eligible mod-pool weight, hit probability (%), and expected attempts to hit for both orbs.\n\ncodex\nThe exact odds require the patch 0.5.5 Warmonger Bow mod weights. The target weight of 25 and the two level cutoffs alone do not determine either pool total.\n\n| Orb | Eligible pool weight at ilvl 82 | Hit probability | Expected independent attempts |\n|---|---:|---:|---:|\n| Greater Exalted | \\(W_G=\\sum_{35\\le L\\le82}w\\) | \\((2500/W_G)\\%\\) | \\(W_G/25\\) |\n| Perfect Exalted | \\(W_P=\\sum_{50\\le L\\le82}w\\) | \\((2500/W_P)\\%\\) | \\(W_P/25\\) |\n\nHere \\(L\\) is each eligible mod’s level and \\(w\\) is its spawn weight on the bow. **Perfect has better odds** by a factor of \\(W_G/W_P\\): it removes the weight of mod levels 35–49 while retaining the T1 target’s full weight of 25.\ntokens used\n2,059\n"
+        },
+        "Q07": {
+          "id": "Q07",
+          "mode": "baseline",
+          "model": "gpt-6.2-astra",
+          "returncode": 0,
+          "elapsed_s": 36.73,
+          "answer": "**(a)** T1 is the **best** modifier tier on in-game item tooltips.\n\n**(b)** The minimum modifier level floors are:\n\n| Orb | Greater | Perfect |\n|---|---:|---:|\n| Transmutation or Augmentation | 55 | 70 |\n| Regal, Exalted, or Chaos | 35 | 50 |\n\n**(c)** No. An Orb of Alchemy requires a **Normal** item and upgrades it to **Rare** with four modifiers.",
+          "stderr_tail": " technically precise answer covering every sub-question with exact numbers and rules.\n\nQuestion (Q07):\nIn PoE2 Patch 0.5.5: (a) On in-game item tooltips, is Tier 1 (T1) the BEST or WORST modifier tier? (b) What are the exact Minimum Modifier Level floors for Greater and Perfect Transmutation/Augmentation Orbs vs. Greater and Perfect Regal/Exalted/Chaos Orbs? (c) Can an Orb of Alchemy be applied directly to a Magic item?\n\ncodex\n**(a)** T1 is the **best** modifier tier on in-game item tooltips.\n\n**(b)** The minimum modifier level floors are:\n\n| Orb | Greater | Perfect |\n|---|---:|---:|\n| Transmutation or Augmentation | 55 | 70 |\n| Regal, Exalted, or Chaos | 35 | 50 |\n\n**(c)** No. An Orb of Alchemy requires a **Normal** item and upgrades it to **Rare** with four modifiers.\ntokens used\n14,744\n"
         },
         "Q08": {
           "id": "Q08",
           "mode": "baseline",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 22.36,
-          "answer": "**(a)** No to all three in the live Forbidden Rites league. PoE2 has no Orb of Scouring, Omen of Homogenising Exaltation is drop-disabled, and recombination is unavailable.\n\n**(b)** Lesser, Normal, and Greater Essences upgrade a **Magic** item to **Rare**, preserving its existing modifiers and adding the essence’s guaranteed modifier. A **Perfect Essence** acts on a **Rare** item, removing one random eligible modifier and adding its guaranteed modifier.\n\n**(c)** A Fracturing Orb requires a **Rare item with at least 4 explicit modifiers**. Omen of Whittling forces the next Chaos Orb to remove the eligible modifier with the **lowest required item level to roll**. Ties are resolved randomly. The modifier’s tier number and rolled value do not determine the choice.",
-          "stderr_tail": "ve?\n\ncodex\n**(a)** No to all three in the live Forbidden Rites league. PoE2 has no Orb of Scouring, Omen of Homogenising Exaltation is drop-disabled, and recombination is unavailable.\n\n**(b)** Lesser, Normal, and Greater Essences upgrade a **Magic** item to **Rare**, preserving its existing modifiers and adding the essence’s guaranteed modifier. A **Perfect Essence** acts on a **Rare** item, removing one random eligible modifier and adding its guaranteed modifier.\n\n**(c)** A Fracturing Orb requires a **Rare item with at least 4 explicit modifiers**. Omen of Whittling forces the next Chaos Orb to remove the eligible modifier with the **lowest required item level to roll**. Ties are resolved randomly. The modifier’s tier number and rolled value do not determine the choice.\ntokens used\n2,495\n"
-        },
-        "Q11": {
-          "id": "Q11",
-          "mode": "baseline",
-          "model": "gpt-6.2-astra",
-          "returncode": 0,
-          "elapsed_s": 20.97,
-          "answer": "**(a)** Yes. For eligible monster drops, Player IIR shifts currency rolls toward higher tiers. Around **+100% Player IIR** is the practical endgame target. Roughly **+100–150%** is a common stopping range as the marginal benefit falls. Players run **negative IIR** to get more normal (white) equipment bases for crafting or using Orbs of Chance.\n\n**(b)** Honour Resistance normally caps at **75%**. At **+100% effective quantity of Relics dropped by Monsters**, Zarokh is guaranteed to drop **two Unique Relics**. A positive bonus below +100% gives only a chance at the second relic.",
-          "stderr_tail": " players intentionally run Negative IIR? (b) In Trial of the Sekhemas, what is the Honour Resistance cap and what Monster Relic Quantity % threshold enables double Unique Relics from Zarokh?\n\ncodex\n**(a)** Yes. For eligible monster drops, Player IIR shifts currency rolls toward higher tiers. Around **+100% Player IIR** is the practical endgame target. Roughly **+100–150%** is a common stopping range as the marginal benefit falls. Players run **negative IIR** to get more normal (white) equipment bases for crafting or using Orbs of Chance.\n\n**(b)** Honour Resistance normally caps at **75%**. At **+100% effective quantity of Relics dropped by Monsters**, Zarokh is guaranteed to drop **two Unique Relics**. A positive bonus below +100% gives only a chance at the second relic.\ntokens used\n7,492\n"
-        },
-        "Q12": {
-          "id": "Q12",
-          "mode": "baseline",
-          "model": "gpt-6.2-astra",
-          "returncode": 0,
-          "elapsed_s": 21.41,
-          "answer": "`!maximum.player.res|penetrat|weakness|cannot.take` — 49 characters.",
-          "stderr_tail": "` file in the current directory), you may read that file directly. Do NOT search the web or run external game-data tools. Give a concise, direct, technically precise answer covering every sub-question with exact numbers and rules.\n\nQuestion (Q12):\nCompile a single PoE2 Patch 0.5.5 negated stash search regex (strictly <= 50 characters total, using PoE2's `!...` exclusion syntax) for a Chaos Inoculation Energy Shield (`es_ci`) build that hides brick Waystones with `-maximum Player Resistances`, `Elemental Penetration`, `Elemental Weakness`, and `Abyss no-damage cycle` (`Monsters cannot take damage for X seconds every Y seconds`). Provide the exact regex string in backticks and its character length.\n\ncodex\n`!maximum.player.res|penetrat|weakness|cannot.take` — 49 characters.\ntokens used\n7,711\n"
+          "elapsed_s": 31.94,
+          "answer": "**(a)** None of the three are available to use in a live Forbidden Rites league. PoE2 has no Orb of Scouring, and both Omen of Homogenising Exaltation and Recombinators are unavailable in that league.\n\n**(b)** Lesser, Normal, and Greater Essences upgrade a **Magic** item to **Rare**, preserving its existing modifiers and adding the essence’s guaranteed modifier. A **Perfect Essence** works on an existing **Rare** item. It removes one random modifier and adds its guaranteed modifier.\n\n**(c)** A Fracturing Orb requires a **Rare item with at least 4 explicit modifiers** and fractures one at random. Omen of Whittling forces a Chaos Orb to remove the modifier with the **lowest modifier level** (the minimum item level required for that modifier’s tier). Ties are broken randomly.",
+          "stderr_tail": "(a)** None of the three are available to use in a live Forbidden Rites league. PoE2 has no Orb of Scouring, and both Omen of Homogenising Exaltation and Recombinators are unavailable in that league.\n\n**(b)** Lesser, Normal, and Greater Essences upgrade a **Magic** item to **Rare**, preserving its existing modifiers and adding the essence’s guaranteed modifier. A **Perfect Essence** works on an existing **Rare** item. It removes one random modifier and adds its guaranteed modifier.\n\n**(c)** A Fracturing Orb requires a **Rare item with at least 4 explicit modifiers** and fractures one at random. Omen of Whittling forces a Chaos Orb to remove the modifier with the **lowest modifier level** (the minimum item level required for that modifier’s tier). Ties are broken randomly.\ntokens used\n2,934\n"
         },
         "Q10": {
           "id": "Q10",
           "mode": "baseline",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 31.04,
-          "answer": "**(a)** A 0-mod Normal Waystone gives **6 revives**, a 2-mod Magic gives **4**, a 4-mod Rare gives **2**, and a 6-mod Rare gives **0**. These counts exclude your initial entry.\n\n**(b)** Place Precursor Tablets in the **Map Device’s tablet slots** alongside the Waystone.\n\n**(c)** Only **one Atlas Master** can be active at a time. I can’t reliably identify all three Masters or say what Sacred Blooms spawn in 0.5.5 from memory.",
-          "stderr_tail": "n (Q10):\nIn PoE2 Patch 0.5.5 (Forbidden Rites): (a) How many revives do you get on a 0-mod Normal, 2-mod Magic, 4-mod Rare, and 6-mod Rare Waystone? (b) Where do you place Precursor Tablets to juice your maps? (c) Name the three Patch 0.5 Masters of the Atlas (and how many can be active at once), and explain what Sacred Blooms spawn in 0.5.5.\n\ncodex\n**(a)** A 0-mod Normal Waystone gives **6 revives**, a 2-mod Magic gives **4**, a 4-mod Rare gives **2**, and a 6-mod Rare gives **0**. These counts exclude your initial entry.\n\n**(b)** Place Precursor Tablets in the **Map Device’s tablet slots** alongside the Waystone.\n\n**(c)** Only **one Atlas Master** can be active at a time. I can’t reliably identify all three Masters or say what Sacred Blooms spawn in 0.5.5 from memory.\ntokens used\n15,807\n"
+          "elapsed_s": 30.34,
+          "answer": "**(a)** A 0-mod Normal Waystone gives **6 revives**, a 2-mod Magic gives **4**, a 4-mod Rare gives **2**, and a 6-mod Rare gives **0**. Each explicit modifier removes one revive. The initial entry is separate, so a 6-mod Rare still gives you one attempt.\n\n**(b)** Place Precursor Tablets in the **Map Device’s tablet slots**, alongside the Waystone, before opening the map.\n\n**(c)** I don’t know the three 0.5 Atlas Masters, their active limit, or what Sacred Blooms spawn in 0.5.5 with enough confidence to give an exact answer.",
+          "stderr_tail": "-mod Magic, 4-mod Rare, and 6-mod Rare Waystone? (b) Where do you place Precursor Tablets to juice your maps? (c) Name the three Patch 0.5 Masters of the Atlas (and how many can be active at once), and explain what Sacred Blooms spawn in 0.5.5.\n\ncodex\n**(a)** A 0-mod Normal Waystone gives **6 revives**, a 2-mod Magic gives **4**, a 4-mod Rare gives **2**, and a 6-mod Rare gives **0**. Each explicit modifier removes one revive. The initial entry is separate, so a 6-mod Rare still gives you one attempt.\n\n**(b)** Place Precursor Tablets in the **Map Device’s tablet slots**, alongside the Waystone, before opening the map.\n\n**(c)** I don’t know the three 0.5 Atlas Masters, their active limit, or what Sacred Blooms spawn in 0.5.5 with enough confidence to give an exact answer.\ntokens used\n2,688\n"
+        },
+        "Q12": {
+          "id": "Q12",
+          "mode": "baseline",
+          "model": "gpt-6.2-astra",
+          "returncode": 0,
+          "elapsed_s": 29.05,
+          "answer": "`\"!m player r|penet|l weak|n buil|ss rec|ot take d\"` — **50 characters**, including both quotation marks.",
+          "stderr_tail": "-data tools. Give a concise, direct, technically precise answer covering every sub-question with exact numbers and rules.\n\nQuestion (Q12):\nCompile a single PoE2 Patch 0.5.5 negated stash search regex (strictly <= 50 characters total, using PoE2's `!...` exclusion syntax) for a Chaos Inoculation Energy Shield (`es_ci`) build that hides brick Waystones with `-maximum Player Resistances`, `Elemental Penetration`, `Elemental Weakness`, `Monster Stun Buildup`, `less Recovery Rate of Life and Energy Shield`, and `Abyss no-damage cycle` (`Monsters cannot take damage for X seconds every Y seconds`). Provide the exact regex string in backticks and its character length.\n\ncodex\n`\"!m player r|penet|l weak|n buil|ss rec|ot take d\"` — **50 characters**, including both quotation marks.\ntokens used\n3,089\n"
+        },
+        "Q11": {
+          "id": "Q11",
+          "mode": "baseline",
+          "model": "gpt-6.2-astra",
+          "returncode": 0,
+          "elapsed_s": 31.22,
+          "answer": "**(a)** Yes. Player IIR biases currency drops toward higher tiers. Aim for roughly **100–150% increased Item Rarity** in endgame. That range is a rule of thumb for diminishing returns, not a hard breakpoint. Players run **negative IIR** to get more normal (white) equipment bases for crafting or for use with an Orb of Chance.\n\n**(b)** The default Honour Resistance cap is **75%**. At **+100% effective quantity of relics dropped by monsters**, Zarokh drops **two Unique Relics**. You can reach that threshold with **+77%** from relics and the boon granting **30% increased relic effect**.",
+          "stderr_tail": "rs intentionally run Negative IIR? (b) In Trial of the Sekhemas, what is the Honour Resistance cap and what Monster Relic Quantity % threshold enables double Unique Relics from Zarokh?\n\ncodex\n**(a)** Yes. Player IIR biases currency drops toward higher tiers. Aim for roughly **100–150% increased Item Rarity** in endgame. That range is a rule of thumb for diminishing returns, not a hard breakpoint. Players run **negative IIR** to get more normal (white) equipment bases for crafting or for use with an Orb of Chance.\n\n**(b)** The default Honour Resistance cap is **75%**. At **+100% effective quantity of relics dropped by monsters**, Zarokh drops **two Unique Relics**. You can reach that threshold with **+77%** from relics and the boon granting **30% increased relic effect**.\ntokens used\n2,542\n"
         },
         "Q13": {
           "id": "Q13",
           "mode": "baseline",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 20.69,
-          "answer": "**`pinnacle_ready = false`.** The build reserves **235 Spirit** against **139 available**, leaving **−96 unreserved Spirit**.\n\n| Requested stat | Fixture value |\n|---|---:|\n| Raw effective Ice Shot DPS, including ignite (`CombinedDPS`) | 237,936.62360001 |\n| Hit-only DPS (`TotalDPS`) | 237,926.56764348 |\n| Chaos Resistance | 21% |\n| Physical Max Hit in the saved configuration | 3,340 |\n\nThe XML saves only one configuration. It provides no dewatered Pinnacle result or uptime rules, so **sustainable Pinnacle DPS, exact percentage inflation, and the #1 culprit cannot be established from the fixture alone**. Two concrete assumptions are `multiplierRage = 30` and an active Rite of Passage charm, whose 11-second buff triggers on a rare or unique **kill**. The export gives no per-toggle DPS deltas and no separate Pinnacle Physical Max Hit.",
-          "stderr_tail": "against **139 available**, leaving **−96 unreserved Spirit**.\n\n| Requested stat | Fixture value |\n|---|---:|\n| Raw effective Ice Shot DPS, including ignite (`CombinedDPS`) | 237,936.62360001 |\n| Hit-only DPS (`TotalDPS`) | 237,926.56764348 |\n| Chaos Resistance | 21% |\n| Physical Max Hit in the saved configuration | 3,340 |\n\nThe XML saves only one configuration. It provides no dewatered Pinnacle result or uptime rules, so **sustainable Pinnacle DPS, exact percentage inflation, and the #1 culprit cannot be established from the fixture alone**. Two concrete assumptions are `multiplierRage = 30` and an active Rite of Passage charm, whose 11-second buff triggers on a rare or unique **kill**. The export gives no per-toggle DPS deltas and no separate Pinnacle Physical Max Hit.\ntokens used\n22,192\n"
+          "elapsed_s": 25.15,
+          "answer": "**`pinnacle_ready = false` as configured.** The build reserves **235 Spirit** against **139 available**, leaving **−96 unreserved**.\n\n- **(a) Raw Ice Shot DPS** is **237,936.62360001** combined, including **237,926.56764348** hit DPS. The XML saves one effective configuration. It contains no sustainable Pinnacle calculation or uptime rules from which to derive an exact dewatered DPS or inflation percentage.\n- **(b) Config inflation.** The clearest unsustainable toggle is **Rite of Passage** marked active. Its Wolf buff lasts **11 seconds** and requires a **rare or unique kill**, so a lone living boss cannot refresh it. The config also fixes Rage at **30** with Berserk enabled. The XML gives no per-toggle DPS results to establish which ranks **#1**.\n- **(c–d) Readiness and defenses.** **False**. Unreserved Spirit is **−96**, Chaos Resistance is **21%**, and the saved Physical Max Hit is **3,340**. The export contains no separate Pinnacle-specific max-hit result.",
+          "stderr_tail": "including **237,926.56764348** hit DPS. The XML saves one effective configuration. It contains no sustainable Pinnacle calculation or uptime rules from which to derive an exact dewatered DPS or inflation percentage.\n- **(b) Config inflation.** The clearest unsustainable toggle is **Rite of Passage** marked active. Its Wolf buff lasts **11 seconds** and requires a **rare or unique kill**, so a lone living boss cannot refresh it. The config also fixes Rage at **30** with Berserk enabled. The XML gives no per-toggle DPS results to establish which ranks **#1**.\n- **(c–d) Readiness and defenses.** **False**. Unreserved Spirit is **−96**, Chaos Resistance is **21%**, and the saved Physical Max Hit is **3,340**. The export contains no separate Pinnacle-specific max-hit result.\ntokens used\n14,727\n"
         },
         "Q14": {
           "id": "Q14",
           "mode": "baseline",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 15.07,
-          "answer": "**No support can legally be added.** The main Ice Shot group already uses all five support sockets, so the achievable DPS gain from adding a gem is **0%**. A hypothetical sixth-support ranking would require per-gem calculations that the XML does not contain.\n\nThere is **no new Spirit overflow**. The build already reserves **235 Spirit** against **139 available**, leaving it **96 Spirit over capacity**.",
-          "stderr_tail": "127\" nodeId=\"54127\"/>\n682:\t\t\t<SocketIdURL itemPbURL=\"\" name=\"Jewel 60735\" nodeId=\"60735\"/>\n683:\t\t\t<SocketIdURL itemPbURL=\"\" name=\"Jewel 61834\" nodeId=\"61834\"/>\n686:\t<Notes>\n688:\t</Notes>\n690:\t<Skills activeSkillSet=\"1\" defaultGemLevel=\"normalMaximum\" defaultGemQuality=\"nil\" showLegacyGems=\"false\" showSupportGemTypes=\"ALL\" sortGemsByDPS=\"true\" sortGemsByDPSField=\"Co\n\ncodex\n**No support can legally be added.** The main Ice Shot group already uses all five support sockets, so the achievable DPS gain from adding a gem is **0%**. A hypothetical sixth-support ranking would require per-gem calculations that the XML does not contain.\n\nThere is **no new Spirit overflow**. The build already reserves **235 Spirit** against **139 available**, leaving it **96 Spirit over capacity**.\ntokens used\n11,981\n"
+          "elapsed_s": 16.6,
+          "answer": "**No additional support fits.** Ice Shot already uses all five support sockets, so the DPS gain available by adding a gem is **0%**. For a hypothetical sixth socket, the fixture contains no per-gem DPS results from which to identify a winner or calculate its gain.\n\n**Spirit already overflows by 96** in the saved build. It reserves 235 Spirit against 139 available, so the overflow predates any support change.",
+          "stderr_tail": ",60505\" intNodes=\"2582,11825,27705,34015,38814,39298,48116,48773\" strNodes=\"2864,11604,12253,14658,15182,17088,17118,17702,21746,24287,24647,24786,26598,29517,30657,32701,34201,38463,43691,54818,54984,56045,56978,65009\"/>\n\t\t\t</Overrides>\n\t\t</Spec>\n\t</Tree>\n\t<TreeView searchStr=\"\" showStatDifferences=\"true\" zoomLevel=\"3\" zoomX=\"0\" zoomY=\"0\"/>\n</PathOfBuilding2>\n\ncodex\n**No additional support fits.** Ice Shot already uses all five support sockets, so the DPS gain available by adding a gem is **0%**. For a hypothetical sixth socket, the fixture contains no per-gem DPS results from which to identify a winner or calculate its gain.\n\n**Spirit already overflows by 96** in the saved build. It reserves 235 Spirit against 139 available, so the overflow predates any support change.\ntokens used\n9,787\n"
         },
         "Q15": {
           "id": "Q15",
           "mode": "baseline",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 25.2,
-          "answer": "The snippet has **four fatal errors**.\n\n| Invalid line | Exact fix |\n|---|---|\n| `BaseType \"Expert Hexer's Robe\"` | Use `BaseType \"Hexer's Robe\"`. The legacy `Expert` base name is unrecognized. |\n| `MapTier >= 15` | Delete this line from the armour rule. To filter tier 15+ waystones, use `WaystoneTier >= 15` in a separate `Show` block. |\n| `LinkedSockets >= 5` | Delete this line. PoE2 equipment has no socket links, so the condition has no direct equivalent. |\n| `SetFontSize 60` | Use `SetFontSize 45`. The maximum is **45**. |\n\n`Class \"Body Armours\"` is valid. `PlayAlertSound 1 300` is also valid and plays built-in sound **1** at the maximum volume of **300**.",
-          "stderr_tail": "ert Hexer's Robe\"\n    MapTier >= 15\n    LinkedSockets >= 5\n    SetFontSize 60\n    PlayAlertSound 1 300\n```\n\ncodex\nThe snippet has **four fatal errors**.\n\n| Invalid line | Exact fix |\n|---|---|\n| `BaseType \"Expert Hexer's Robe\"` | Use `BaseType \"Hexer's Robe\"`. The legacy `Expert` base name is unrecognized. |\n| `MapTier >= 15` | Delete this line from the armour rule. To filter tier 15+ waystones, use `WaystoneTier >= 15` in a separate `Show` block. |\n| `LinkedSockets >= 5` | Delete this line. PoE2 equipment has no socket links, so the condition has no direct equivalent. |\n| `SetFontSize 60` | Use `SetFontSize 45`. The maximum is **45**. |\n\n`Class \"Body Armours\"` is valid. `PlayAlertSound 1 300` is also valid and plays built-in sound **1** at the maximum volume of **300**.\ntokens used\n2,650\n"
+          "elapsed_s": 27.24,
+          "answer": "**Four lines cause load errors in PoE2 0.5.5.**\n\n| Invalid line | Exact fix |\n|---|---|\n| `BaseType \"Expert Hexer's Robe\"` | Remove this line. The obsolete `Expert` base name matches no recognised base type. |\n| `MapTier >= 15` | Use `WaystoneTier >= 15` in a separate `Show` block for waystones. Remove it from the armour block. |\n| `LinkedSockets >= 5` | Remove this line. PoE2 has no linked-socket filter condition. |\n| `SetFontSize 60` | Use `SetFontSize 45`. The maximum is **45**. |\n\n`Class \"Body Armours\"` is valid. `PlayAlertSound 1 300` is also valid. It selects built-in sound **1** at the maximum volume of **300**.",
+          "stderr_tail": "   Class \"Body Armours\"\n    BaseType \"Expert Hexer's Robe\"\n    MapTier >= 15\n    LinkedSockets >= 5\n    SetFontSize 60\n    PlayAlertSound 1 300\n```\n\ncodex\n**Four lines cause load errors in PoE2 0.5.5.**\n\n| Invalid line | Exact fix |\n|---|---|\n| `BaseType \"Expert Hexer's Robe\"` | Remove this line. The obsolete `Expert` base name matches no recognised base type. |\n| `MapTier >= 15` | Use `WaystoneTier >= 15` in a separate `Show` block for waystones. Remove it from the armour block. |\n| `LinkedSockets >= 5` | Remove this line. PoE2 has no linked-socket filter condition. |\n| `SetFontSize 60` | Use `SetFontSize 45`. The maximum is **45**. |\n\n`Class \"Body Armours\"` is valid. `PlayAlertSound 1 300` is also valid. It selects built-in sound **1** at the maximum volume of **300**.\ntokens used\n2,560\n"
+        },
+        "Q17": {
+          "id": "Q17",
+          "mode": "baseline",
+          "model": "gpt-6.2-astra",
+          "returncode": 0,
+          "elapsed_s": 31.97,
+          "answer": "The fixture alone doesn’t establish the weakest support, the #1 legal swap, or the exact DPS gain. Its only saved Ice Shot result is **237,936.62360001 combined DPS** with 30 Rage and “hit recently” enabled. It contains no dewatered Pinnacle baseline or support-swap results.\n\nFor **Elemental Focus (#2)**, the Amazon has **88 Intelligence** against a current build requirement of **80**. Herald of Ice already uses one copy. The XML gives no recalculated Intelligence requirement for a second copy on Ice Shot, so the 8-point margin alone doesn’t settle eligibility.",
+          "stderr_tail": "nabled=\"true\" gemId=\"Metadata/Items/Gems/SupportGemColdPenetration\" level=\"1\" nameSpec=\"Cold Penetration\" quality=\"0\" skillId=\"SupportColdPenetrationPlayer\" variantId=\"ColdPenetrationSupport\"/>\n\t\t\t</Skill>\n\ncodex\nThe fixture alone doesn’t establish the weakest support, the #1 legal swap, or the exact DPS gain. Its only saved Ice Shot result is **237,936.62360001 combined DPS** with 30 Rage and “hit recently” enabled. It contains no dewatered Pinnacle baseline or support-swap results.\n\nFor **Elemental Focus (#2)**, the Amazon has **88 Intelligence** against a current build requirement of **80**. Herald of Ice already uses one copy. The XML gives no recalculated Intelligence requirement for a second copy on Ice Shot, so the 8-point margin alone doesn’t settle eligibility.\ntokens used\n12,416\n"
         },
         "Q16": {
           "id": "Q16",
           "mode": "baseline",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 31.4,
-          "answer": "I can’t reliably answer Q16 from memory. I don’t know the Verisium Alloy recipe or its exact effect on a Rare item, the Architect’s Orb effect, or the Liquid Emotion operation on Rare Jewels in patch 0.5.5.",
-          "stderr_tail": "y), you may read that file directly. Do NOT search the web or run external game-data tools. Give a concise, direct, technically precise answer covering every sub-question with exact numbers and rules.\n\nQuestion (Q16):\nIn PoE2 Patch 0.5.5: (a) How are Verisium Alloys crafted (introduced in Patch 0.5 Runeforging) and what exact operation does applying a Verisium Alloy to a Rare item perform? (b) What does an 'Architect's Orb' (Vaal Temple currency) do? (c) Besides instilling Amulets and Waystones, what crafting operation do Liquid Emotions perform on Rare Jewels?\n\ncodex\nI can’t reliably answer Q16 from memory. I don’t know the Verisium Alloy recipe or its exact effect on a Rare item, the Architect’s Orb effect, or the Liquid Emotion operation on Rare Jewels in patch 0.5.5.\ntokens used\n2,585\n"
+          "elapsed_s": 35.83,
+          "answer": "I don’t know the exact Patch 0.5.5 rules for the Verisium Alloy recipe and its effect on a Rare item, the Architect’s Orb’s effect, or the Liquid Emotion operation on Rare Jewels. I can’t give a reliable answer to Q16 from memory.",
+          "stderr_tail": "le directly. Do NOT search the web or run external game-data tools. Give a concise, direct, technically precise answer covering every sub-question with exact numbers and rules.\n\nQuestion (Q16):\nIn PoE2 Patch 0.5.5: (a) How are Verisium Alloys crafted (introduced in Patch 0.5 Runeforging) and what exact operation does applying a Verisium Alloy to a Rare item perform? (b) What does an 'Architect's Orb' (Vaal Temple currency) do? (c) Besides instilling Amulets and Waystones, what crafting operation do Liquid Emotions perform on Rare Jewels?\n\ncodex\nI don’t know the exact Patch 0.5.5 rules for the Verisium Alloy recipe and its effect on a Rare item, the Architect’s Orb’s effect, or the Liquid Emotion operation on Rare Jewels. I can’t give a reliable answer to Q16 from memory.\ntokens used\n7,993\n"
+        },
+        "Q18": {
+          "id": "Q18",
+          "mode": "baseline",
+          "model": "gpt-6.2-astra",
+          "returncode": 0,
+          "elapsed_s": 27.96,
+          "answer": "| Max hit | Saved PoB value |\n|---|---:|\n| Physical | 3,340 |\n| Elemental | 11,296 each for fire, cold, and lightning |\n| Chaos | 3,877 |\n\n**(a)** These values come from the saved configuration, which enables all three charms and assumes the character is moving and has been hit recently. The XML contains no recalculated dewatered Pinnacle max hits.\n\n**(b)** The export records **139 total Spirit** and **−96 unreserved**, implying **235 reserved** and a **96-Spirit deficit**. The total reconciles to 100 base Spirit plus 39 from Beast Clasp. The enabled setup exceeds its budget.\n\n**(c)** The question lists **Shimmering** first and **Careful Consideration** second. The XML stores allocated node IDs and one baseline EHP value. It lacks the path costs and post-allocation EHP needed to verify that ranking or quantify either dewatered percentage gain.",
+          "stderr_tail": " 11,296 each for fire, cold, and lightning |\n| Chaos | 3,877 |\n\n**(a)** These values come from the saved configuration, which enables all three charms and assumes the character is moving and has been hit recently. The XML contains no recalculated dewatered Pinnacle max hits.\n\n**(b)** The export records **139 total Spirit** and **−96 unreserved**, implying **235 reserved** and a **96-Spirit deficit**. The total reconciles to 100 base Spirit plus 39 from Beast Clasp. The enabled setup exceeds its budget.\n\n**(c)** The question lists **Shimmering** first and **Careful Consideration** second. The XML stores allocated node IDs and one baseline EHP value. It lacks the path costs and post-allocation EHP needed to verify that ranking or quantify either dewatered percentage gain.\ntokens used\n16,331\n"
+        },
+        "Q20": {
+          "id": "Q20",
+          "mode": "baseline",
+          "model": "gpt-6.2-astra",
+          "returncode": 0,
+          "elapsed_s": 19.28,
+          "answer": "**(a)** `风暴编织者` is **Stormweaver**, a **Sorceress** Ascendancy. It has **10 Ascendancy notables**. **Tempest Caller** grants the skill **Elemental Storm**.\n\n**(b)** `拉基亚塔的流光` is **Rakiata’s Flow**, a **Lineage Support Gem**. A character can use **1 copy** across all skills.\n\n**(c)** The rare bow is **item level 82** with **+20% quality**. Its four explicit modifiers, in clipboard order, are **145% increased physical damage**, **22–44 added physical damage**, **18% increased attack speed**, and **+27% fire resistance**.",
+          "stderr_tail": "/mmhpnx115h72n6l7pcddb_vm0000gn/T/poe2bench_baseline_i99qnmgq\n succeeded in 0ms:\n物 品 类 别: 弓\n稀 有 度: 稀有\n暴风之翼\n狂热之弓\n--------\n品质: +20% (augmented)\n物理伤害: 180-340 (augmented)\n--------\n物品等级: 82\n--------\n该装备的物理伤害提高 145%\n附加 22 - 44 基础物理伤害\n攻击速度提高 18%\n+27% 火焰抗性\n\ncodex\n**(a)** `风暴编织者` is **Stormweaver**, a **Sorceress** Ascendancy. It has **10 Ascendancy notables**. **Tempest Caller** grants the skill **Elemental Storm**.\n\n**(b)** `拉基亚塔的流光` is **Rakiata’s Flow**, a **Lineage Support Gem**. A character can use **1 copy** across all skills.\n\n**(c)** The rare bow is **item level 82** with **+20% quality**. Its four explicit modifiers, in clipboard order, are **145% increased physical damage**, **22–44 added physical damage**, **18% increased attack speed**, and **+27% fire resistance**.\ntokens used\n2,533\n"
+        },
+        "Q22": {
+          "id": "Q22",
+          "mode": "baseline",
+          "model": "gpt-6.2-astra",
+          "returncode": 0,
+          "elapsed_s": 17.81,
+          "answer": "**(a)** For Ice Shot’s saved hit DPS (`TotalDPS`), removing the 30-Rage ×1.30 attack-damage multiplier gives **237,926.56764348 → 183,020.43664883 DPS**. The drop is exactly **300/13%**, or **23.076923…%**. This is calculated from the XML. It does not contain a separate zero-Rage `raw effective DPS` result.\n\n**(b)** The ilvl 82 Normal Siphoning Wand has **3 open prefixes and 3 open suffixes**. Its 20% quality uses no affix slot. I’d **vendor** the ilvl 68 Iron Ring. The clipboard contains its rolls but no classifier output or bucket definitions, so the exact `--no-live-trade` bucket label cannot be verified from the fixture.",
+          "stderr_tail": " includeInFullDPS=\"nil\" label=\"\" mainActiveSkill=\"nil\" mainActiveSkillCalcs=\"nil\" slot=\"Body Armour\" source=\"Item:10:Reverie, Shaman Mantle\">\n\ncodex\n**(a)** For Ice Shot’s saved hit DPS (`TotalDPS`), removing the 30-Rage ×1.30 attack-damage multiplier gives **237,926.56764348 → 183,020.43664883 DPS**. The drop is exactly **300/13%**, or **23.076923…%**. This is calculated from the XML. It does not contain a separate zero-Rage `raw effective DPS` result.\n\n**(b)** The ilvl 82 Normal Siphoning Wand has **3 open prefixes and 3 open suffixes**. Its 20% quality uses no affix slot. I’d **vendor** the ilvl 68 Iron Ring. The clipboard contains its rolls but no classifier output or bucket definitions, so the exact `--no-live-trade` bucket label cannot be verified from the fixture.\ntokens used\n8,522\n"
+        },
+        "Q19": {
+          "id": "Q19",
+          "mode": "baseline",
+          "model": "gpt-6.2-astra",
+          "returncode": 0,
+          "elapsed_s": 35.22,
+          "answer": "**(a)** 11 of 12 sockets are overwriteable. **Kolr’s Hunt** stays locked in the first socket of **Sol Claw (Vaal Wraps)**. It is the Socket-bound augment that lets the gloves roll Marksman modifiers.\n\n**(b)** The seven available armour sockets can take **7 Soul Cores of Tacati**. At +7% each, that raises Chaos Resistance from **21% to 70%**, five points below the 75% cap.\n\n**(c)** The exact net DPS and EHP deltas require a PoB2 recalculation with the old augments removed and the replacements installed. The XML records only the baseline of **237,926.57 Total DPS** and **20,465.73 EHP**. I did not run the optimizer, so the allocation above is derived from the sockets and the deltas are unverified. With `--offline-prices`, total cost is **`null` (unavailable)**.",
+          "stderr_tail": "em>\n\ncodex\n**(a)** 11 of 12 sockets are overwriteable. **Kolr’s Hunt** stays locked in the first socket of **Sol Claw (Vaal Wraps)**. It is the Socket-bound augment that lets the gloves roll Marksman modifiers.\n\n**(b)** The seven available armour sockets can take **7 Soul Cores of Tacati**. At +7% each, that raises Chaos Resistance from **21% to 70%**, five points below the 75% cap.\n\n**(c)** The exact net DPS and EHP deltas require a PoB2 recalculation with the old augments removed and the replacements installed. The XML records only the baseline of **237,926.57 Total DPS** and **20,465.73 EHP**. I did not run the optimizer, so the allocation above is derived from the sockets and the deltas are unverified. With `--offline-prices`, total cost is **`null` (unavailable)**.\ntokens used\n13,239\n"
+        },
+        "Q21": {
+          "id": "Q21",
+          "mode": "baseline",
+          "model": "gpt-6.2-astra",
+          "returncode": 0,
+          "elapsed_s": 57.14,
+          "answer": "**(a)** `\"(p c.*\\+(1[2-9]|[2-9].|...)|size:..([2-9]|..))\\d\"` — **50 characters including quotes**. It matches +120% and +1000% Waystone Drop Chance and +20% and +100% Pack Size. It rejects +119% Drop Chance and +19% Pack Size unless the other stat qualifies.\n\n**(b)** **12% to 32% more elemental damage taken.** At 75% resistance, you take 25% of incoming elemental damage. A −3% maximum resistance modifier raises that share to 28% (28/25 = 1.12×). A −8% modifier raises it to 33% (33/25 = 1.32×).",
+          "stderr_tail": "0%`), while rejecting `+119%` Waystone Drop Chance and `+19%` Pack Size; provide the exact regex in backticks and its character length. (b) At 75% Elemental Resistance, by what % range does a `-3%` to `-8%` maximum Player Resistances modifier increase elemental damage taken?\n\ncodex\n**(a)** `\"(p c.*\\+(1[2-9]|[2-9].|...)|size:..([2-9]|..))\\d\"` — **50 characters including quotes**. It matches +120% and +1000% Waystone Drop Chance and +20% and +100% Pack Size. It rejects +119% Drop Chance and +19% Pack Size unless the other stat qualifies.\n\n**(b)** **12% to 32% more elemental damage taken.** At 75% resistance, you take 25% of incoming elemental damage. A −3% maximum resistance modifier raises that share to 28% (28/25 = 1.12×). A −8% modifier raises it to 33% (33/25 = 1.32×).\ntokens used\n4,459\n"
         }
       }
     },
@@ -754,11 +1029,11 @@
       "summary": {
         "benchmark_id": "PoE2Bench-0.5.5",
         "patch": "0.5.5",
-        "total_questions": 16,
-        "questions_passed": 16,
+        "total_questions": 22,
+        "questions_passed": 22,
         "pass_rate_pct": 100.0,
-        "checks_passed": 52,
-        "checks_total": 52,
+        "checks_passed": 75,
+        "checks_total": 75,
         "check_accuracy_pct": 100.0,
         "hallucinated_questions": 0,
         "hallucination_rate_pct": 0.0,
@@ -771,10 +1046,10 @@
             "hallucinated": 0
           },
           "Roster & Bases": {
-            "total": 2,
-            "passed": 2,
-            "checks_passed": 6,
-            "checks_total": 6,
+            "total": 3,
+            "passed": 3,
+            "checks_passed": 9,
+            "checks_total": 9,
             "hallucinated": 0
           },
           "Crafting": {
@@ -785,17 +1060,17 @@
             "hallucinated": 0
           },
           "Atlas & Regex": {
-            "total": 3,
-            "passed": 3,
-            "checks_passed": 8,
-            "checks_total": 8,
+            "total": 4,
+            "passed": 4,
+            "checks_passed": 10,
+            "checks_total": 10,
             "hallucinated": 0
           },
           "Headless PoB2": {
-            "total": 2,
-            "passed": 2,
-            "checks_passed": 8,
-            "checks_total": 8,
+            "total": 6,
+            "passed": 6,
+            "checks_passed": 26,
+            "checks_total": 26,
             "hallucinated": 0
           },
           "Loot Filters": {
@@ -1173,9 +1448,9 @@
             "check_results": [
               {
                 "id": "valid_poe2_safe_regex",
-                "label": "Contains a valid <=50-char PoE2 negated stash regex (!\"...\") matching all 4 es_ci brick mods",
+                "label": "Contains a valid <=50-char PoE2 negated stash regex (!\"...\") matching all 6 es_ci brick mods",
                 "passed": true,
-                "detail": "Valid 26-char PoE2 regex `!\"ever|pene|weak|player r\"`"
+                "detail": "Valid 36-char PoE2 regex `!\"buil|ever|of l|pene|weak|player r\"`"
               }
             ]
           },
@@ -1326,153 +1601,423 @@
                 "detail": "matched"
               }
             ]
+          },
+          {
+            "id": "Q17",
+            "title": "Headless PoB2 Legal 6-Link Dewatered Support Swap (--best-swap --dewater)",
+            "pillar": "Headless PoB2",
+            "passed": true,
+            "checks_passed": 5,
+            "total_checks": 5,
+            "check_accuracy": 1.0,
+            "hallucinated": false,
+            "triggered_traps": [],
+            "check_results": [
+              {
+                "id": "weakest_stoicism",
+                "label": "Identifies Stoicism II as weakest socketed support replaced",
+                "passed": true,
+                "detail": "matched"
+              },
+              {
+                "id": "top_swap_hit_and_run",
+                "label": "Identifies Hit and Run as #1 legal 6-link swap",
+                "passed": true,
+                "detail": "matched"
+              },
+              {
+                "id": "dewatered_after_170344",
+                "label": "Reports dewatered DPS after swap ≈ 170,344 (±3%) and +40.0% gain (±2pp)",
+                "passed": true,
+                "detail": "found 170343.53563185 (target 170344.0)"
+              },
+              {
+                "id": "dewatered_gain_40",
+                "label": "Reports ~40.0% DPS gain (±2pp)",
+                "passed": true,
+                "detail": "found 40.0 (target 40.0)"
+              },
+              {
+                "id": "elemental_focus_attrs_met",
+                "label": "Confirms Elemental Focus meets attribute requirements (true)",
+                "passed": true,
+                "detail": "matched"
+              }
+            ]
+          },
+          {
+            "id": "Q18",
+            "title": "Headless PoB2 HC Pinnacle Audit, Spirit Reconciliation & Dewatered Defensive Passives",
+            "pillar": "Headless PoB2",
+            "passed": true,
+            "checks_passed": 4,
+            "total_checks": 4,
+            "check_accuracy": 1.0,
+            "hallucinated": false,
+            "triggered_traps": [],
+            "check_results": [
+              {
+                "id": "hc_max_hits",
+                "label": "Reports exact Max Hits: 3,340 Phys, 11,296 Ele, 3,877 Chaos",
+                "passed": true,
+                "detail": "matched"
+              },
+              {
+                "id": "spirit_reconciled",
+                "label": "Reconciles Spirit: 139 total, 235 reserved, -96 unreserved",
+                "passed": true,
+                "detail": "matched"
+              },
+              {
+                "id": "shimmering_21pct",
+                "label": "Identifies Shimmering (~21.0% dewatered EHP gain)",
+                "passed": true,
+                "detail": "matched"
+              },
+              {
+                "id": "careful_consideration_31_6pct",
+                "label": "Identifies Careful Consideration (~31.6% dewatered EHP gain)",
+                "passed": true,
+                "detail": "matched"
+              }
+            ]
+          },
+          {
+            "id": "Q19",
+            "title": "Headless PoB2 Rune Resist Tetris with Socket-Bound Augment Lock",
+            "pillar": "Headless PoB2",
+            "passed": true,
+            "checks_passed": 5,
+            "total_checks": 5,
+            "check_accuracy": 1.0,
+            "hallucinated": false,
+            "triggered_traps": [],
+            "check_results": [
+              {
+                "id": "eleven_sockets_kolrs_hunt",
+                "label": "11 overwriteable sockets; Kolr's Hunt on Sol Claw Gloves locked",
+                "passed": true,
+                "detail": "matched"
+              },
+              {
+                "id": "tacati_3_to_60_chaos",
+                "label": "3 Soul Core of Tacati raising Chaos Resistance to 60%",
+                "passed": true,
+                "detail": "matched"
+              },
+              {
+                "id": "true_net_dps_delta",
+                "label": "True net DPS delta ≈ -43,108 (±4%)",
+                "passed": true,
+                "detail": "found -43108.15 (target -43108.0)"
+              },
+              {
+                "id": "true_net_ehp_delta",
+                "label": "True net EHP delta ≈ +2,017 (±5%)",
+                "passed": true,
+                "detail": "found 2017.1 (target 2017.0)"
+              },
+              {
+                "id": "offline_cost_null",
+                "label": "Reports offline estimated_total_cost_exalted as null/unavailable",
+                "passed": true,
+                "detail": "matched"
+              }
+            ]
+          },
+          {
+            "id": "Q20",
+            "title": "Bilingual Chinese (zh-CN) Lookup & Tencent Spaced Clipboard Parsing",
+            "pillar": "Roster & Bases",
+            "passed": true,
+            "checks_passed": 3,
+            "total_checks": 3,
+            "check_accuracy": 1.0,
+            "hallucinated": false,
+            "triggered_traps": [],
+            "check_results": [
+              {
+                "id": "zh_stormweaver",
+                "label": "Sorceress / Stormweaver with 10 notables and Elemental Storm",
+                "passed": true,
+                "detail": "matched"
+              },
+              {
+                "id": "zh_rakiata_flow",
+                "label": "Rakiata's Flow Lineage Support, max 1 copy per char",
+                "passed": true,
+                "detail": "matched"
+              },
+              {
+                "id": "zh_bow_parsed_vals",
+                "label": "Parsed ilvl 82, 20% quality, and explicit rolls 145, 22-44, 18, 27",
+                "passed": true,
+                "detail": "matched"
+              }
+            ]
+          },
+          {
+            "id": "Q21",
+            "title": "Compiled <=50-Char Waystone Juicing Regex (120%/20%) & Max-Res Math",
+            "pillar": "Atlas & Regex",
+            "passed": true,
+            "checks_passed": 2,
+            "total_checks": 2,
+            "check_accuracy": 1.0,
+            "hallucinated": false,
+            "triggered_traps": [],
+            "check_results": [
+              {
+                "id": "valid_juicing_regex",
+                "label": "Valid <=50-char PoE2 juicing regex matching 120%/1000% drop & 20%/100% pack, rejecting 119%/19%",
+                "passed": true,
+                "detail": "Valid 50-char PoE2 juicing regex `\"ce:..(1[2-9]|[2-9]\\d|\\d{3})\\d|ze:..([2-9]|1\\d)\\d\"`"
+              },
+              {
+                "id": "max_res_12_to_32",
+                "label": "Reports 12% to 32% more elemental damage taken",
+                "passed": true,
+                "detail": "matched"
+              }
+            ]
+          },
+          {
+            "id": "Q22",
+            "title": "Headless PoB2 Exact What-If Delta & Offline Quad-Tab Triage",
+            "pillar": "Headless PoB2",
+            "passed": true,
+            "checks_passed": 4,
+            "total_checks": 4,
+            "check_accuracy": 1.0,
+            "hallucinated": false,
+            "triggered_traps": [],
+            "check_results": [
+              {
+                "id": "rage0_after_160418",
+                "label": "Reports DPS after multiplierRage=0 ≈ 160,418 (±3%)",
+                "passed": true,
+                "detail": "found 160417.72676344 (target 160418.0)"
+              },
+              {
+                "id": "rage0_drop_32_6pct",
+                "label": "Reports ~-32.6% (or 32.6%) DPS drop (±2pp)",
+                "passed": true,
+                "detail": "matched"
+              },
+              {
+                "id": "wand_3p_3s_open",
+                "label": "Reports 3 open prefixes and 3 open suffixes on Normal Siphoning Wand",
+                "passed": true,
+                "detail": "matched"
+              },
+              {
+                "id": "ring_salvage_or_vendor",
+                "label": "Assigns Iron Ring to salvage_or_vendor bucket",
+                "passed": true,
+                "detail": "matched"
+              }
+            ]
           }
         ]
       },
       "responses": {
-        "Q01": {
-          "id": "Q01",
-          "mode": "poe2brain",
-          "model": "gpt-6.2-astra",
-          "returncode": 0,
-          "elapsed_s": 14.74,
-          "answer": "**(a) No.** Non-poison Chaos hits damage Energy Shield first. Each point of Chaos hit damage after mitigation removes **2 Energy Shield** while shield remains.\n\n**(b) Yes.** Damage over time from both Bleeding and Poison bypasses Energy Shield and removes Life directly.\n\n**(c) No.** Chaos Inoculation sets maximum Life to 1 and explicitly grants immunity to both Bleeding and Chaos damage. Bleeding cannot kill a CI character.",
-          "stderr_tail": "ic damage types. The list of Ailments is: Bleeding, Ignite, Chill, Freeze, Shock, Electrocute, and Poison.\"\n    }\n  ],\n  \"trap_warnings\": [\n    \"[energy_shield_chaos_2x_and_bleed_poison_bypass] AVOID TRAP: Saying 'Chaos hit damage bypasses Energy Shield and hits Life directly, while Bleeding damages Energy Shield first' (the PoE1 rule).\"\n  ]\n}\n\ncodex\n**(a) No.** Non-poison Chaos hits damage Energy Shield first. Each point of Chaos hit damage after mitigation removes **2 Energy Shield** while shield remains.\n\n**(b) Yes.** Damage over time from both Bleeding and Poison bypasses Energy Shield and removes Life directly.\n\n**(c) No.** Chaos Inoculation sets maximum Life to 1 and explicitly grants immunity to both Bleeding and Chaos damage. Bleeding cannot kill a CI character.\ntokens used\n27,853\n"
-        },
         "Q02": {
           "id": "Q02",
           "mode": "poe2brain",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 16.7,
-          "answer": "**(a)** The base maximum passive Block chance is **50%**.\n\n**(b)** Glancing Blows makes **Chance to Evade Unlucky** and **Chance to Deflect Lucky**. Evading requires both rolls to succeed. Deflecting requires only one.\n\n**(c)** **Deflection Rating** replaced Spell Suppression on Dexterity gear. A successful deflection prevents **40% of the hit’s damage** by default, and the chance to Deflect is capped at **95%**. It applies to both attack and spell hits.",
-          "stderr_tail": "ction_0_5_formula] AVOID TRAP: Looking for PoE1 'Spell Suppression' on Dexterity gear, or using pre-0.5 uncapped/unreachable Deflection curves.\",\n    \"[keystone_glancing_blows] AVOID TRAP: Recommending Glancing Blows to shield builds to 'double Block chance at 65% blocked damage taken' (the PoE1 keystone).\"\n  ]\n}\n\ncodex\n**(a)** The base maximum passive Block chance is **50%**.\n\n**(b)** Glancing Blows makes **Chance to Evade Unlucky** and **Chance to Deflect Lucky**. Evading requires both rolls to succeed. Deflecting requires only one.\n\n**(c)** **Deflection Rating** replaced Spell Suppression on Dexterity gear. A successful deflection prevents **40% of the hit’s damage** by default, and the chance to Deflect is capped at **95%**. It applies to both attack and spell hits.\ntokens used\n30,206\n"
+          "elapsed_s": 16.32,
+          "answer": "**(a)** Passive Block chance caps at **50%** without modifiers to maximum Block chance.\n\n**(b)** Glancing Blows makes Chance to Evade **Unlucky** and Chance to Deflect **Lucky**. Each rolls twice. Evading requires both rolls to succeed, while deflecting requires only one.\n\n**(c)** **Deflection Rating** replaced Spell Suppression on Dexterity gear. A successful Deflect prevents **40%** of an attack or spell hit’s damage by default. The **chance to Deflect caps at 95%** per roll.",
+          "stderr_tail": "s to 'double Block chance at 65% blocked damage taken' (the PoE1 keystone).\",\n    \"[passive_block_cap_50_and_active_block] AVOID TRAP: Assuming base maximum passive Block chance is 75% (from PoE1 or PoE2 0.1.0), or assuming all boss slams can be passively blocked without investment.\"\n  ]\n}\n\ncodex\n**(a)** Passive Block chance caps at **50%** without modifiers to maximum Block chance.\n\n**(b)** Glancing Blows makes Chance to Evade **Unlucky** and Chance to Deflect **Lucky**. Each rolls twice. Evading requires both rolls to succeed, while deflecting requires only one.\n\n**(c)** **Deflection Rating** replaced Spell Suppression on Dexterity gear. A successful Deflect prevents **40%** of an attack or spell hit’s damage by default. The **chance to Deflect caps at 95%** per roll.\ntokens used\n20,559\n"
+        },
+        "Q01": {
+          "id": "Q01",
+          "mode": "poe2brain",
+          "model": "gpt-6.2-astra",
+          "returncode": 0,
+          "elapsed_s": 19.9,
+          "answer": "**(a) No.** A non-poison Chaos hit damages Energy Shield first. Each point of Chaos damage after mitigation removes **2 ES** while Energy Shield remains.\n\n**(b) Yes.** Both Bleeding and Poison bypass Energy Shield and deal their damage over time directly to Life.\n\n**(c) No.** Chaos Inoculation sets maximum Life to 1 and explicitly grants immunity to both **Chaos damage and Bleeding**. Bleeding therefore cannot kill a CI character.",
+          "stderr_tail": "ield and hits Life directly, while Bleeding damages Energy Shield first' (the PoE1 rule).\",\n    \"[damage_conversion_two_step] AVOID TRAP: Assuming PoE1's Phys->Lightning->Cold->Fire->Chaos multi-step conversion chain and scaling converted damage with BOTH source (% increased Physical) and target (% increased Lightning) modifiers.\"\n  ]\n}\n\ncodex\n**(a) No.** A non-poison Chaos hit damages Energy Shield first. Each point of Chaos damage after mitigation removes **2 ES** while Energy Shield remains.\n\n**(b) Yes.** Both Bleeding and Poison bypass Energy Shield and deal their damage over time directly to Life.\n\n**(c) No.** Chaos Inoculation sets maximum Life to 1 and explicitly grants immunity to both **Chaos damage and Bleeding**. Bleeding therefore cannot kill a CI character.\ntokens used\n15,792\n"
         },
         "Q03": {
           "id": "Q03",
           "mode": "poe2brain",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 14.56,
-          "answer": "**(a) 0%.** With full Physical-to-Lightning conversion, the hit deals Lightning damage. Global “% increased Physical Damage” on the passive tree contributes nothing to it.\n\n**(b) Multiplicative (MORE).** At +20% Quality, multiply the Martial Weapon’s Physical damage by **1.20×** after applying its local “% increased Physical Damage.” This happens before skill conversion.\n\n**(c) +100% base Critical Hit Damage Bonus.** An unmodified player critical hit deals **2.00×** the damage of a normal hit (200% total).",
-          "stderr_tail": "ctified item.\",\n    \"[item_rarity_diminishing_returns_and_negative_mf] AVOID TRAP: Assuming PoE1's rule that Item Rarity ignores currency drops, stacking 300%+ IIR at the cost of clear speed on Day 1, or ignoring Negative Rarity for white crafting bases.\"\n  ]\n}\n\ncodex\n**(a) 0%.** With full Physical-to-Lightning conversion, the hit deals Lightning damage. Global “% increased Physical Damage” on the passive tree contributes nothing to it.\n\n**(b) Multiplicative (MORE).** At +20% Quality, multiply the Martial Weapon’s Physical damage by **1.20×** after applying its local “% increased Physical Damage.” This happens before skill conversion.\n\n**(c) +100% base Critical Hit Damage Bonus.** An unmodified player critical hit deals **2.00×** the damage of a normal hit (200% total).\ntokens used\n32,368\n"
+          "elapsed_s": 16.99,
+          "answer": "**(a) 0%.** With 100% conversion to Lightning, global “increased Physical Damage” on the passive tree contributes nothing to the converted damage. It now scales with Lightning damage modifiers.\n\n**(b) Multiplicative (MORE).** At 20% Quality, a Martial Weapon’s Physical damage is multiplied by **1.20** after local “increased Physical Damage” applies.\n\n**(c) +100% base Critical Hit Damage Bonus.** A player’s unmodified critical hit deals **2.00×** the damage of a normal hit (200% total).",
+          "stderr_tail": "xtra Lightning Damage' scales with global % increased Physical Damage AND can be converted again (e.g. via Call of the Brotherhood).\",\n    \"[keystone_eldritch_battery] AVOID TRAP: Assuming Eldritch Battery moves Energy Shield to protect Mana with zero cost penalty like PoE1.\"\n  ]\n}\n\ncodex\n**(a) 0%.** With 100% conversion to Lightning, global “increased Physical Damage” on the passive tree contributes nothing to the converted damage. It now scales with Lightning damage modifiers.\n\n**(b) Multiplicative (MORE).** At 20% Quality, a Martial Weapon’s Physical damage is multiplied by **1.20** after local “increased Physical Damage” applies.\n\n**(c) +100% base Critical Hit Damage Bonus.** A player’s unmodified critical hit deals **2.00×** the damage of a normal hit (200% total).\ntokens used\n22,843\n"
         },
         "Q04": {
           "id": "Q04",
           "mode": "poe2brain",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 15.23,
-          "answer": "**(a) Yes.** You can socket copies of the same standard Support Gem in different skills. Each skill allows only one support from a given category. Supports that grant global benefits to persistent reservation skills have a one-copy limit per character.\n\n**(b) No.** Rakiata’s Flow is a drop-only Lineage Support. You can socket **one copy per character** across all skills combined.\n\n**(c) No.** Grim Feast grants no Energy Shield or overflow in 0.5.5. It now collects Remnants when your reviving minions die or expire, and you can activate it to revive fallen minions.",
-          "stderr_tail": "nergy bar like PoE1.\",\n    \"[shock_chill_freeze_electrocute_thresholds] AVOID TRAP: Assuming Shock scales continuously from 5% to 50% by default or assuming all Lightning skills cause Electrocute.\"\n  ]\n}\n\ncodex\n**(a) Yes.** You can socket copies of the same standard Support Gem in different skills. Each skill allows only one support from a given category. Supports that grant global benefits to persistent reservation skills have a one-copy limit per character.\n\n**(b) No.** Rakiata’s Flow is a drop-only Lineage Support. You can socket **one copy per character** across all skills combined.\n\n**(c) No.** Grim Feast grants no Energy Shield or overflow in 0.5.5. It now collects Remnants when your reviving minions die or expire, and you can activate it to revive fallen minions.\ntokens used\n15,505\n"
+          "elapsed_s": 17.35,
+          "answer": "**(a) Yes.** You can socket copies of the same standard Support Gem into different skills. Each skill can use only one support per category. Supports that grant global benefits to persistent reservation skills have a one-copy-per-character limit.\n\n**(b) No.** Rakiata’s Flow is a drop-only Lineage Support. You cannot engrave it from an Uncut Support Gem. You can socket **one copy total** across all skills on a character.\n\n**(c) No.** Grim Feast grants no Energy Shield or overflow in Patch 0.5.5. It collects Remnants when your reviving minions die or expire and can revive fallen minions together.",
+          "stderr_tail": "te rule that 'you can only equip 1 copy of each Support Gem across your entire character', or thinking unmet support gem attributes disable the entire active skill.\"\n  ]\n}\n\ncodex\n**(a) Yes.** You can socket copies of the same standard Support Gem into different skills. Each skill can use only one support per category. Supports that grant global benefits to persistent reservation skills have a one-copy-per-character limit.\n\n**(b) No.** Rakiata’s Flow is a drop-only Lineage Support. You cannot engrave it from an Uncut Support Gem. You can socket **one copy total** across all skills on a character.\n\n**(c) No.** Grim Feast grants no Energy Shield or overflow in Patch 0.5.5. It collects Remnants when your reviving minions die or expire and can revive fallen minions together.\ntokens used\n18,093\n"
         },
         "Q05": {
           "id": "Q05",
           "mode": "poe2brain",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 18.18,
-          "answer": "**(a)** Patch 0.5.5 has **8 playable base classes** and **23 Ascendancies** in total.  \n**(b)** Druid is playable. Shadow is unavailable in 0.5.5.  \n**(c)** Abyssal Lich belongs to the **Witch** base class and replaces the **Lich** Ascendancy.",
-          "stderr_tail": "s\": [\n            \"15% increased Minion Duration\"\n          ]\n        },\n        {\n          \"node_id\": 15373,\n          \"name\": \"Minion Reservation Efficiency\",\n          \"stats\": [\n            \"6% increased Reservation Efficiency of Minion Skills\"\n          ]\n        }\n      ]\n    }\n  ]\n}\n\nexec\n/bin/zsh -lc \"uv run poe2 wiki ascendancy Druid --json | jq '{patch, matched_kind, class_name}'\" in /Users/lfan/Project/poe2/poe2brain\n succeeded in 1445ms:\n{\n  \"patch\": \"0.5.5\",\n  \"matched_kind\": \"class\",\n  \"class_name\": \"Druid\"\n}\n\ncodex\n**(a)** Patch 0.5.5 has **8 playable base classes** and **23 Ascendancies** in total.  \n**(b)** Druid is playable. Shadow is unavailable in 0.5.5.  \n**(c)** Abyssal Lich belongs to the **Witch** base class and replaces the **Lich** Ascendancy.\ntokens used\n19,051\n"
+          "elapsed_s": 16.73,
+          "answer": "**(a)** Patch 0.5.5 has **8 playable base classes** and **23 Ascendancies** in total.  \n**(b)** Druid is playable. Shadow is unavailable in 0.5.5.  \n**(c)** Abyssal Lich is a **Witch** Ascendancy that replaces **Lich**.",
+          "stderr_tail": "\n          ]\n        },\n        {\n          \"node_id\": 31398,\n          \"name\": \"Life\",\n          \"stats\": [\n            \"3% increased maximum Life\"\n          ]\n        },\n        {\n          \"node_id\": 15028,\n          \"name\": \"Minion Duration\",\n          \"stats\": [\n            \"15% increased Minion Duration\"\n          ]\n        },\n        {\n          \"node_id\": 15373,\n          \"name\": \"Minion Reservation Efficiency\",\n          \"stats\": [\n            \"6% increased Reservation Efficiency of Minion Skills\"\n          ]\n        }\n      ]\n    }\n  ]\n}\n\ncodex\n**(a)** Patch 0.5.5 has **8 playable base classes** and **23 Ascendancies** in total.  \n**(b)** Druid is playable. Shadow is unavailable in 0.5.5.  \n**(c)** Abyssal Lich is a **Witch** Ascendancy that replaces **Lich**.\ntokens used\n17,747\n"
         },
         "Q06": {
           "id": "Q06",
           "mode": "poe2brain",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 17.68,
-          "answer": "**(a) No.** The `Expert` prefix was removed after Patch 0.1. **Hexer’s Robe** exists in 0.5.5 as a Body Armour base with drop level 11.\n\n**(b) No.** You can overwrite a standard Rune or Soul Core by socketing a new Augment. The old Augment is lost. Only Augments explicitly marked **Socket-bound** prevent replacement.\n\n**(c) Weapon slot.** A **Talisman** is a two-handed melee weapon in the Martial Weapon category. It requires Strength and Intelligence and enables shapeshifting skills.",
-          "stderr_tail": " \"Frenzied Talisman\",\n      \"summary\": \"Talisman (drop lvl 22, slug=Talismans)\",\n      \"category\": \"Talisman\",\n      \"patch\": \"0.5.5\",\n      \"score\": 21.877,\n      \"source_ref\": null,\n      \"metadata\": {\n        \"poe2db_slug\": \"Talismans\",\n        \"drop_level\": 22\n      }\n    }\n  ]\n}\n\ncodex\n**(a) No.** The `Expert` prefix was removed after Patch 0.1. **Hexer’s Robe** exists in 0.5.5 as a Body Armour base with drop level 11.\n\n**(b) No.** You can overwrite a standard Rune or Soul Core by socketing a new Augment. The old Augment is lost. Only Augments explicitly marked **Socket-bound** prevent replacement.\n\n**(c) Weapon slot.** A **Talisman** is a two-handed melee weapon in the Martial Weapon category. It requires Strength and Intelligence and enables shapeshifting skills.\ntokens used\n15,990\n"
+          "elapsed_s": 16.26,
+          "answer": "**(a) No.** The `Expert` prefix was removed after Patch 0.1. **Hexer's Robe** is a live Body Armour base with drop level 11.\n\n**(b) No.** You can overwrite a standard Rune or Soul Core by socketing a new augment. The old augment is lost. An augment explicitly marked **Socket-bound** can neither be removed nor replaced.\n\n**(c) Weapon slot.** A **Talisman** is a two-handed melee weapon in the **Martial Weapon** category, used for shapeshifting attacks.",
+          "stderr_tail": "\"\n    },\n    {\n      \"mod_id\": \"Intelligence8\",\n      \"mod_type\": \"Intelligence\",\n      \"family_id\": \"Intelligence\",\n      \"affix_side\": \"suffix\",\n      \"affix_name\": \"of the Virtuoso\",\n      \"display_tier\": 1,\n      \"required_level\": 74,\n      \"weight\": 1000,\n      \"stat_text\": \"+(31-33) to Intelligence\"\n    }\n  ]\n}\n\ncodex\n**(a) No.** The `Expert` prefix was removed after Patch 0.1. **Hexer's Robe** is a live Body Armour base with drop level 11.\n\n**(b) No.** You can overwrite a standard Rune or Soul Core by socketing a new augment. The old augment is lost. An augment explicitly marked **Socket-bound** can neither be removed nor replaced.\n\n**(c) Weapon slot.** A **Talisman** is a two-handed melee weapon in the **Martial Weapon** category, used for shapeshifting attacks.\ntokens used\n12,858\n"
         },
         "Q07": {
           "id": "Q07",
           "mode": "poe2brain",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 15.48,
-          "answer": "**(a)** In Patch 0.5.5, **T1 is the best modifier tier** shown on an in-game tooltip for that modifier family on that base.\n\n**(b) Minimum Modifier Level floors**\n\n| Orb family | Greater | Perfect |\n|---|---:|---:|\n| Transmutation or Augmentation | 55 | 70 |\n| Regal, Exalted, or Chaos | 35 | 50 |\n\n**(c) Yes.** An Orb of Alchemy can be applied directly to a Magic item. It removes the existing Magic modifiers and rerolls the item as Rare.",
-          "stderr_tail": "cour_no_alteration_no_bench] AVOID TRAP: Advising 'Alt-spam for +2 skills, Imprint, Regal, then craft Prefixes Cannot Be Changed + Scour' — NONE of those exist in PoE2!\",\n    \"[uncut_gems_and_jewellers_sockets] AVOID TRAP: Telling players to use Chromatic Orbs or Orbs of Fusing on Body Armour/Weapons to 6-link their skills.\"\n  ]\n}\n\ncodex\n**(a)** In Patch 0.5.5, **T1 is the best modifier tier** shown on an in-game tooltip for that modifier family on that base.\n\n**(b) Minimum Modifier Level floors**\n\n| Orb family | Greater | Perfect |\n|---|---:|---:|\n| Transmutation or Augmentation | 55 | 70 |\n| Regal, Exalted, or Chaos | 35 | 50 |\n\n**(c) Yes.** An Orb of Alchemy can be applied directly to a Magic item. It removes the existing Magic modifiers and rerolls the item as Rare.\ntokens used\n27,711\n"
+          "elapsed_s": 15.97,
+          "answer": "**(a) T1 is the best tier.** On in-game tooltips, T1 is the strongest tier available for that modifier on that base.\n\n**(b) Minimum Modifier Level floors**\n\n| Orb family | Greater | Perfect |\n|---|---:|---:|\n| Transmutation and Augmentation | 55 | 70 |\n| Regal, Exalted, and Chaos | 35 | 50 |\n\n**(c) Yes.** Applying an Orb of Alchemy directly to a Magic item wipes its existing modifiers and reforges it as a fresh Rare.",
+          "stderr_tail": "r telling players 'In PoE2 Tier 1 is the worst tier and Tier 10 is the best' (stale 0.1.0 rule) OR reading RePoE/PoB2 mod ID 'Strength1' (+5-8 Str, ilvl 1) and calling it 'Tier 1'!\",\n    \"[crafting_tiered_basic_orbs_floors] AVOID TRAP: Ignoring Greater and Perfect currency tiers or guessing wrong minimum ilvl cutoffs across Magic vs Rare orbs.\"\n  ]\n}\n\ncodex\n**(a) T1 is the best tier.** On in-game tooltips, T1 is the strongest tier available for that modifier on that base.\n\n**(b) Minimum Modifier Level floors**\n\n| Orb family | Greater | Perfect |\n|---|---:|---:|\n| Transmutation and Augmentation | 55 | 70 |\n| Regal, Exalted, and Chaos | 35 | 50 |\n\n**(c) Yes.** Applying an Orb of Alchemy directly to a Magic item wipes its existing modifiers and reforges it as a fresh Rare.\ntokens used\n13,439\n"
         },
         "Q08": {
           "id": "Q08",
           "mode": "poe2brain",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 16.17,
-          "answer": "**(a) All three are unavailable in Forbidden Rites (0.5.5).** Orb of Scouring is an unobtainable PoE1 leftover. Patch 0.4 removed Omen of Homogenising Exaltation from drop pools, and Patch 0.5 phased out Recombinators.\n\n**(b) Perfect Essences** replace one random removable modifier on a **Rare** item with one guaranteed Essence modifier. **Lesser, Normal, and Greater Essences** upgrade a **Magic** item to **Rare**, preserve its existing modifiers, and add one guaranteed Essence modifier.\n\n**(c) A Fracturing Orb requires a Rare item with at least four explicit modifiers.** Omen of Whittling forces the next Chaos Orb to remove the eligible modifier with the **lowest modifier required level**. If several tie, each has an equal chance of removal.",
-          "stderr_tail": "of the Abyss.\"\n  ]\n}\n\ncodex\n**(a) All three are unavailable in Forbidden Rites (0.5.5).** Orb of Scouring is an unobtainable PoE1 leftover. Patch 0.4 removed Omen of Homogenising Exaltation from drop pools, and Patch 0.5 phased out Recombinators.\n\n**(b) Perfect Essences** replace one random removable modifier on a **Rare** item with one guaranteed Essence modifier. **Lesser, Normal, and Greater Essences** upgrade a **Magic** item to **Rare**, preserve its existing modifiers, and add one guaranteed Essence modifier.\n\n**(c) A Fracturing Orb requires a Rare item with at least four explicit modifiers.** Omen of Whittling forces the next Chaos Orb to remove the eligible modifier with the **lowest modifier required level**. If several tie, each has an equal chance of removal.\ntokens used\n30,962\n"
-        },
-        "Q10": {
-          "id": "Q10",
-          "mode": "poe2brain",
-          "model": "gpt-6.2-astra",
-          "returncode": 0,
-          "elapsed_s": 14.93,
-          "answer": "**(a)** A 0-mod Normal Waystone gives **5 revives**, a 2-mod Magic gives **4**, a 4-mod Rare gives **2**, and a 6-mod Rare gives **0**.\n\n**(b)** Place Precursor Tablets **directly in the Map Device alongside your Waystone**.\n\n**(c)** The three Masters of the Atlas are **Jado, Hilda, and Doryani**. Only **one** can be active at a time. In 0.5.5, applying a Sacred Bloom to an Atlas cluster spawns **entrances to the Viridian Wildwood** in affected maps, where Azmeri Wisps can empower map monsters.",
-          "stderr_tail": "1 revives) when pushing XP or running expensive Boss / Delirium setups.\",\n    \"In PoE2 0.5.5, slot Precursor Tablets DIRECTLY into the Map Device alongside your Waystone (never look for obsolete 0.1–0.3 Lost Tower tablet slots).\"\n  ],\n  \"item_check\": null,\n  \"slot\": null\n}\n\ncodex\n**(a)** A 0-mod Normal Waystone gives **5 revives**, a 2-mod Magic gives **4**, a 4-mod Rare gives **2**, and a 6-mod Rare gives **0**.\n\n**(b)** Place Precursor Tablets **directly in the Map Device alongside your Waystone**.\n\n**(c)** The three Masters of the Atlas are **Jado, Hilda, and Doryani**. Only **one** can be active at a time. In 0.5.5, applying a Sacred Bloom to an Atlas cluster spawns **entrances to the Viridian Wildwood** in affected maps, where Azmeri Wisps can empower map monsters.\ntokens used\n45,853\n"
+          "elapsed_s": 17.04,
+          "answer": "**(a) All three are unavailable in Forbidden Rites 0.5.5.** Orb of Scouring is an unobtainable PoE1 leftover. Omen of Homogenising Exaltation left the drop pool in 0.4, and Recombinators were phased out in 0.5.\n\n**(b) Perfect Essences** replace one random modifier on a **rare** item with the essence’s guaranteed modifier. **Lesser, Normal, and Greater Essences** upgrade a **magic** item to **rare**, preserving its existing modifiers and adding one guaranteed modifier.\n\n**(c) A Fracturing Orb requires a rare item with at least 4 modifiers.** Omen of Whittling forces the next Chaos Orb to remove the eligible modifier with the **lowest required level**. If several tie, each has an equal chance of removal.",
+          "stderr_tail": "'Recombinators' (0.2-0.4 meta) in a live 0.5.5 league.\"\n  ]\n}\n\ncodex\n**(a) All three are unavailable in Forbidden Rites 0.5.5.** Orb of Scouring is an unobtainable PoE1 leftover. Omen of Homogenising Exaltation left the drop pool in 0.4, and Recombinators were phased out in 0.5.\n\n**(b) Perfect Essences** replace one random modifier on a **rare** item with the essence’s guaranteed modifier. **Lesser, Normal, and Greater Essences** upgrade a **magic** item to **rare**, preserving its existing modifiers and adding one guaranteed modifier.\n\n**(c) A Fracturing Orb requires a rare item with at least 4 modifiers.** Omen of Whittling forces the next Chaos Orb to remove the eligible modifier with the **lowest required level**. If several tie, each has an equal chance of removal.\ntokens used\n13,404\n"
         },
         "Q09": {
           "id": "Q09",
           "mode": "poe2brain",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 25.0,
-          "answer": "The **Perfect Exalted Orb is about 1.634× as likely per slam** to hit *Merciless*, the T1 prefix granting 170–179% increased Physical Damage.\n\n| Orb | Minimum mod level | Eligible pool weight | Hit probability per slam | Expected attempts to hit |\n|---|---:|---:|---:|---:|\n| Greater Exalted Orb | 35 | 40,482 | 25 / 40,482 ≈ **0.061756%** | **1,619.28** |\n| Perfect Exalted Orb | 50 | 24,782 | 25 / 24,782 ≈ **0.100880%** | **991.28** |\n\nVerified with `poe2 craft odds --offline-prices --json` for an ilvl 82 Rare Warmonger Bow in patch 0.5.5. Each attempt assumes the same empty starting pool with no blocked families.",
-          "stderr_tail": "28,\n      \"expected_cost_to_hit_exalted\": 7286.76,\n      \"eligible_pool_weight\": 40482,\n      \"target_weight\": 25,\n      \"notes\": \"floor=35\"\n    }\n  ]\n}\n\ncodex\nThe **Perfect Exalted Orb is about 1.634× as likely per slam** to hit *Merciless*, the T1 prefix granting 170–179% increased Physical Damage.\n\n| Orb | Minimum mod level | Eligible pool weight | Hit probability per slam | Expected attempts to hit |\n|---|---:|---:|---:|---:|\n| Greater Exalted Orb | 35 | 40,482 | 25 / 40,482 ≈ **0.061756%** | **1,619.28** |\n| Perfect Exalted Orb | 50 | 24,782 | 25 / 24,782 ≈ **0.100880%** | **991.28** |\n\nVerified with `poe2 craft odds --offline-prices --json` for an ilvl 82 Rare Warmonger Bow in patch 0.5.5. Each attempt assumes the same empty starting pool with no blocked families.\ntokens used\n41,090\n"
+          "elapsed_s": 24.17,
+          "answer": "The **Perfect Exalted Orb is 1.63× as likely** to hit T1 Increased Physical Damage (Merciless, weight 25) on an ilvl 82 Rare Warmonger Bow with no blocked families.\n\n| Orb | Minimum mod level | Eligible pool weight | Hit probability per slam | Expected attempts to hit |\n|---|---:|---:|---:|---:|\n| Greater Exalted Orb | 35 | 40,482 | 25/40,482 ≈ **0.061756%** | **1,619.28** |\n| Perfect Exalted Orb | 50 | 24,782 | 25/24,782 ≈ **0.100880%** | **991.28** |\n\nVerified with `poe2 craft odds --offline-prices --json` for Patch 0.5.5. Each attempt assumes the same starting pool.",
+          "stderr_tail": "0618,\n      \"expected_attempts_to_hit\": 1619.28,\n      \"expected_cost_to_hit_exalted\": 7286.76,\n      \"eligible_pool_weight\": 40482,\n      \"target_weight\": 25,\n      \"notes\": \"floor=35\"\n    }\n  ]\n}\n\ncodex\nThe **Perfect Exalted Orb is 1.63× as likely** to hit T1 Increased Physical Damage (Merciless, weight 25) on an ilvl 82 Rare Warmonger Bow with no blocked families.\n\n| Orb | Minimum mod level | Eligible pool weight | Hit probability per slam | Expected attempts to hit |\n|---|---:|---:|---:|---:|\n| Greater Exalted Orb | 35 | 40,482 | 25/40,482 ≈ **0.061756%** | **1,619.28** |\n| Perfect Exalted Orb | 50 | 24,782 | 25/24,782 ≈ **0.100880%** | **991.28** |\n\nVerified with `poe2 craft odds --offline-prices --json` for Patch 0.5.5. Each attempt assumes the same starting pool.\ntokens used\n13,549\n"
+        },
+        "Q10": {
+          "id": "Q10",
+          "mode": "poe2brain",
+          "model": "gpt-6.2-astra",
+          "returncode": 0,
+          "elapsed_s": 19.96,
+          "answer": "**(a)** A 0-mod Normal Waystone gives **5 revives**, a 2-mod Magic gives **4**, a 4-mod Rare gives **2**, and a 6-mod Rare gives **0**.\n\n**(b)** Place Precursor Tablets **directly in the Map Device alongside your Waystone**.\n\n**(c)** The three Masters of the Atlas are **Jado, Hilda, and Doryani**. Only **one** can be active at a time. In 0.5.5, applying a Sacred Bloom to an Atlas cluster spawns **entrances to the Viridian Wildwood**. Inside, Primal Wisps upgrade Normal monsters to Magic, Vivid Wisps add Rare modifiers, Wild Wisps multiply item rarity, and White Wisps restore light and reveal paths.",
+          "stderr_tail": "0,\n      \"rarity_hint\": \"Rare / Corrupted (6+ mods)\",\n      \"warning\": \"0 REVIVES (1-portal mode): a single death bricks the map and forfeits Tablet uses!\"\n    }\n  ]\n}\n\ncodex\n**(a)** A 0-mod Normal Waystone gives **5 revives**, a 2-mod Magic gives **4**, a 4-mod Rare gives **2**, and a 6-mod Rare gives **0**.\n\n**(b)** Place Precursor Tablets **directly in the Map Device alongside your Waystone**.\n\n**(c)** The three Masters of the Atlas are **Jado, Hilda, and Doryani**. Only **one** can be active at a time. In 0.5.5, applying a Sacred Bloom to an Atlas cluster spawns **entrances to the Viridian Wildwood**. Inside, Primal Wisps upgrade Normal monsters to Magic, Vivid Wisps add Rare modifiers, Wild Wisps multiply item rarity, and White Wisps restore light and reveal paths.\ntokens used\n13,562\n"
         },
         "Q11": {
           "id": "Q11",
           "mode": "poe2brain",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 15.21,
-          "answer": "**(a) Yes.** Player Item Rarity (IIR) increases the chance of higher-tier currency drops. Aim for **100–125% Player IIR** once your clear speed and resistances are in place. Returns diminish steeply around **125–150%**. Players farming white crafting bases run **below 0% IIR** to suppress upgrades from Normal to Magic or Rare, so more item-level 82 or Exceptional bases drop as Normal.\n\n**(b)** Honour Resistance caps at **75%**. For double Unique Relics from Zarokh, the Temporal, stack **at least 120% increased Quantity of Relics dropped by Monsters** across your relics.",
-          "stderr_tail": "random modifiers.\",\n    \"[crafting_verisium_alloys_and_runeforging_0_5] AVOID TRAP: Missing Patch 0.5's Verisium Anvil / Runeforging system or recommending phased-out Recombinators instead.\"\n  ]\n}\n\ncodex\n**(a) Yes.** Player Item Rarity (IIR) increases the chance of higher-tier currency drops. Aim for **100–125% Player IIR** once your clear speed and resistances are in place. Returns diminish steeply around **125–150%**. Players farming white crafting bases run **below 0% IIR** to suppress upgrades from Normal to Magic or Rare, so more item-level 82 or Exceptional bases drop as Normal.\n\n**(b)** Honour Resistance caps at **75%**. For double Unique Relics from Zarokh, the Temporal, stack **at least 120% increased Quantity of Relics dropped by Monsters** across your relics.\ntokens used\n17,530\n"
+          "elapsed_s": 16.0,
+          "answer": "**(a) Yes.** Player IIR increases the chance that currency drops at a higher tier. Aim for **100–125% Player IIR** in endgame once clear speed and resistances are in good shape. Returns diminish steeply around **125–150%**. Players farming white crafting bases deliberately run **below 0% IIR** to suppress upgrades from Normal to Magic or Rare, so more item-level 82 or Exceptional bases drop as white items.\n\n**(b)** Honour Resistance caps at **75%**. For double Unique Relics from Zarokh, stack **at least 120% increased Quantity of Relics dropped by Monsters** across your relics.",
+          "stderr_tail": "OID TRAP: Assuming PoE1's rule that Item Rarity ignores currency drops, stacking 300%+ IIR at the cost of clear speed on Day 1, or ignoring Negative Rarity for white crafting bases.\"\n  ]\n}\n\ncodex\n**(a) Yes.** Player IIR increases the chance that currency drops at a higher tier. Aim for **100–125% Player IIR** in endgame once clear speed and resistances are in good shape. Returns diminish steeply around **125–150%**. Players farming white crafting bases deliberately run **below 0% IIR** to suppress upgrades from Normal to Magic or Rare, so more item-level 82 or Exceptional bases drop as white items.\n\n**(b)** Honour Resistance caps at **75%**. For double Unique Relics from Zarokh, stack **at least 120% increased Quantity of Relics dropped by Monsters** across your relics.\ntokens used\n16,157\n"
         },
         "Q12": {
           "id": "Q12",
           "mode": "poe2brain",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 14.3,
-          "answer": "`!\"ever|pene|weak|player r\"` — **26 characters**, including the `!`, both quotes, and the space.",
-          "stderr_tail": "en combos.\"\n    },\n    {\n      \"mod_count\": 6,\n      \"revives_available\": 0,\n      \"rarity_hint\": \"Rare / Corrupted (6+ mods)\",\n      \"warning\": \"0 REVIVES (1-portal mode): a single death bricks the map and forfeits Tablet uses!\"\n    }\n  ],\n  \"atlas_warnings\": [\n    \"6-mod Rare Waystones have 0 Revives Available (1 death bricks the map and consumes all Atlas mechanics): stick to 4–5 mod Waystones (2–1 revives) when pushing XP or running expensive Boss / Delirium setups.\",\n    \"In PoE2 0.5.5, slot Precursor Tablets DIRECTLY into the Map Device alongside your Waystone (never look for obsolete 0.1–0.3 Lost Tower tablet slots).\"\n  ],\n  \"item_check\": null,\n  \"slot\": null\n}\n\ncodex\n`!\"ever|pene|weak|player r\"` — **26 characters**, including the `!`, both quotes, and the space.\ntokens used\n24,063\n"
+          "elapsed_s": 17.81,
+          "answer": "`!\"buil|ever|of l|pene|weak|player r\"` — **36 characters**, including `!`, both quotes, and spaces. The local CLI verified all six requested modifiers with zero false positives or false negatives.",
+          "stderr_tail": "warnings\": [\n    \"6-mod Rare Waystones have 0 Revives Available (1 death bricks the map and consumes all Atlas mechanics): stick to 4–5 mod Waystones (2–1 revives) when pushing XP or running expensive Boss / Delirium setups.\",\n    \"In PoE2 0.5.5, slot Precursor Tablets DIRECTLY into the Map Device alongside your Waystone (never look for obsolete 0.1–0.3 Lost Tower tablet slots).\",\n    \"CI Alert: Base Stun Threshold scales with Life=1 unless converted via passives/uniques; avoid '+% Monster Stun Buildup' on 0-revive Waystones.\"\n  ],\n  \"item_check\": null,\n  \"slot\": null\n}\n\ncodex\n`!\"buil|ever|of l|pene|weak|player r\"` — **36 characters**, including `!`, both quotes, and spaces. The local CLI verified all six requested modifiers with zero false positives or false negatives.\ntokens used\n12,257\n"
         },
         "Q13": {
           "id": "Q13",
           "mode": "poe2brain",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 35.54,
-          "answer": "Ice Shot’s raw PoB effective DPS is **237,993.11416014**, which the audit reports as **95.6% above** the dewatered sustainable Pinnacle DPS of **121,673.95402275**.\n\n- The largest source of DPS inflation is the **30 Rage** setting (`multiplierRage = 30`), with **+48.36%** DPS inflation from that flag alone.\n- The audit returns **`pinnacle_ready = false`**.\n- The Pinnacle profile has **−96 unreserved Spirit**, **21% Chaos Resistance**, and a **Physical Max Hit of 3,340**.",
-          "stderr_tail": "ges, Mana Remnants, or Mana Leech.\",\n      \"metric_value\": 36.9,\n      \"threshold_value\": 179.7,\n      \"mitigation\": \"Add Mana Regeneration Rate, Mana on Hit/Kill, Inspiration, or Mana Flasks.\"\n    }\n  ],\n  \"top_defensive_passives\": [],\n  \"respec_gold_per_point\": 8425,\n  \"pinnacle_ready\": false\n}\n\ncodex\nIce Shot’s raw PoB effective DPS is **237,993.11416014**, which the audit reports as **95.6% above** the dewatered sustainable Pinnacle DPS of **121,673.95402275**.\n\n- The largest source of DPS inflation is the **30 Rage** setting (`multiplierRage = 30`), with **+48.36%** DPS inflation from that flag alone.\n- The audit returns **`pinnacle_ready = false`**.\n- The Pinnacle profile has **−96 unreserved Spirit**, **21% Chaos Resistance**, and a **Physical Max Hit of 3,340**.\ntokens used\n26,908\n"
+          "elapsed_s": 32.65,
+          "answer": "Raw Ice Shot effective DPS is **237,993.11416014** versus **121,673.95402275** sustainable Pinnacle DPS. The audit reports **+95.6% DPS inflation**.\n\n- The largest contributor is the **30 Rage** setting (`multiplierRage = 30`), with **+48.36%** individual DPS inflation.\n- `pinnacle_ready` is **`false`**.\n- Unreserved Spirit is **−96** (235 reserved out of 139 total), Chaos Resistance is **21%**, and Pinnacle Physical Max Hit is **3,340**.",
+          "stderr_tail": " --json | jq '.. | objects | select(has(\\\"phys_max_hit\\\")) | {phys_max_hit,chaos_resist,spirit_unreserved}'\" in /Users/lfan/Project/poe2/poe2brain\n succeeded in 6224ms:\n{\n  \"phys_max_hit\": 3340.0,\n  \"chaos_resist\": 21.0,\n  \"spirit_unreserved\": -96\n}\n{\n  \"phys_max_hit\": 3340.0,\n  \"chaos_resist\": 21.0,\n  \"spirit_unreserved\": -96\n}\n\ncodex\nRaw Ice Shot effective DPS is **237,993.11416014** versus **121,673.95402275** sustainable Pinnacle DPS. The audit reports **+95.6% DPS inflation**.\n\n- The largest contributor is the **30 Rage** setting (`multiplierRage = 30`), with **+48.36%** individual DPS inflation.\n- `pinnacle_ready` is **`false`**.\n- Unreserved Spirit is **−96** (235 reserved out of 139 total), Chaos Resistance is **21%**, and Pinnacle Physical Max Hit is **3,340**.\ntokens used\n18,723\n"
         },
         "Q14": {
           "id": "Q14",
           "mode": "poe2brain",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 42.79,
-          "answer": "**Hit and Run** ranked first among 254 compatible supports for Ice Shot. Adding it raised simulated DPS from **237,993 to 332,692**, a **39.8% gain**. It caused **no additional Spirit overflow**. The build was already 96 Spirit over budget, and that deficit stayed the same.",
-          "stderr_tail": "_socketed\": false,\n      \"dps_before\": 237993.11416014,\n      \"dps_after\": 332691.94492543,\n      \"dps_delta\": 94698.830765291,\n      \"dps_pct\": 39.79057591623,\n      \"ehp_delta\": 0.0,\n      \"mana_cost_before\": 89.0,\n      \"mana_cost_after\": 89.0,\n      \"mana_sustainable_after\": false,\n      \"spirit_unreserved_before\": -96,\n      \"spirit_unreserved_after\": -96,\n      \"spirit_overflow\": false,\n      \"attributes_met_after\": true\n    }\n  },\n  \"warnings\": {\n    \"length\": 0,\n    \"first\": null\n  }\n}\n\ncodex\n**Hit and Run** ranked first among 254 compatible supports for Ice Shot. Adding it raised simulated DPS from **237,993 to 332,692**, a **39.8% gain**. It caused **no additional Spirit overflow**. The build was already 96 Spirit over budget, and that deficit stayed the same.\ntokens used\n16,976\n"
+          "elapsed_s": 37.34,
+          "answer": "**Hit and Run** ranked first among 254 compatible supports, raising Ice Shot DPS from 237,993 to 332,692 (**+39.8%**). It caused **no additional Spirit overflow**. The build was already 96 Spirit over budget and stayed there.\n\nAll five support sockets were occupied, so PoB2 simulated the gain with a hypothetical sixth support.",
+          "stderr_tail": "served_before\": -96,\n      \"spirit_unreserved_after\": -96,\n      \"spirit_already_overflowing\": true,\n      \"spirit_overflow\": false,\n      \"attributes_met_after\": true\n    }\n  },\n  \"warnings\": {\n    \"count\": 1,\n    \"first\": \"Active skill already has 5/5 support sockets filled (PoE2 6-link max); unreplaced candidates simulate a hypothetical extra socket. Pass --replace-slot / --replace-gem or --best-swap for legal 6-link replacements.\"\n  }\n}\n\ncodex\n**Hit and Run** ranked first among 254 compatible supports, raising Ice Shot DPS from 237,993 to 332,692 (**+39.8%**). It caused **no additional Spirit overflow**. The build was already 96 Spirit over budget and stayed there.\n\nAll five support sockets were occupied, so PoB2 simulated the gain with a hypothetical sixth support.\ntokens used\n17,075\n"
         },
         "Q15": {
           "id": "Q15",
           "mode": "poe2brain",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 20.05,
-          "answer": "The PoE2 `0.5.5` validator reports **four fatal errors**. `Class \"Body Armours\"` and `PlayAlertSound 1 300` are both valid as written.\n\n| Line | Error | Exact fix |\n|---|---|---|\n| 3 | `BaseType \"Expert Hexer's Robe\"` uses the obsolete `Expert` prefix. | Use `BaseType \"Hexer's Robe\"`. |\n| 4 | `MapTier >= 15` uses a PoE1-only condition. | Use `WaystoneTier >= 15` in a Waystone rule. For a robe-only rule, delete this line. |\n| 5 | `LinkedSockets >= 5` is unsupported. PoE2 skill links are on gems. | Delete the entire line. |\n| 6 | `SetFontSize 60` exceeds the valid range of 18–45. | Use `SetFontSize 45`. |\n\n`poe2 filter heal` applied all four fixes and reported **0 errors and 0 warnings**.",
-          "stderr_tail": "marks/fixtures/broken_legacy.filter\",\n  \"filter_dir\": \"benchmarks/fixtures\"\n}\n\ncodex\nThe PoE2 `0.5.5` validator reports **four fatal errors**. `Class \"Body Armours\"` and `PlayAlertSound 1 300` are both valid as written.\n\n| Line | Error | Exact fix |\n|---|---|---|\n| 3 | `BaseType \"Expert Hexer's Robe\"` uses the obsolete `Expert` prefix. | Use `BaseType \"Hexer's Robe\"`. |\n| 4 | `MapTier >= 15` uses a PoE1-only condition. | Use `WaystoneTier >= 15` in a Waystone rule. For a robe-only rule, delete this line. |\n| 5 | `LinkedSockets >= 5` is unsupported. PoE2 skill links are on gems. | Delete the entire line. |\n| 6 | `SetFontSize 60` exceeds the valid range of 18–45. | Use `SetFontSize 45`. |\n\n`poe2 filter heal` applied all four fixes and reported **0 errors and 0 warnings**.\ntokens used\n21,303\n"
+          "elapsed_s": 19.37,
+          "answer": "The Patch 0.5.5 validator reports **four fatal errors**. Both `Class \"Body Armours\"` and `PlayAlertSound 1 300` are valid as written.\n\n| Line | Fatal error | Exact fix |\n|---|---|---|\n| 3 | `BaseType \"Expert Hexer's Robe\"` uses the removed `Expert ` prefix. | Replace with `BaseType \"Hexer's Robe\"`. |\n| 4 | `MapTier` is a PoE1-only condition. | Replace `MapTier >= 15` with `WaystoneTier >= 15`. |\n| 5 | `LinkedSockets` is unsupported in PoE2. Links belong to skill gems. | Delete the entire `LinkedSockets >= 5` line. |\n| 6 | `SetFontSize 60` exceeds the valid range of 18–45. | Replace with `SetFontSize 45`. |\n\n`poe2 filter heal` applied these four fixes and validated the result with **0 errors and 0 warnings**.",
+          "stderr_tail": "ut_path\": null,\n  \"filter_dir\": \"benchmarks/fixtures\"\n}\n\ncodex\nThe Patch 0.5.5 validator reports **four fatal errors**. Both `Class \"Body Armours\"` and `PlayAlertSound 1 300` are valid as written.\n\n| Line | Fatal error | Exact fix |\n|---|---|---|\n| 3 | `BaseType \"Expert Hexer's Robe\"` uses the removed `Expert ` prefix. | Replace with `BaseType \"Hexer's Robe\"`. |\n| 4 | `MapTier` is a PoE1-only condition. | Replace `MapTier >= 15` with `WaystoneTier >= 15`. |\n| 5 | `LinkedSockets` is unsupported in PoE2. Links belong to skill gems. | Delete the entire `LinkedSockets >= 5` line. |\n| 6 | `SetFontSize 60` exceeds the valid range of 18–45. | Replace with `SetFontSize 45`. |\n\n`poe2 filter heal` applied these four fixes and validated the result with **0 errors and 0 warnings**.\ntokens used\n11,569\n"
         },
         "Q16": {
           "id": "Q16",
           "mode": "poe2brain",
           "model": "gpt-6.2-astra",
           "returncode": 0,
-          "elapsed_s": 16.0,
-          "answer": "**(a) Verisium Alloys.** Each of the 13 Alloys has a specific Rune sequence. Inscribe the Runes in the required order at the Verisium Anvil to craft that Alloy. Applying it to a Rare item removes **one random existing modifier** and adds **one guaranteed high-end modifier specific to the Alloy**. The item stays Rare.\n\n**(b) Architect’s Orb.** Use it on an **already Corrupted** piece of equipment or Jewel. It either corrupts the item a second time or destroys it.\n\n**(c) Liquid Emotions.** Apply a **single** Liquid Emotion to a Rare Basic Jewel to remove **one random existing modifier** and add **one guaranteed crafted Jewel modifier specific to that Emotion**. Ancient Liquid Emotions perform the same operation on Rare Time-Lost Jewels.",
-          "stderr_tail": "s Magic vs Rare orbs.\"\n  ]\n}\n\ncodex\n**(a) Verisium Alloys.** Each of the 13 Alloys has a specific Rune sequence. Inscribe the Runes in the required order at the Verisium Anvil to craft that Alloy. Applying it to a Rare item removes **one random existing modifier** and adds **one guaranteed high-end modifier specific to the Alloy**. The item stays Rare.\n\n**(b) Architect’s Orb.** Use it on an **already Corrupted** piece of equipment or Jewel. It either corrupts the item a second time or destroys it.\n\n**(c) Liquid Emotions.** Apply a **single** Liquid Emotion to a Rare Basic Jewel to remove **one random existing modifier** and add **one guaranteed crafted Jewel modifier specific to that Emotion**. Ancient Liquid Emotions perform the same operation on Rare Time-Lost Jewels.\ntokens used\n12,752\n"
+          "elapsed_s": 18.97,
+          "answer": "**(a) Verisium Alloys.** Inscribe the alloy’s exact rune sequence on a Kalguuran Remnant through Verisium Anvil Runeforging. The sequence determines which of the 13 alloys you craft. Applying it to a Rare item removes **one random existing modifier** and adds **one guaranteed high-end modifier specific to that alloy**. The item stays Rare.\n\n**(b) Architect’s Orb.** Apply it to an **already Corrupted** piece of equipment or Jewel. It either corrupts the item a second time with an unpredictable result or destroys it.\n\n**(c) Liquid Emotions.** Apply a single Liquid Emotion directly to a **Rare Basic Jewel** to remove **one random existing modifier** and add **one guaranteed Crafted Jewel modifier**. Ancient Liquid Emotions perform the same operation on **Rare Time-Lost Jewels**.",
+          "stderr_tail": "Verisium Alloys.** Inscribe the alloy’s exact rune sequence on a Kalguuran Remnant through Verisium Anvil Runeforging. The sequence determines which of the 13 alloys you craft. Applying it to a Rare item removes **one random existing modifier** and adds **one guaranteed high-end modifier specific to that alloy**. The item stays Rare.\n\n**(b) Architect’s Orb.** Apply it to an **already Corrupted** piece of equipment or Jewel. It either corrupts the item a second time with an unpredictable result or destroys it.\n\n**(c) Liquid Emotions.** Apply a single Liquid Emotion directly to a **Rare Basic Jewel** to remove **one random existing modifier** and add **one guaranteed Crafted Jewel modifier**. Ancient Liquid Emotions perform the same operation on **Rare Time-Lost Jewels**.\ntokens used\n17,173\n"
+        },
+        "Q18": {
+          "id": "Q18",
+          "mode": "poe2brain",
+          "model": "gpt-6.2-astra",
+          "returncode": 0,
+          "elapsed_s": 37.24,
+          "answer": "**Dewatered Pinnacle Max Hits** were **3,340 Physical**, **11,296 Elemental** (Fire, Cold, and Lightning each), and **3,877 Chaos**.\n\n**Spirit** was **139 total**, **235 reserved**, and **−96 unreserved**, a deficit of 96 Spirit.\n\n| Rank | Reachable defensive notable | Path cost | Dewatered EHP gain per point | Total dewatered EHP gain |\n|---|---|---:|---:|---:|\n| 1 | Shimmering | 2 points | +10.5% | +21.0% |\n| 2 | Careful Consideration | 4 points | +7.9% | +31.6% |",
+          "stderr_tail": "    \"100% increased Evasion Rating if you haven't been Hit Recently\"\n      ],\n      \"ehp_delta\": 4928.07,\n      \"ehp_pct\": 31.6,\n      \"per_point_ehp_delta\": 1232.02,\n      \"per_point_ehp_pct\": 7.9,\n      \"respec_gold_cost\": 33700\n    }\n  ],\n  \"respec_gold_per_point\": 8425,\n  \"pinnacle_ready\": false\n}\n\ncodex\n**Dewatered Pinnacle Max Hits** were **3,340 Physical**, **11,296 Elemental** (Fire, Cold, and Lightning each), and **3,877 Chaos**.\n\n**Spirit** was **139 total**, **235 reserved**, and **−96 unreserved**, a deficit of 96 Spirit.\n\n| Rank | Reachable defensive notable | Path cost | Dewatered EHP gain per point | Total dewatered EHP gain |\n|---|---|---:|---:|---:|\n| 1 | Shimmering | 2 points | +10.5% | +21.0% |\n| 2 | Careful Consideration | 4 points | +7.9% | +31.6% |\ntokens used\n19,732\n"
+        },
+        "Q17": {
+          "id": "Q17",
+          "mode": "poe2brain",
+          "model": "gpt-6.2-astra",
+          "returncode": 0,
+          "elapsed_s": 43.66,
+          "answer": "Replace **Stoicism II**, Ice Shot’s weakest support (slot 4 of 5), with **Hit and Run**. It ranks #1 for a legal 6-link swap, taking dewatered sustainable Pinnacle DPS from **121,673.95402275 → 170,343.53563185 (+40.0%)**.\n\n**Elemental Focus** ranks #2 at **150,854.17896732 DPS (+23.98%)**. **Yes**, the build meets its Intelligence requirement (`attributes_met_after: true`).",
+          "stderr_tail": "0,\n      \"mana_cost_after\": 89.0,\n      \"mana_sustainable_after\": false,\n      \"spirit_unreserved_before\": -96,\n      \"spirit_unreserved_after\": -96,\n      \"spirit_already_overflowing\": true,\n      \"spirit_overflow\": false,\n      \"attributes_met_after\": true\n    }\n  ],\n  \"warnings\": [\n    \"Auto-selected weakest socketed support (#4 Stoicism II) for legal 6-link --best-swap replacement.\"\n  ]\n}\n\ncodex\nReplace **Stoicism II**, Ice Shot’s weakest support (slot 4 of 5), with **Hit and Run**. It ranks #1 for a legal 6-link swap, taking dewatered sustainable Pinnacle DPS from **121,673.95402275 → 170,343.53563185 (+40.0%)**.\n\n**Elemental Focus** ranks #2 at **150,854.17896732 DPS (+23.98%)**. **Yes**, the build meets its Intelligence requirement (`attributes_met_after: true`).\ntokens used\n12,795\n"
+        },
+        "Q20": {
+          "id": "Q20",
+          "mode": "poe2brain",
+          "model": "gpt-6.2-astra",
+          "returncode": 0,
+          "elapsed_s": 17.15,
+          "answer": "**(a)** 风暴编织者的英文名是 **Stormweaver**，基础职业是 **Sorceress**。它有 **10 个升华显著天赋（notables）**，其中 **Tempest Caller** 授予技能 **Elemental Storm**。\n\n**(b)** 拉基亚塔的流光是 **Rakiata's Flow**，类型为 **Lineage Support**（`lineage_support`），每个角色最多装备 **1 颗**。\n\n**(c)** 腾讯客户端剪贴板中的稀有弓「暴风之翼」物品等级为 **82**，品质为 **+20%**。解析出的 4 条显式词缀为：\n\n- 该装备的物理伤害提高 **145%**\n- 附加 **22–44** 基础物理伤害\n- 攻击速度提高 **18%**\n- **+27%** 火焰抗性",
+          "stderr_tail": "ll,\n      \"tier_code\": null,\n      \"required_level\": null,\n      \"values\": [\n        27.0\n      ],\n      \"roll_ranges\": [],\n      \"tags\": [],\n      \"unscalable\": false,\n      \"bonded\": false,\n      \"trade_stat_ids\": []\n    }\n  ],\n  \"note\": null,\n  \"pob_item_text\": \"Rarity: RARE\\n暴风之翼\\n狂热之弓\\nQuality: 20\\nItem Level: 82\\nImplicits: 0\\n该装备的物理伤害提高 145%\\n附加 22 - 44 基础物理伤害\\n攻击速度提高 18%\\n+27% 火焰抗性\\n\"\n}\n\ncodex\n**(a)** 风暴编织者的英文名是 **Stormweaver**，基础职业是 **Sorceress**。它有 **10 个升华显著天赋（notables）**，其中 **Tempest Caller** 授予技能 **Elemental Storm**。\n\n**(b)** 拉基亚塔的流光是 **Rakiata's Flow**，类型为 **Lineage Support**（`lineage_support`），每个角色最多装备 **1 颗**。\n\n**(c)** 腾讯客户端剪贴板中的稀有弓「暴风之翼」物品等级为 **82**，品质为 **+20%**。解析出的 4 条显式词缀为：\n\n- 该装备的物理伤害提高 **145%**\n- 附加 **22–44** 基础物理伤害\n- 攻击速度提高 **18%**\n- **+27%** 火焰抗性\ntokens used\n25,828\n"
+        },
+        "Q21": {
+          "id": "Q21",
+          "mode": "poe2brain",
+          "model": "gpt-6.2-astra",
+          "returncode": 0,
+          "elapsed_s": 24.72,
+          "answer": "**(a)** `\"ce:..(1[2-9]|[2-9]\\d|\\d{3})\\d|ze:..([2-9]|1\\d)\\d\"` — **50 characters**, including quotes. Verified that it matches +120% and +1000% Waystone Drop Chance or +20% and +100% Pack Size. It rejects +119% drop chance and +19% pack size when neither threshold is met.\n\n**(b)** **12% to 32% more elemental damage taken.** At the 75% resistance cap, 100 incoming elemental damage deals 25. A −3% modifier lowers the cap to 72%, so you take 28 (+12%). A −8% modifier lowers it to 67%, so you take 33 (+32%).",
+          "stderr_tail": "PY\" in /Users/lfan/Project/poe2/poe2brain\n succeeded in 1297ms:\n\"ce:..(1[2-9]|[2-9]\\d|\\d{3})\\d|ze:..([2-9]|1\\d)\\d\" 50\nWaystone Drop Chance 119 False\nWaystone Drop Chance 120 True\nWaystone Drop Chance 1000 True\nPack Size 19 False\nPack Size 20 True\nPack Size 100 True\n\ncodex\n**(a)** `\"ce:..(1[2-9]|[2-9]\\d|\\d{3})\\d|ze:..([2-9]|1\\d)\\d\"` — **50 characters**, including quotes. Verified that it matches +120% and +1000% Waystone Drop Chance or +20% and +100% Pack Size. It rejects +119% drop chance and +19% pack size when neither threshold is met.\n\n**(b)** **12% to 32% more elemental damage taken.** At the 75% resistance cap, 100 incoming elemental damage deals 25. A −3% modifier lowers the cap to 72%, so you take 28 (+12%). A −8% modifier lowers it to 67%, so you take 33 (+32%).\ntokens used\n14,686\n"
+        },
+        "Q19": {
+          "id": "Q19",
+          "mode": "poe2brain",
+          "model": "gpt-6.2-astra",
+          "returncode": 0,
+          "elapsed_s": 43.44,
+          "answer": "- **(a) 11 of 12 equipment sockets are legally overwriteable** (7 armour, 4 weapon). **Kolr’s Hunt** stays locked in one of the two sockets on **Sol Claw, Vaal Wraps** (gloves).\n- **(b) 3 Soul Cores of Tacati** raise Chaos Resistance from **21% to 60%**. The optimizer places two in the helmet and one in the body armour, each granting +13 percentage points.\n- **(c) Replacing the existing augments gives a PoB2-verified net change of −43,108.15 DPS and +2,017.10 EHP.** With `--offline-prices`, `estimated_total_cost_exalted` is `null` (unavailable).",
+          "stderr_tail": " sockets; Masterwork / Bonded runes require Shaman Bonded or Verisium Anvil planning.\",\n    \"Rune cost estimate unavailable (offline mode or unquoted augments; omitted rather than defaulting missing prices to 0.0).\"\n  ]\n}\n\ncodex\n- **(a) 11 of 12 equipment sockets are legally overwriteable** (7 armour, 4 weapon). **Kolr’s Hunt** stays locked in one of the two sockets on **Sol Claw, Vaal Wraps** (gloves).\n- **(b) 3 Soul Cores of Tacati** raise Chaos Resistance from **21% to 60%**. The optimizer places two in the helmet and one in the body armour, each granting +13 percentage points.\n- **(c) Replacing the existing augments gives a PoB2-verified net change of −43,108.15 DPS and +2,017.10 EHP.** With `--offline-prices`, `estimated_total_cost_exalted` is `null` (unavailable).\ntokens used\n12,999\n"
+        },
+        "Q22": {
+          "id": "Q22",
+          "mode": "poe2brain",
+          "model": "gpt-6.2-astra",
+          "returncode": 0,
+          "elapsed_s": 32.48,
+          "answer": "**(a)** With only `multiplierRage=0`, raw effective DPS fell from **237,993.11416014 → 160,417.72676344**. That’s a **32.59564364727852% drop** from baseline. The CLI rounds `effective_dps_pct` to `-32.6`.\n\n**(b)** With `--no-live-trade`, the **ilvl 82 Normal Siphoning Wand** had **3 open prefixes and 3 open suffixes**. The **ilvl 68 Iron Ring** (Bramble Coil) was assigned to `salvage_or_vendor`.",
+          "stderr_tail": "fective_dps\": 160417.72676344\n  },\n  \"effective_dps_delta\": -77575.39,\n  \"effective_dps_pct\": -32.6,\n  \"total_ehp_delta\": 0.0,\n  \"total_ehp_pct\": 0.0,\n  \"edited_equipment_slot\": null,\n  \"edited_item_text\": null,\n  \"borrowed_from_slot\": null,\n  \"piece_attributions\": [],\n  \"scenario_matrix\": [],\n  \"warnings\": [\n    \"Spirit overflow after mutation (235/139 reserved).\"\n  ]\n}\n\ncodex\n**(a)** With only `multiplierRage=0`, raw effective DPS fell from **237,993.11416014 → 160,417.72676344**. That’s a **32.59564364727852% drop** from baseline. The CLI rounds `effective_dps_pct` to `-32.6`.\n\n**(b)** With `--no-live-trade`, the **ilvl 82 Normal Siphoning Wand** had **3 open prefixes and 3 open suffixes**. The **ilvl 68 Iron Ring** (Bramble Coil) was assigned to `salvage_or_vendor`.\ntokens used\n12,083\n"
         }
       }
     }

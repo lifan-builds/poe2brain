@@ -1217,7 +1217,9 @@ class KnowledgeService:
 
         return None
 
-    def explain_mechanic(self, topic: str, limit: int = 6) -> MechanicExplanation:
+    def explain_mechanic(
+        self, topic: str, limit: int = 4, *, compact: bool = False
+    ) -> MechanicExplanation:
         q_raw = translate_zh_query(topic.strip())
         if not q_raw:
             return MechanicExplanation(topic=topic)
@@ -1253,24 +1255,28 @@ class KnowledgeService:
             slug = str(row["slug"])
             title = str(row["title"]).lower()
             tags = [str(x).lower() for x in json.loads(row["tags_json"])]
-            hay = (
-                f"{slug} {title} {' '.join(tags)} "
-                f"{row['poe2_live_rule']} {row['poe1_or_stale_trap']}"
-            ).lower()
+            header_hay = f"{slug} {title} {' '.join(tags)}".lower()
+            body_hay = f"{row['poe2_live_rule']} {row['poe1_or_stale_trap']}".lower()
+            hay = f"{header_hay} {body_hay}"
             pts = 0.0
             if slug == low_raw.replace(" ", "_"):
-                pts += 60.0
+                pts += 70.0
             if low_raw in title or any(low_raw == tg for tg in tags):
-                pts += 35.0
+                pts += 55.0
+            header_groups = sum(1 for grp in expanded_tokens if any(a in header_hay for a in grp))
             matched_groups = sum(1 for grp in expanded_tokens if any(a in hay for a in grp))
+            if expanded_tokens and header_groups == len(expanded_tokens):
+                pts += 32.0 + header_groups * 6.0
+            elif header_groups > 0:
+                pts += header_groups * 14.0
             if expanded_tokens and matched_groups == len(expanded_tokens):
-                pts += 22.0 + matched_groups * 4.0
+                pts += 12.0 + matched_groups * 2.0
             elif matched_groups > 0:
-                pts += matched_groups * 5.0
+                pts += matched_groups * 3.0
             if pts > 0:
                 fact_scores[slug] = pts
 
-        for expr, weight in ((and_expr, 25.0), (or_expr, 8.0)):
+        for expr, weight in ((and_expr, 18.0), (or_expr, 6.0)):
             if not expr:
                 continue
             fts_rows = self.db.query_all(
@@ -1288,7 +1294,15 @@ class KnowledgeService:
                 add_pts = max(1.0, -float(r["rscore"])) + weight
                 fact_scores[slug] = fact_scores.get(slug, 0.0) + add_pts
 
-        ranked_slugs = sorted(fact_scores.keys(), key=lambda s: -fact_scores[s])[:limit]
+        sorted_fact_slugs = sorted(fact_scores.keys(), key=lambda s: -fact_scores[s])
+        # Prune weak prose-only tail noise when a strong title/tag hit exists
+        if len(sorted_fact_slugs) > 1:
+            top_score = fact_scores[sorted_fact_slugs[0]]
+            if top_score >= 65.0:
+                cutoff = top_score * 0.50
+                pruned = [s for s in sorted_fact_slugs if fact_scores[s] >= cutoff]
+                sorted_fact_slugs = pruned or sorted_fact_slugs[:1]
+        ranked_slugs = sorted_fact_slugs[:limit]
         fact_by_slug = {str(r["slug"]): r for r in all_facts}
 
         facts: list[MechanicFact] = []
@@ -1306,7 +1320,16 @@ class KnowledgeService:
                 patch_verified=str(r["patch_verified"]),
             )
             facts.append(mf)
-            trap_warnings.append(f"[{mf.slug}] AVOID TRAP: {mf.poe1_trap}")
+            if not compact:
+                trap_warnings.append(f"[{mf.slug}] AVOID TRAP: {mf.poe1_trap}")
+
+        if compact:
+            return MechanicExplanation(
+                topic=q_raw,
+                facts=facts,
+                keywords=[],
+                trap_warnings=[],
+            )
 
         # Related official GGG KeywordPopups
         kw_scores: dict[str, tuple[float, sqlite3.Row]] = {}
@@ -1338,7 +1361,11 @@ class KnowledgeService:
                 if krow is not None:
                     kw_scores[kid] = (max(0.5, -float(hit["rscore"])) + bonus, krow)
 
-        sorted_kws = sorted(kw_scores.values(), key=lambda x: -x[0])[:limit]
+        sorted_kws = sorted(kw_scores.values(), key=lambda x: -x[0])
+        if len(sorted_kws) > 1 and sorted_kws[0][0] >= 25.0:
+            kw_cutoff = sorted_kws[0][0] * 0.35
+            sorted_kws = [item for item in sorted_kws if item[0] >= kw_cutoff] or sorted_kws[:1]
+        sorted_kws = sorted_kws[: min(limit, 4)]
         keywords = [
             KeywordEntry(
                 id=str(kr["id"]),
@@ -1585,7 +1612,8 @@ class KnowledgeService:
         )
 
     def inspect_gem(self, name_or_id: str) -> GemInspection:
-        q = translate_zh_query(name_or_id.strip())
+        orig_raw = name_or_id.strip()
+        q = translate_zh_query(orig_raw)
         if not q:
             raise LookupError("Gem query cannot be empty.")
 
@@ -1601,7 +1629,8 @@ class KnowledgeService:
                 "SELECT * FROM gems WHERE name = ? AND is_live_poe2 = 1",
                 (by_id[0]["name"],),
             )
-            return self._merge_gem_rows(siblings or by_id)
+            res_from = orig_raw if orig_raw.lower() != str(by_id[0]["name"]).lower() else None
+            return self._merge_gem_rows(siblings or by_id, resolved_from=res_from)
 
         # 2. Exact name match (strip trailing " Support" if caller included PoE1 suffix)
         stripped_sup = re.sub(r"\s+support$", "", q_norm, flags=re.IGNORECASE).strip()
@@ -1611,10 +1640,12 @@ class KnowledgeService:
                 (candidate,),
             )
             if by_name:
-                return self._merge_gem_rows(
-                    by_name,
-                    resolved_from=q if candidate.lower() != q_norm.lower() else None,
+                resolved = (
+                    orig_raw
+                    if orig_raw.lower() != str(by_name[0]["name"]).lower()
+                    else None
                 )
+                return self._merge_gem_rows(by_name, resolved_from=resolved)
 
         # 3. Tiered support base name without Roman numeral (e.g. "Pierce" -> "Pierce I")
         for roman in ("I", "II", "III"):

@@ -711,6 +711,10 @@ local function extractStatsTable(out, extraFields)
 		end
 	end
 	res.ElementalMaximumHitTaken = minElementalMaxHit(out)
+	-- Reconcile SpiritReserved when over-reserved (PoB2 caps SpiritReserved at Spirit while SpiritUnreserved goes negative)
+	if res.SpiritUnreserved < 0 and res.Spirit >= 0 then
+		res.SpiritReserved = math.max(res.SpiritReserved, res.Spirit - res.SpiritUnreserved)
+	end
 	-- Effective primary DPS convenience field (FullDPS if > 0 else CombinedDPS/TotalDPS, with Minion fallback)
 	local fullDps = safeNum(out.FullDPS, 0)
 	local combinedDps = safeNum(out.CombinedDPS, 0)
@@ -2287,6 +2291,8 @@ methods.list_valid_supports = function(params)
 	local topN = params and params.topN ~= nil and tonumber(params.topN) or nil
 	local explicitGemSlot = params and params.gemSlot ~= nil and tonumber(params.gemSlot) or nil
 	local replaceGemQuery = (params and type(params.replaceGem) == "string" and params.replaceGem ~= "") and params.replaceGem:lower() or nil
+	local bestSwap = (params and params.bestSwap == true)
+	local warnings = {}
 
 	-- Scan ALL socket groups on character to enforce PoE2 Lineage Support max_copies_per_char = 1
 	local lineageElsewhereById = {}
@@ -2402,6 +2408,52 @@ methods.list_valid_supports = function(params)
 		local savedDisplayGemList = group.displayGemList
 		local appendIdx = #gemList + 1
 
+		-- If skill already has 5/5 supports and bestSwap is requested (with no explicit target),
+		-- find the weakest currently-socketed support (highest remaining DPS when removed) so
+		-- every candidate is evaluated as a legal 6-link swap.
+		if bestSwap and not resolvedReplaceIdx and supportOrdinal >= 5 then
+			local weakestIdx = nil
+			local weakestOrdinal = nil
+			local weakestName = nil
+			local highestRemDps = -1
+			local supOrd = 0
+			for idxG, g in ipairs(gemList) do
+				local ggd = g.gemData
+				local isSup = (ggd and ggd.grantedEffect and ggd.grantedEffect.support) and true or false
+				if isSup then
+					supOrd = supOrd + 1
+					local wasEnabled = g.enabled
+					local okRem, remOut = pcall(function()
+						g.enabled = false
+						return calcFunc(override, useFull, fastOpts)
+					end)
+					g.enabled = wasEnabled
+					if okRem and remOut then
+						local remStats = extractStatsTable(remOut)
+						local remDps = useFull and safeNum(remStats.FullDPS, 0) or safeNum(remStats.EffectiveDPS, 0)
+						if remDps > highestRemDps then
+							highestRemDps = remDps
+							weakestIdx = idxG
+							weakestOrdinal = supOrd
+							weakestName = (ggd and ggd.name) or g.nameSpec or ("Support #" .. tostring(supOrd))
+						end
+					end
+				end
+			end
+			if weakestIdx then
+				resolvedReplaceIdx = weakestIdx
+				explicitGemSlot = weakestOrdinal
+				warnings[#warnings + 1] = "Auto-selected weakest socketed support (#"
+					.. tostring(weakestOrdinal) .. " " .. tostring(weakestName)
+					.. ") for legal 6-link --best-swap replacement."
+			end
+		elseif supportOrdinal >= 5 and not resolvedReplaceIdx then
+			warnings[#warnings + 1] = "Active skill already has " .. tostring(supportOrdinal)
+				.. "/5 support sockets filled (PoE2 6-link max); unreplaced candidates simulate "
+				.. "a hypothetical extra socket. Pass --replace-slot / --replace-gem or --best-swap "
+				.. "for legal 6-link replacements."
+		end
+
 		for idxSup, entry in ipairs(supports) do
 			if idxSup % 16 == 0 then checkParentAlive() end
 			local gd = entry._gemData
@@ -2418,6 +2470,7 @@ methods.list_valid_supports = function(params)
 					and (safeNum(baseStats.ManaUnreserved, 0) >= baseManaCost)
 				entry.spiritUnreservedBefore = baseSpiritUnres
 				entry.spiritUnreservedAfter = baseSpiritUnres
+				entry.spiritAlreadyOverflowing = (baseSpiritUnres < 0)
 				entry.spiritOverflow = false
 				entry.attributesMetAfter = (safeNum(baseStats.Str, 0) >= safeNum(baseStats.ReqStr, 0))
 					and (safeNum(baseStats.Dex, 0) >= safeNum(baseStats.ReqDex, 0))
@@ -2467,10 +2520,11 @@ methods.list_valid_supports = function(params)
 					entry.manaSustainableAfter = (mUnres >= mCost) and (mPerSec <= 0 or mRegen >= mPerSec * 0.8)
 					entry.spiritUnreservedBefore = baseSpiritUnres
 					entry.spiritUnreservedAfter = spUnres
+					entry.spiritAlreadyOverflowing = (baseSpiritUnres < 0)
 					entry.spiritOverflow = (spUnres < 0) and (spUnres < baseSpiritUnres)
-					entry.attributesMetAfter = (safeNum(afterStats.Str, 0) >= math.max(safeNum(afterStats.ReqStr, 0), entry.reqStr))
-						and (safeNum(afterStats.Dex, 0) >= math.max(safeNum(afterStats.ReqDex, 0), entry.reqDex))
-						and (safeNum(afterStats.Int, 0) >= math.max(safeNum(afterStats.ReqInt, 0), entry.reqInt))
+					entry.attributesMetAfter = (safeNum(afterStats.Str, 0) >= safeNum(afterStats.ReqStr, 0))
+						and (safeNum(afterStats.Dex, 0) >= safeNum(afterStats.ReqDex, 0))
+						and (safeNum(afterStats.Int, 0) >= safeNum(afterStats.ReqInt, 0))
 				else
 					entry.dpsBefore = baseDps
 					entry.dpsAfter = baseDps
@@ -2482,6 +2536,7 @@ methods.list_valid_supports = function(params)
 					entry.manaSustainableAfter = true
 					entry.spiritUnreservedBefore = baseSpiritUnres
 					entry.spiritUnreservedAfter = baseSpiritUnres
+					entry.spiritAlreadyOverflowing = (baseSpiritUnres < 0)
 					entry.spiritOverflow = false
 					entry.attributesMetAfter = true
 				end
@@ -2517,6 +2572,8 @@ methods.list_valid_supports = function(params)
 		groupIndex = gIdx,
 		activeSkillName = activeSkillName,
 		supportCountSocketed = supportOrdinal,
+		supportsFull = (supportOrdinal >= 5),
+		hypotheticalExtraSocket = (supportOrdinal >= 5 and resolvedReplaceIdx == nil),
 		replacedSupportSlot = explicitGemSlot or dkjson.null,
 		baseDps = baseDpsOut,
 		baseManaCost = baseManaCost,
@@ -2525,6 +2582,7 @@ methods.list_valid_supports = function(params)
 		totalValid = totalValidSupports,
 		count = #supports,
 		supports = supports,
+		warnings = warnings,
 	}
 end
 

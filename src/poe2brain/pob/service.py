@@ -5,6 +5,7 @@ from __future__ import annotations
 import atexit
 import json
 import re
+import uuid
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
@@ -947,7 +948,12 @@ def _evaluate_hc_rip_risks(
             continue
         slot_nm = str(it.get("slot") or "")
         if slot_nm.startswith("Charm"):
-            nm = f"{it.get('name') or ''} {it.get('baseName') or ''}".strip()
+            c_name = str(it.get("name") or "").strip()
+            c_base = str(it.get("baseName") or "").strip()
+            if c_name and c_base and c_base.lower() not in c_name.lower():
+                nm = f"{c_name} ({c_base})"
+            else:
+                nm = c_name or c_base
             if nm:
                 charms.append(nm)
             low_nm = nm.lower()
@@ -2238,13 +2244,30 @@ class BuildService:
         )
         respec_unit = estimate_poe2_gold_respec(sust.level).gold_per_passive_point
 
-        def_passives_raw = self.rank_passive_upgrades(
-            slot=slot,
-            mode="perPoint",
-            stat="TotalEHP",
-            max_path_dist=6,
-            top_n=top_defensive_nodes,
-        )
+        def_slot = slot
+        temp_hc_slot: str | None = None
+        if not apply_dewater and top_defensive_nodes > 0:
+            temp_hc_slot = f"__hc_dewater_{uuid.uuid4().hex[:8]}"
+            self.clone_slot(slot, temp_hc_slot, activate=False)
+            self.audit_build(slot=temp_hc_slot, apply_dewater=True)
+            def_slot = temp_hc_slot
+
+        try:
+            def_passives_raw = (
+                self.rank_passive_upgrades(
+                    slot=def_slot,
+                    mode="perPoint",
+                    stat="TotalEHP",
+                    max_path_dist=6,
+                    top_n=top_defensive_nodes,
+                )
+                if top_defensive_nodes > 0
+                else []
+            )
+        finally:
+            if temp_hc_slot is not None:
+                self.bridge.call("delete_slot", {"slot": temp_hc_slot})
+                self.bridge.call("switch_slot", {"slot": slot, "createIfMissing": False})
         def_options: list[DefensivePassiveRespecOption] = []
         for p in def_passives_raw:
             dist = p.path_dist or 1
@@ -3103,6 +3126,8 @@ class BuildService:
         group_index: int | None = None,
         replace_gem_slot: int | None = None,
         replace_gem: str | None = None,
+        best_swap: bool = False,
+        dewater: bool = False,
         max_tier: int | None = None,
         include_lineage: bool = True,
         exclude_lineage_conflicts: bool = False,
@@ -3111,10 +3136,19 @@ class BuildService:
         """Rank every compatible PoE2 0.5.5 Support Gem (Tier I-III + Lineage) for `group_index`,
         returning DPS/EHP deltas alongside Mana sustain, Spirit reservation, and Lineage conflicts.
         """
+        target_slot = slot
+        temp_slot: str | None = None
+        if dewater:
+            temp_slot = f"__supp_dewater_{uuid.uuid4().hex[:8]}"
+            self.clone_slot(slot, temp_slot, activate=False)
+            self.audit_build(slot=temp_slot, apply_dewater=True)
+            target_slot = temp_slot
+
         params: dict[str, Any] = {
-            "slot": slot,
+            "slot": target_slot,
             "includeLineage": include_lineage,
             "excludeLineageConflicts": exclude_lineage_conflicts,
+            "bestSwap": best_swap,
             "rankByDps": True,
             "topN": top_n,
         }
@@ -3127,16 +3161,23 @@ class BuildService:
         if max_tier is not None:
             params["maxTier"] = int(max_tier)
 
-        res = self.bridge.call(
-            "list_valid_supports",
-            params,
-            timeout=max(self.bridge.request_timeout, 120.0),
-        )
+        try:
+            res = self.bridge.call(
+                "list_valid_supports",
+                params,
+                timeout=max(self.bridge.request_timeout, 120.0),
+            )
+        finally:
+            if temp_slot is not None:
+                self.bridge.call("delete_slot", {"slot": temp_slot})
+                self.bridge.call("switch_slot", {"slot": slot, "createIfMissing": False})
+
         cands: list[SupportGemCandidate] = []
         for row in res.get("supports") or []:
             if not isinstance(row, Mapping):
                 continue
             tier_val = row.get("supportTier")
+            sp_before = int(row.get("spiritUnreservedBefore") or 0)
             cands.append(
                 SupportGemCandidate(
                     gem_id=str(row.get("gemId") or ""),
@@ -3159,8 +3200,11 @@ class BuildService:
                     mana_cost_before=float(row.get("manaCostBefore") or 0.0),
                     mana_cost_after=float(row.get("manaCostAfter") or 0.0),
                     mana_sustainable_after=bool(row.get("manaSustainableAfter", True)),
-                    spirit_unreserved_before=int(row.get("spiritUnreservedBefore") or 0),
+                    spirit_unreserved_before=sp_before,
                     spirit_unreserved_after=int(row.get("spiritUnreservedAfter") or 0),
+                    spirit_already_overflowing=bool(
+                        row.get("spiritAlreadyOverflowing", sp_before < 0)
+                    ),
                     spirit_overflow=bool(row.get("spiritOverflow")),
                     attributes_met_after=bool(row.get("attributesMetAfter", True)),
                 )
@@ -3170,8 +3214,18 @@ class BuildService:
             for g in (res.get("socketedGems") or [])
             if isinstance(g, Mapping) and g.get("isSupport") and g.get("name")
         ]
+        supports_full = bool(res.get("supportsFull", len(current_supports) >= 5))
+        hypothetical_extra = bool(
+            res.get(
+                "hypotheticalExtraSocket",
+                supports_full
+                and replace_gem_slot is None
+                and not replace_gem
+                and not best_swap,
+            )
+        )
         return SupportGemRankingReport(
-            slot=str(res.get("slot") or slot),
+            slot=slot,
             group_index=int(res.get("groupIndex") or (group_index or 1)),
             replace_gem_slot=(
                 int(res["replacedSupportSlot"])
@@ -3180,6 +3234,11 @@ class BuildService:
             ),
             active_skill_label=str(res.get("activeSkillName") or ""),
             current_supports=current_supports,
+            max_support_sockets=5,
+            supports_full=supports_full,
+            hypothetical_extra_socket=hypothetical_extra,
+            best_swap=best_swap,
+            dewatered=dewater,
             max_tier=max_tier,
             include_lineage=include_lineage,
             total_valid=int(res.get("totalValid") or res.get("count") or len(cands)),
@@ -3728,25 +3787,61 @@ class BuildService:
         from poe2brain.knowledge.service import KnowledgeService
 
         stats = self.get_stats(slot=slot)
-        summary = self.bridge.call("get_build_summary", {"slot": slot, "includeItemRaw": False})
+        summary = self.bridge.call("get_build_summary", {"slot": slot, "includeItemRaw": True})
         items = summary.get("items") or []
 
         armour_slots = {"Body Armour", "Helmet", "Gloves", "Boots"}
         weapon_slots = {"Weapon 1", "Weapon 2"}
 
-        # Catalog available sockets (existing gear slots with rune sockets)
+        # Look up verified slot effects & socket-bound status directly from SQLite 0.5.5 augments
+        ks = KnowledgeService()
+        _aug_cache: dict[str, tuple[dict[str, Any], bool]] = {}
+
+        def _lookup_aug(aug_name: str) -> tuple[dict[str, Any], bool]:
+            if aug_name not in _aug_cache:
+                eff_map: dict[str, Any] = {}
+                overw = True
+                try:
+                    for h in ks.inspect_augment(aug_name, limit=4):
+                        if h.name.lower() == aug_name.lower():
+                            eff_map = dict(h.slot_effects or {})
+                            overw = h.can_overwrite_in_socket and (not h.is_socket_bound)
+                            break
+                except Exception:
+                    pass
+                _aug_cache[aug_name] = (eff_map, overw)
+            return _aug_cache[aug_name]
+
+        # Catalog available overwriteable sockets (skip locked Socket-bound augments!)
         slot_entries: list[tuple[str, str, str, int]] = []
+        raw_by_slot: dict[str, str] = {}
+        locked_by_slot: dict[str, list[str]] = {}
+        locked_notes: list[str] = []
         armour_socks = 0
         weapon_socks = 0
         for it in items:
             if not isinstance(it, Mapping):
                 continue
             s_name = str(it.get("slot") or "")
-            s_cnt = int(it.get("runeSockets") or 0)
-            if s_cnt <= 0:
+            raw_s_cnt = int(it.get("runeSockets") or 0)
+            if raw_s_cnt <= 0:
                 continue
             item_type = str(it.get("type") or "").lower()
             item_title = str(it.get("name") or it.get("baseName") or s_name)
+            equipped_runes = [str(r) for r in (it.get("runes") or []) if r]
+            locked_names = [r for r in equipped_runes if not _lookup_aug(r)[1]]
+            s_cnt = max(0, raw_s_cnt - len(locked_names))
+            if locked_names:
+                locked_by_slot[s_name] = locked_names
+                locked_notes.append(
+                    f"Locked socket-bound augment(s) preserved on {item_title} ({s_name}): "
+                    f"{', '.join(locked_names)} ({len(locked_names)}/{raw_s_cnt} socket(s) "
+                    "cannot be overwritten)."
+                )
+            if s_cnt <= 0:
+                continue
+            if it.get("raw"):
+                raw_by_slot[s_name] = str(it["raw"])
             if s_name in armour_slots:
                 cat: Literal["armour", "weapon", "shield", "focus", "other"] = "armour"
                 armour_socks += s_cnt
@@ -3765,7 +3860,7 @@ class BuildService:
             slot_entries.append((s_name, item_title, cat, s_cnt))
 
         # Default fallback socket budget if PoB2 item metadata had 0 explicit sockets listed
-        if not slot_entries:
+        if not slot_entries and not locked_notes:
             slot_entries = [
                 ("Body Armour", "Body Armour (2 sockets)", "armour", 2),
                 ("Helmet", "Helmet (1 socket)", "armour", 1),
@@ -3809,26 +3904,10 @@ class BuildService:
             price_cache[aug_name] = val
             return val
 
-        # Look up verified slot effects directly from SQLite Patch 0.5.5 augments
-        ks = KnowledgeService()
-        _aug_cache: dict[str, tuple[dict[str, Any], bool]] = {}
-
         def _aug_slot_mod(
             aug_name: str, slot_keys: tuple[str, ...], fallback: str
         ) -> tuple[str, bool]:
-            if aug_name not in _aug_cache:
-                eff_map: dict[str, Any] = {}
-                overw = True
-                try:
-                    for h in ks.inspect_augment(aug_name, limit=4):
-                        if h.name.lower() == aug_name.lower():
-                            eff_map = dict(h.slot_effects or {})
-                            overw = h.can_overwrite_in_socket
-                            break
-                except Exception:
-                    pass
-                _aug_cache[aug_name] = (eff_map, overw)
-            eff_map, overw = _aug_cache[aug_name]
+            eff_map, overw = _lookup_aug(aug_name)
             for sk in slot_keys:
                 vals = eff_map.get(sk)
                 if vals:
@@ -3841,7 +3920,7 @@ class BuildService:
         recs: list[RuneSocketRecommendation] = []
         custom_mod_lines: list[str] = []
         running_cost = 0.0
-        notes: list[str] = []
+        notes: list[str] = list(locked_notes)
 
         # SQLite-verified Patch 0.5.5 Armour resistance runes (+18% single ele, +13% chaos)
         ele_rune_specs = [
@@ -4000,7 +4079,8 @@ class BuildService:
                     )
                 )
 
-        # Verify exact DPS/EHP/Resist outcome inside PoB2 via transactional what_if!
+        # Verify exact NET DPS/EHP/Resist outcome inside PoB2 by actually replacing
+        # overwriteable Rune lines on equipped gear (preserving locked Socket-bound runes).
         dps_delta = 0.0
         ehp_delta = 0.0
         res_after = {
@@ -4009,7 +4089,60 @@ class BuildService:
             "lightning": round(stats.lightning_resist, 1),
             "chaos": round(stats.chaos_resist, 1),
         }
-        if custom_mod_lines:
+        new_runes_by_slot: dict[str, list[str]] = {}
+        for rec in recs:
+            new_runes_by_slot.setdefault(rec.equipment_slot, []).extend(
+                [rec.augment_name] * rec.sockets_allocated
+            )
+
+        def _rewrite_item_runes(raw_text: str, keep_locked: list[str], new_runes: list[str]) -> str:
+            final_runes = [*keep_locked, *new_runes]
+            lines = raw_text.splitlines()
+            out_lines: list[str] = []
+            inserted = False
+            for ln in lines:
+                stripped = ln.strip()
+                if stripped.startswith("Rune:"):
+                    if not inserted:
+                        for rn in final_runes:
+                            out_lines.append(f"Rune: {rn}")
+                        inserted = True
+                    continue
+                if stripped.startswith("{enchant}{rune}"):
+                    continue
+                out_lines.append(ln)
+                if not inserted and stripped.startswith("Sockets:"):
+                    for rn in final_runes:
+                        out_lines.append(f"Rune: {rn}")
+                    inserted = True
+            return "\n".join(out_lines)
+
+        modified_equip: dict[str, str] = {}
+        for s_nm, r_names in new_runes_by_slot.items():
+            raw_it = raw_by_slot.get(s_nm)
+            if raw_it:
+                modified_equip[s_nm] = _rewrite_item_runes(
+                    raw_it, locked_by_slot.get(s_nm, []), r_names
+                )
+
+        if modified_equip:
+            try:
+                wf = self.what_if(
+                    slot=slot,
+                    equip_items=modified_equip,
+                    apply=False,
+                )
+                dps_delta = wf.effective_dps_delta
+                ehp_delta = wf.total_ehp_delta
+                res_after = {
+                    "fire": round(wf.after_stats.fire_resist, 1),
+                    "cold": round(wf.after_stats.cold_resist, 1),
+                    "lightning": round(wf.after_stats.lightning_resist, 1),
+                    "chaos": round(wf.after_stats.chaos_resist, 1),
+                }
+            except Exception as exc:
+                notes.append(f"PoB2 delta verification skipped: {exc}")
+        elif custom_mod_lines:
             pob_mod_lines = [
                 "18% increased Global Defences"
                 if "increased Armour, Evasion and Energy Shield" in ln
@@ -4046,6 +4179,16 @@ class BuildService:
             "Masterwork / Bonded runes require Shaman Bonded or Verisium Anvil planning."
         )
 
+        priced_recs = [r for r in recs if r.total_cost_exalted is not None]
+        est_total_cost: float | None = (
+            round(running_cost, 2) if (recs and len(priced_recs) == len(recs)) else None
+        )
+        if recs and est_total_cost is None:
+            notes.append(
+                "Rune cost estimate unavailable (offline mode or unquoted augments; omitted rather "
+                "than defaulting missing prices to 0.0)."
+            )
+
         return RuneOptimizationReport(
             slot_name=slot,
             objective=objective,
@@ -4055,7 +4198,7 @@ class BuildService:
             weapon_sockets=weapon_socks,
             resist_deficits_before=res_deficits,
             recommendations=recs,
-            estimated_total_cost_exalted=round(running_cost, 2),
+            estimated_total_cost_exalted=est_total_cost,
             pob_verified_dps_delta=round(dps_delta, 2),
             pob_verified_ehp_delta=round(ehp_delta, 2),
             pob_verified_resists_after=res_after,

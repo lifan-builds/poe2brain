@@ -2,7 +2,7 @@
   "benchmark_id": "PoE2Bench-0.5.5",
   "patch": "0.5.5",
   "league": "Forbidden Rites",
-  "description": "16-question offline-deterministic benchmark comparing frontier LLMs without vs. with poe2brain across all 6 Path of Exile 2 (0.5.5) intelligence pillars: Mechanics & Defences, Roster & Bases, Exact Crafting Math, Atlas & Waystone Regex, Headless PoB2 Auditing, and Loot Filter Crash Validation.",
+  "description": "22-question offline-deterministic benchmark comparing frontier LLMs without vs. with poe2brain across all 6 Path of Exile 2 (0.5.5) intelligence pillars plus bilingual Chinese (zh-CN) localization, Rune Resist Tetris, HC Pinnacle auditing, legal 6-link dewatered support swaps, what-if sandboxing, and offline quad-tab triage.",
   "questions": [
     {
       "id": "Q01",
@@ -617,22 +617,24 @@
       "id": "Q12",
       "title": "Compiled <=50-Char PoE2 Stash Safe-Waystone Regex (es_ci)",
       "pillar": "Atlas & Regex",
-      "question": "Compile a single PoE2 Patch 0.5.5 negated stash search regex (strictly <= 50 characters total, using PoE2's `!...` exclusion syntax) for a Chaos Inoculation Energy Shield (`es_ci`) build that hides brick Waystones with `-maximum Player Resistances`, `Elemental Penetration`, `Elemental Weakness`, and `Abyss no-damage cycle` (`Monsters cannot take damage for X seconds every Y seconds`). Provide the exact regex string in backticks and its character length.",
+      "question": "Compile a single PoE2 Patch 0.5.5 negated stash search regex (strictly <= 50 characters total, using PoE2's `!...` exclusion syntax) for a Chaos Inoculation Energy Shield (`es_ci`) build that hides brick Waystones with `-maximum Player Resistances`, `Elemental Penetration`, `Elemental Weakness`, `Monster Stun Buildup`, `less Recovery Rate of Life and Energy Shield`, and `Abyss no-damage cycle` (`Monsters cannot take damage for X seconds every Y seconds`). Provide the exact regex string in backticks and its character length.",
       "fixture_files": [],
       "poe2brain_commands": [
         "uv run poe2 wiki regex --archetype es_ci --json"
       ],
-      "ground_truth_summary": "Safe runnable stash regex: `!\"ever|pene|weak|player r\"` (26 characters, strictly <= 50-char PoE2 stash search limit, 0 false negatives across all 4 brick Waystone modifiers).",
+      "ground_truth_summary": "Safe runnable stash regex: `!\"buil|ever|of l|pene|weak|player r\"` (36 characters, strictly <= 50-char PoE2 stash search limit, 0 false negatives across all 6 es_ci brick Waystone modifiers).",
       "checks": [
         {
           "id": "valid_poe2_safe_regex",
-          "label": "Contains a valid <=50-char PoE2 negated stash regex (!\"...\") matching all 4 es_ci brick mods",
+          "label": "Contains a valid <=50-char PoE2 negated stash regex (!\"...\") matching all 6 es_ci brick mods",
           "type": "poe2_waystone_regex",
           "max_chars": 50,
           "must_match_mods": [
             "-4% maximum Player Resistances",
             "Monster Damage Penetrates 8% Elemental Resistances",
             "Players are Cursed with Elemental Weakness",
+            "Monsters deal 200% more Stun Buildup",
+            "Players have 40% less Recovery Rate of Life and Energy Shield",
             "Monsters cannot take damage for 2 seconds every 8 seconds"
           ],
           "must_not_match_mods": [
@@ -868,6 +870,323 @@
           "pattern": "liquid\\s+emotions?\\s+(?:are|can)\\s+only\\s+(?:be\\s+)?used\\s+(?:to|for)\\s+(?:instill|anoint)"
         }
       ]
+    },
+    {
+      "id": "Q17",
+      "title": "Headless PoB2 Legal 6-Link Dewatered Support Swap (--best-swap --dewater)",
+      "pillar": "Headless PoB2",
+      "question": "On the Level 97 Amazon Ice Shot build (`benchmarks/fixtures/amazon_ice_shot_0_5_5.xml`), Ice Shot already fills all 5/5 legal support sockets. Under **dewatered sustainable Pinnacle config**, which currently socketed support contributes the least DPS, and what is the #1 legal 6-link replacement for that slot (report exact before -> after dewatered DPS, % gain, and whether Elemental Focus at #2 meets Intelligence attribute requirements)?",
+      "fixture_files": [
+        "benchmarks/fixtures/amazon_ice_shot_0_5_5.xml"
+      ],
+      "poe2brain_commands": [
+        "uv run poe2 pob load benchmarks/fixtures/amazon_ice_shot_0_5_5.xml --slot bench_q17 --json",
+        "uv run poe2 pob supports --slot bench_q17 --best-swap --dewater --top 5 --json"
+      ],
+      "ground_truth_summary": "Weakest socketed support is #4 Stoicism II. Under dewatered sustainable Pinnacle config, #1 legal 6-link replacement is Hit and Run (121,674 -> 170,344 DPS, +40.0% gain). #2 Elemental Focus (+23.98%) meets attribute requirements (attributes_met_after = true).",
+      "checks": [
+        {
+          "id": "weakest_stoicism",
+          "label": "Identifies Stoicism II as weakest socketed support replaced",
+          "type": "regex_any",
+          "patterns": [
+            "stoicism\\s*ii|stoicism"
+          ]
+        },
+        {
+          "id": "top_swap_hit_and_run",
+          "label": "Identifies Hit and Run as #1 legal 6-link swap",
+          "type": "regex_any",
+          "patterns": [
+            "hit\\s+and\\s+run"
+          ]
+        },
+        {
+          "id": "dewatered_after_170344",
+          "label": "Reports dewatered DPS after swap ≈ 170,344 (±3%) and +40.0% gain (±2pp)",
+          "type": "number_present",
+          "target": 170344,
+          "rel_tol": 0.03
+        },
+        {
+          "id": "dewatered_gain_40",
+          "label": "Reports ~40.0% DPS gain (±2pp)",
+          "type": "number_present",
+          "target": 40.0,
+          "abs_tol": 2.0,
+          "suffix": "%"
+        },
+        {
+          "id": "elemental_focus_attrs_met",
+          "label": "Confirms Elemental Focus meets attribute requirements (true)",
+          "type": "regex_any",
+          "patterns": [
+            "elemental\\s+focus[^\\n]{0,90}(?:meets?|true|yes|satisfied|within)",
+            "attributes_met_after[^\\n]{0,20}true"
+          ]
+        }
+      ],
+      "hallucination_traps": []
+    },
+    {
+      "id": "Q18",
+      "title": "Headless PoB2 HC Pinnacle Audit, Spirit Reconciliation & Dewatered Defensive Passives",
+      "pillar": "Headless PoB2",
+      "question": "Run a Hardcore Pinnacle Boss audit on `benchmarks/fixtures/amazon_ice_shot_0_5_5.xml`. Report: (a) dewatered Pinnacle Physical, Elemental, and Chaos Max Hits, (b) reconciled Spirit totals (total, reserved, unreserved), and (c) the top 2 reachable defensive passive notables ranked by dewatered EHP per point (`Shimmering` and `Careful Consideration`) with their approximate dewatered EHP % gains.",
+      "fixture_files": [
+        "benchmarks/fixtures/amazon_ice_shot_0_5_5.xml"
+      ],
+      "poe2brain_commands": [
+        "uv run poe2 pob hc-audit benchmarks/fixtures/amazon_ice_shot_0_5_5.xml --slot bench_q18 --top-nodes 3 --json"
+      ],
+      "ground_truth_summary": "Dewatered Pinnacle Max Hits: Physical 3,340, Elemental 11,296, Chaos 3,877. Reconciled Spirit: 139 total, 235 reserved, -96 unreserved. Top 2 dewatered defensive passives: Shimmering (+3,275 EHP, +21.0%) and Careful Consideration (+4,928 EHP, +31.6%).",
+      "checks": [
+        {
+          "id": "hc_max_hits",
+          "label": "Reports exact Max Hits: 3,340 Phys, 11,296 Ele, 3,877 Chaos",
+          "type": "regex_all",
+          "patterns": [
+            "3,?340",
+            "11,?296",
+            "3,?877"
+          ]
+        },
+        {
+          "id": "spirit_reconciled",
+          "label": "Reconciles Spirit: 139 total, 235 reserved, -96 unreserved",
+          "type": "regex_all",
+          "patterns": [
+            "\\b139\\b",
+            "\\b235\\b",
+            "-96\\b"
+          ]
+        },
+        {
+          "id": "shimmering_21pct",
+          "label": "Identifies Shimmering (~21.0% dewatered EHP gain)",
+          "type": "regex_all",
+          "patterns": [
+            "shimmering",
+            "21(?:\\.\\d+)?\\s*%"
+          ]
+        },
+        {
+          "id": "careful_consideration_31_6pct",
+          "label": "Identifies Careful Consideration (~31.6% dewatered EHP gain)",
+          "type": "regex_all",
+          "patterns": [
+            "careful\\s+consideration",
+            "31\\.[0-9]\\s*%|32\\s*%"
+          ]
+        }
+      ],
+      "hallucination_traps": []
+    },
+    {
+      "id": "Q19",
+      "title": "Headless PoB2 Rune Resist Tetris with Socket-Bound Augment Lock",
+      "pillar": "Headless PoB2",
+      "question": "Run a balanced Rune & Soul Core optimization (`--offline-prices`) on `benchmarks/fixtures/amazon_ice_shot_0_5_5.xml`. Report: (a) how many of the build's 12 equipment sockets are legally overwriteable and which exact Socket-bound augment on which item must stay locked, (b) how many `Soul Core of Tacati` are allocated to cover Chaos Resistance (and the resulting Chaos Resistance %), and (c) the true net PoB2 DPS and EHP deltas of actually replacing those runes on the gear (plus whether offline total cost is null/unavailable rather than 0).",
+      "fixture_files": [
+        "benchmarks/fixtures/amazon_ice_shot_0_5_5.xml"
+      ],
+      "poe2brain_commands": [
+        "uv run poe2 pob load benchmarks/fixtures/amazon_ice_shot_0_5_5.xml --slot bench_q19 --json",
+        "uv run poe2 pob runes --slot bench_q19 --objective balanced --offline-prices --json"
+      ],
+      "ground_truth_summary": "11 of 12 sockets are overwriteable because Kolr's Hunt on Sol Claw (Gloves) is Socket-bound and locked. 3 Soul Core of Tacati raise Chaos Resistance from 21% to 60%. True net PoB2 rune-swap delta is -43,108 DPS and +2,017 EHP; estimated_total_cost_exalted is null/unavailable in offline mode.",
+      "checks": [
+        {
+          "id": "eleven_sockets_kolrs_hunt",
+          "label": "11 overwriteable sockets; Kolr's Hunt on Sol Claw Gloves locked",
+          "type": "regex_all",
+          "patterns": [
+            "\\b11\\b",
+            "kolr'?s\\s+hunt",
+            "(?:sol\\s+claw|gloves)"
+          ]
+        },
+        {
+          "id": "tacati_3_to_60_chaos",
+          "label": "3 Soul Core of Tacati raising Chaos Resistance to 60%",
+          "type": "regex_all",
+          "patterns": [
+            "tacati",
+            "\\b3\\b",
+            "60(?:\\.0)?\\s*%"
+          ]
+        },
+        {
+          "id": "true_net_dps_delta",
+          "label": "True net DPS delta ≈ -43,108 (±4%)",
+          "type": "number_present",
+          "target": -43108,
+          "rel_tol": 0.04
+        },
+        {
+          "id": "true_net_ehp_delta",
+          "label": "True net EHP delta ≈ +2,017 (±5%)",
+          "type": "number_present",
+          "target": 2017,
+          "rel_tol": 0.05
+        },
+        {
+          "id": "offline_cost_null",
+          "label": "Reports offline estimated_total_cost_exalted as null/unavailable",
+          "type": "regex_any",
+          "patterns": [
+            "\\bnull\\b",
+            "unavailable",
+            "none\\b"
+          ]
+        }
+      ],
+      "hallucination_traps": []
+    },
+    {
+      "id": "Q20",
+      "title": "Bilingual Chinese (zh-CN) Lookup & Tencent Spaced Clipboard Parsing",
+      "pillar": "Roster & Bases",
+      "question": "A Chinese (`zh-CN`) PoE2 0.5.5 player asks: (a) Which English base class and Ascendancy is `风暴编织者`, how many Ascendancy notables does it have, and what skill does it grant? (b) Which English gem is `拉基亚塔的流光`, what gem kind is it, and what is its per-character copy limit? (c) Parse the Tencent-client Chinese clipboard item in `benchmarks/fixtures/zh_bow_0_5_5.txt` (with spaced headers like `稀 有 度: 稀有`) and report its item level, quality %, and all 4 explicit mod numeric values.",
+      "fixture_files": [
+        "benchmarks/fixtures/zh_bow_0_5_5.txt"
+      ],
+      "poe2brain_commands": [
+        "uv run poe2 wiki ascendancy \"风暴编织者\" --json",
+        "uv run poe2 wiki gem \"拉基亚塔的流光\" --json",
+        "uv run poe2 trade parse --file benchmarks/fixtures/zh_bow_0_5_5.txt --json"
+      ],
+      "ground_truth_summary": "(a) 风暴编织者 is Sorceress -> Stormweaver (10 notables, grants Elemental Storm). (b) 拉基亚塔的流光 is Rakiata's Flow (lineage_support, max 1 copy per character). (c) Parsed bow: item level 82, quality 20%, explicit numeric values 145%, 22-44, 18%, and 27%.",
+      "checks": [
+        {
+          "id": "zh_stormweaver",
+          "label": "Sorceress / Stormweaver with 10 notables and Elemental Storm",
+          "type": "regex_all",
+          "patterns": [
+            "sorceress",
+            "stormweaver",
+            "\\b10\\b",
+            "elemental\\s+storm"
+          ]
+        },
+        {
+          "id": "zh_rakiata_flow",
+          "label": "Rakiata's Flow Lineage Support, max 1 copy per char",
+          "type": "regex_all",
+          "patterns": [
+            "rakiata'?s\\s+flow",
+            "lineage",
+            "(?:\\b1\\b|one)"
+          ]
+        },
+        {
+          "id": "zh_bow_parsed_vals",
+          "label": "Parsed ilvl 82, 20% quality, and explicit rolls 145, 22-44, 18, 27",
+          "type": "regex_all",
+          "patterns": [
+            "\\b82\\b",
+            "20\\s*%",
+            "145",
+            "22\\D{1,5}44",
+            "18",
+            "27"
+          ]
+        }
+      ],
+      "hallucination_traps": []
+    },
+    {
+      "id": "Q21",
+      "title": "Compiled <=50-Char Waystone Juicing Regex (120%/20%) & Max-Res Math",
+      "pillar": "Atlas & Regex",
+      "question": "For PoE2 0.5.5 Waystone rolling: (a) Compile a single PoE2 stash regex (strictly <= 50 characters including quotes) that matches Waystones with `>= 120%` Waystone Drop Chance (including `+1000%`) OR `>= 20%` Pack Size (including `+100%`), while rejecting `+119%` Waystone Drop Chance and `+19%` Pack Size; provide the exact regex in backticks and its character length. (b) At 75% Elemental Resistance, by what % range does a `-3%` to `-8%` maximum Player Resistances modifier increase elemental damage taken?",
+      "fixture_files": [],
+      "poe2brain_commands": [
+        "uv run poe2 wiki regex --archetype es_ci --min-waystone-drop 120 --min-pack-size 20 --json"
+      ],
+      "ground_truth_summary": "(a) Juicing regex: `\"ce:..(1[2-9]|[2-9]\\d|\\d{3})\\d|ze:..([2-9]|1\\d)\\d\"` (50 characters, strictly <= 50-char limit; matches +120%/+1000% drop and +20%/+100% pack size; rejects +119% and +19%). (b) At 75% elemental resistance, -3% to -8% max res increases elemental damage taken by 12% to 32%.",
+      "checks": [
+        {
+          "id": "valid_juicing_regex",
+          "label": "Valid <=50-char PoE2 juicing regex matching 120%/1000% drop & 20%/100% pack, rejecting 119%/19%",
+          "type": "poe2_juicing_regex",
+          "max_chars": 50,
+          "must_match_mods": [
+            "Waystone Drop Chance: +120% (augmented)",
+            "Waystone Drop Chance: +1000% (augmented)",
+            "Pack Size: +20% (augmented)",
+            "Pack Size: +100% (augmented)"
+          ],
+          "must_not_match_mods": [
+            "Waystone Drop Chance: +119% (augmented)",
+            "Waystone Drop Chance: +95% (augmented)",
+            "Pack Size: +19% (augmented)"
+          ]
+        },
+        {
+          "id": "max_res_12_to_32",
+          "label": "Reports 12% to 32% more elemental damage taken",
+          "type": "regex_all",
+          "patterns": [
+            "12\\s*%",
+            "32\\s*%"
+          ]
+        }
+      ],
+      "hallucination_traps": []
+    },
+    {
+      "id": "Q22",
+      "title": "Headless PoB2 Exact What-If Delta & Offline Quad-Tab Triage",
+      "pillar": "Headless PoB2",
+      "question": "Answer two operational checks: (a) On `benchmarks/fixtures/amazon_ice_shot_0_5_5.xml`, if you ONLY override `multiplierRage=0` (keeping all other flags unchanged), what does raw effective DPS change from -> to, and what exact % DPS drop is that? (b) Triage the 2-item clipboard dump in `benchmarks/fixtures/triage_dump_0_5_5.txt` strictly offline (`--no-live-trade`): report the exact open prefix/suffix counts on the `ilvl 82` Normal `Siphoning Wand` and the exact triage bucket assigned to the `ilvl 68` `Iron Ring`.",
+      "fixture_files": [
+        "benchmarks/fixtures/amazon_ice_shot_0_5_5.xml",
+        "benchmarks/fixtures/triage_dump_0_5_5.txt"
+      ],
+      "poe2brain_commands": [
+        "uv run poe2 pob load benchmarks/fixtures/amazon_ice_shot_0_5_5.xml --slot bench_q22 --json",
+        "uv run poe2 pob what-if --slot bench_q22 --config multiplierRage=0 --json",
+        "uv run poe2 trade triage --file benchmarks/fixtures/triage_dump_0_5_5.txt --no-live-trade --json"
+      ],
+      "ground_truth_summary": "(a) Setting multiplierRage=0 drops raw effective DPS from 237,993 to 160,418 (-77,575 DPS, -32.60%). (b) Offline triage (--no-live-trade, price_source=heuristic_offline): the ilvl 82 Normal Siphoning Wand has 3 open prefixes and 3 open suffixes; the ilvl 68 Iron Ring is classified as salvage_or_vendor.",
+      "checks": [
+        {
+          "id": "rage0_after_160418",
+          "label": "Reports DPS after multiplierRage=0 ≈ 160,418 (±3%)",
+          "type": "number_present",
+          "target": 160418,
+          "rel_tol": 0.03
+        },
+        {
+          "id": "rage0_drop_32_6pct",
+          "label": "Reports ~-32.6% (or 32.6%) DPS drop (±2pp)",
+          "type": "regex_any",
+          "patterns": [
+            "-?32(?:\\.\\d+)?\\s*%",
+            "-?33(?:\\.0+)?\\s*%"
+          ]
+        },
+        {
+          "id": "wand_3p_3s_open",
+          "label": "Reports 3 open prefixes and 3 open suffixes on Normal Siphoning Wand",
+          "type": "regex_all",
+          "patterns": [
+            "3\\s+(?:open\\s+)?prefix|prefix(?:es)?[^\\n]{0,20}3\\b",
+            "3\\s+(?:open\\s+)?suffix|suffix(?:es)?[^\\n]{0,20}3\\b"
+          ]
+        },
+        {
+          "id": "ring_salvage_or_vendor",
+          "label": "Assigns Iron Ring to salvage_or_vendor bucket",
+          "type": "regex_any",
+          "patterns": [
+            "salvage_or_vendor",
+            "salvage\\s+or\\s+vendor"
+          ]
+        }
+      ],
+      "hallucination_traps": []
     }
   ]
 }

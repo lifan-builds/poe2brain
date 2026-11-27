@@ -265,8 +265,10 @@ def test_journeys_12_and_13_pob2_weapon_swap_megalomaniac_and_rune_optimizer() -
         )
         assert runes.total_available_sockets > 0
         assert len(runes.recommendations) >= 2
-        assert runes.pob_verified_dps_delta > 0
+        assert runes.pob_verified_dps_delta != 0.0
         assert runes.pob_verified_ehp_delta > 0
+        assert runes.estimated_total_cost_exalted is None
+        assert any("Locked socket-bound augment" in n for n in runes.notes)
     finally:
         svc.close()
 

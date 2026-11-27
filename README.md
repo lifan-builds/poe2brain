@@ -5,7 +5,7 @@
 <br/>
 
 [![CI (Windows + macOS)](https://img.shields.io/github/actions/workflow/status/lifan-builds/poe2brain/ci.yml?branch=main&style=flat-square&label=CI%20Windows%20%2B%20macOS)](https://github.com/lifan-builds/poe2brain/actions/workflows/ci.yml)
-[![Benchmark](https://img.shields.io/badge/PoE2Bench%200.5.5-31.2%25%20%E2%86%92%20100%25-22c55e?style=flat-square)](#benchmark-how-accurate-is-poe2brain)
+[![Benchmark](https://img.shields.io/badge/PoE2Bench%200.5.5-27.3%25%20%E2%86%92%20100%25-22c55e?style=flat-square)](#benchmark-how-accurate-is-poe2brain)
 [![Patch](https://img.shields.io/badge/PoE2-0.5.5%20Forbidden%20Rites-d4a24c?style=flat-square)](https://github.com/lifan-builds/poe2brain)
 [![MCP Tools](https://img.shields.io/badge/MCP%20%2B%20CLI-45%20Tools%20(1%3A1)-38bdf8?style=flat-square)](#11-mcp-tool--cli-command-reference)
 [![Platforms](https://img.shields.io/badge/OS-Windows%20%7C%20macOS%20%7C%20Linux-64748b?style=flat-square)](#60-second-quickstart)
@@ -55,26 +55,27 @@ General-purpose LLMs constantly hallucinate **Path of Exile 1** mechanics onto *
 
 ## Benchmark: How Accurate Is `poe2brain`?
 
-To measure accuracy objectively, we built **[`PoE2Bench-0.5.5`](benchmarks/README.md)** — a reproducible 16-question, 52-check offline benchmark spanning all 6 pillars (Patch `0.5.5` Mechanics, Roster & Bases, Exact Conditional Crafting Math, Atlas & Waystone Regex, Headless PoB2 Auditing, and Loot Filter Validation). Both arms ran the **exact same frontier model (`gpt-6.2-astra`)** with zero web search and identical decoded plain-text `.xml` PoB2 and `.filter` fixture files:
+To measure accuracy objectively, we built **[`PoE2Bench-0.5.5`](benchmarks/README.md)** — a reproducible **22-question, 75-check** offline benchmark spanning all 6 pillars (Patch `0.5.5` Mechanics, EN/`zh-CN` Roster & Bases, Exact Conditional Crafting Math, Atlas & Waystone Regex, Headless PoB2 Auditing/Swaps/HC/Runes/What-If, and Loot Filter Validation). Both arms ran the **exact same frontier model (`gpt-6.2-astra`)** with zero web search and identical decoded plain-text `.xml` PoB2, `.filter`, and clipboard fixture files:
 
 | Metric (`gpt-6.2-astra`, same model, 0 web search) | Without `poe2brain` | With `poe2brain` | Improvement |
 | :--- | :---: | :---: | :---: |
-| **Exact Task Pass Rate** | 5 / 16 (`31.2%`) | **16 / 16 (`100.0%`)** | **+68.8 pp (`3.2×`)** |
-| **Sub-Check Factual Accuracy** | 28 / 52 (`53.8%`) | **52 / 52 (`100.0%`)** | **+46.2 pp** |
-| **PoE1 / Stale-Patch Hallucinations** | 3 / 16 (`18.8%`) | **0 / 16 (`0.0%`)** | **Zero hallucinations** |
+| **Exact Task Pass Rate** | 6 / 22 (`27.3%`) | **22 / 22 (`100.0%`)** | **+72.7 pp (`3.7×`)** |
+| **Sub-Check Factual Accuracy** | 38 / 75 (`50.7%`) | **75 / 75 (`100.0%`)** | **+49.3 pp** |
+| **PoE1 / Stale-Patch Hallucinations** | 4 / 22 (`18.2%`) | **0 / 22 (`0.0%`)** | **Zero hallucinations** |
 
 ### Sample Benchmark Questions (Without vs. With `poe2brain`)
 
 | # | Real Player Question (`Patch 0.5.5`) | Without `poe2brain` | With `poe2brain` |
 | :--- | :--- | :--- | :--- |
-| **Q02** | What is the base passive Block cap, what does `Glancing Blows` do, and what are `Deflection`'s mitigation % & cap? | ❌ Hallucinated PoE1 `75%` Block cap, PoE1 Glancing Blows (`2×` Block / `65%` taken), and wrong `75%` Deflect cap | ✅ **`50%` Block cap**, Glancing Blows = **Evade Unlucky / Deflect Lucky**, Deflection = **`40%` / `95%` cap** |
+| **Q02** | Base passive Block cap, `Glancing Blows` keystone effect, and `Deflection` mitigation % & cap? | ❌ Hallucinated PoE1 `75%` Block cap & PoE1 rules | ✅ **`50%` Block cap**, **Evade Unlucky / Deflect Lucky**, **`40%` / `95%` cap** |
 | **Q09** | On an `ilvl 82` Rare `Warmonger Bow`, compare `Greater` vs. `Perfect Exalted Orb` odds to hit T1 `% Physical Damage` (weight 25) | ❌ Cannot compute `0.5.5` affix pool weights (symbolic formula only) | ✅ **Exact pool math:** `40,482` weight (`0.0618%`, `1,619.3` tries) vs. `24,782` weight (`0.1009%`, `991.3` tries — `1.634×`) |
 | **Q10** | `0/2/4/6`-mod Waystone revives, Tablet placement, 3 Patch `0.5` Atlas Masters, and `0.5.5` Sacred Blooms | ❌ Wrong `6` revives on 0-mod; couldn't name Atlas Masters or Sacred Blooms | ✅ **`5/4/2/0` revives**, Map Device Tablets, **`Jado / Hilda / Doryani`** (1 active), **Viridian Wildwood / Azmeri Wisps** |
-| **Q12** | Compile a `<=50`-char PoE2 negated stash regex hiding CI/ES brick Waystones (`-max res`, `pen`, `ele weak`, `Abyss cycle`) | ❌ Broken `!maximum.player.res\|...` (49 chars, invalid syntax without `!"..."`) | ✅ **`!"ever\|pene\|weak\|player r"`** (**26 chars**, verified `0` false negatives & `0` false positives) |
-| **Q13** | Dewater a real `0.5.5` Amazon Ice Shot PoB2 XML: raw vs. sustainable Pinnacle DPS, `%` inflation, #1 culprit, Spirit / Chaos / Phys Max Hit | ❌ Read stale XML header (`237,936`); could not compute sustainable Pinnacle DPS or culprit delta | ✅ **`237,993 → 121,674` (`+95.6%` inflation)**, #1 culprit `multiplierRage = 30` (`+48.36%`), `pinnacle_ready = false`, `-96` Spirit, `21%` Chaos Res, `3,340` Phys Max Hit |
-| **Q14** | Rank all compatible `0.5.5` Support Gems for that Amazon Ice Shot PoB2 build by DPS gain & Spirit overflow | ❌ Could not simulate the 254 compatible supports; reported `0%` | ✅ **`Hit and Run`** ranked #1 (`237,993 → 332,692`, **`+39.8%` DPS**), `spirit_overflow = false` |
+| **Q12** | Compile a `<=50`-char PoE2 negated stash regex hiding all 6 CI/ES (`es_ci`) brick Waystone hazards | ❌ Put `!` inside quotes (`"!m player r\|..."`, broken PoE2 syntax) | ✅ **`!"buil\|ever\|of l\|pene\|weak\|player r"`** (**36 chars**, 6/6 hazards, `0` FP/FN) |
+| **Q17** | Legal 6-link dewatered support swap (`--best-swap --dewater`) on 5/5-filled Amazon Ice Shot + verify `Elemental Focus` Int req | ❌ Could not find weakest support, legal swap DPS, or recalculated Int requirement | ✅ Auto-replaced weakest #4 **`Stoicism II`** with **`Hit and Run`** (`121,674 → 170,344`, **`+40.0%`**); #2 `Elemental Focus` (`+23.98%`, `attributes_met_after = true`) |
+| **Q19** | Balanced Rune & Soul Core optimization (`--offline-prices`) preserving Socket-bound augments + true net PoB2 swap delta | ❌ Used stale `+7%` Tacati value (wasting 7 cores instead of 3); could not compute net DPS/EHP delta | ✅ Preserved locked **`Kolr's Hunt`** (`11/12` sockets), **3 `Soul Core of Tacati`** (`21% → 60%` Chaos), true net **`-43,108 DPS / +2,017 EHP`**, offline cost `null` |
+| **Q22** | Exact `what-if` (`multiplierRage=0` only) DPS drop + offline quad-tab triage (`--no-live-trade`) | ❌ Mental math divided by `1.30` (`183,020`, `-23.1%` — off by ~9.5 pp!) | ✅ Exact **`237,993 → 160,418 (-32.6%)`**; offline triage: Normal `ilvl 82` wand `3P/3S` open, ring `salvage_or_vendor` |
 
-> Full 16-question suite, per-pillar breakdown, archived raw transcripts ([`benchmarks/results/codex_0_5_5.json`](benchmarks/results/codex_0_5_5.json)), and reproduction instructions: **[`benchmarks/README.md`](benchmarks/README.md)**. Re-score deterministically in 1 second:
+> Full 22-question suite, per-pillar breakdown, archived raw transcripts ([`benchmarks/results/codex_0_5_5.json`](benchmarks/results/codex_0_5_5.json)), and reproduction instructions: **[`benchmarks/README.md`](benchmarks/README.md)**. Re-score deterministically in 1 second:
 > ```bash
 > uv run python benchmarks/run_benchmark.py score benchmarks/results/codex_0_5_5.json
 > ```

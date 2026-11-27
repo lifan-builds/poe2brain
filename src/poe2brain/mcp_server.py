@@ -902,10 +902,14 @@ def poe2_search_knowledge(
 
 
 @mcp.tool()
-def poe2_explain_mechanic(topic: str, limit: int = 6) -> dict[str, Any]:
+def poe2_explain_mechanic(
+    topic: str, limit: int = 4, compact: bool = False
+) -> dict[str, Any]:
     """Return Patch 0.5.5 MechanicFact (poe1_trap, poe2_live_rule, formula) and GGG keywords."""
     return _safe_tool_call(
-        lambda: get_knowledge_service().explain_mechanic(topic, limit=limit).model_dump(mode="json")
+        lambda: get_knowledge_service()
+        .explain_mechanic(topic, limit=limit, compact=compact)
+        .model_dump(mode="json")
     )
 
 
@@ -1429,6 +1433,8 @@ def execute_pob_supports(
     group_index: int | None = None,
     replace_gem_slot: int | None = None,
     replace_gem: str | None = None,
+    best_swap: bool = False,
+    dewater: bool = False,
     max_tier: int | None = None,
     include_lineage: bool = True,
     exclude_lineage_conflicts: bool = False,
@@ -1441,6 +1447,8 @@ def execute_pob_supports(
         group_index=group_index,
         replace_gem_slot=replace_gem_slot,
         replace_gem=replace_gem,
+        best_swap=best_swap,
+        dewater=dewater,
         max_tier=max_tier,
         include_lineage=include_lineage,
         exclude_lineage_conflicts=exclude_lineage_conflicts,
@@ -1553,6 +1561,8 @@ def poe2_pob_supports(
     group_index: int | None = None,
     replace_gem_slot: int | None = None,
     replace_gem: str | None = None,
+    best_swap: bool = False,
+    dewater: bool = False,
     max_tier: int | None = None,
     include_lineage: bool = True,
     exclude_lineage_conflicts: bool = False,
@@ -1565,6 +1575,8 @@ def poe2_pob_supports(
             group_index=group_index,
             replace_gem_slot=replace_gem_slot,
             replace_gem=replace_gem,
+            best_swap=best_swap,
+            dewater=dewater,
             max_tier=max_tier,
             include_lineage=include_lineage,
             exclude_lineage_conflicts=exclude_lineage_conflicts,

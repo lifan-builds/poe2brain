@@ -256,7 +256,7 @@ _KNOWN_HAZARDS: dict[str, _HazardDefinition] = {
         mod_types=("MapPlayerMaximumResists",),
         synthetic_samples=(),
         default_severity="brick",
-        reason="(-8 to -3)% maximum Player Resistances (~24–32% more elemental damage taken).",
+        reason="(-8 to -3)% maximum Player Resistances (~12–32% more elemental damage taken).",
     ),
     "elemental_weakness": _HazardDefinition(
         hazard_id="elemental_weakness",
@@ -775,7 +775,7 @@ class WaystoneRegexEngine:
                 blob_parts.append(val.lower())
             elif isinstance(val, Sequence):
                 blob_parts.extend(str(x).lower() for x in val)
-        blob = " | ".join(blob_parts)
+        blob = " | ".join(blob_parts).replace("_", " ").replace("-", " ")
 
         life = float(stats_dict.get("life") or stats_dict.get("Life") or 0.0)
         es = float(stats_dict.get("energy_shield") or stats_dict.get("ES") or 0.0)
@@ -1003,24 +1003,63 @@ class WaystoneRegexEngine:
         """Compile a `<= 50` char PoE2 Stash Regex highlighting high-Waystone-Drop-Chance /
         high-Pack-Size / juiced Waystones.
         """
+        def _gte_num_expr(threshold: int) -> str:
+            """Build an exact compact regex matching integers >= threshold (no rounding down)."""
+            n = max(1, int(threshold))
+            s = str(n)
+            parts: list[str] = []
+            if len(s) == 2:
+                d0, d1 = int(s[0]), int(s[1])
+                if d1 == 0:
+                    parts.append(f"[{d0}-9]\\d")
+                else:
+                    parts.append(f"{d0}[{d1}-9]")
+                    if d0 < 9:
+                        parts.append(f"[{d0 + 1}-9]\\d")
+                parts.append(r"[1-9]\d\d+")
+                return f"({'|'.join(parts)})"
+            if len(s) == 3:
+                d0, d1, d2 = int(s[0]), int(s[1]), int(s[2])
+                if d1 == 0 and d2 == 0:
+                    parts.append(f"[{d0}-9]\\d\\d")
+                elif d2 == 0:
+                    parts.append(f"{d0}[{d1}-9]\\d")
+                    if d0 < 9:
+                        parts.append(f"[{d0 + 1}-9]\\d\\d")
+                else:
+                    parts.append(f"{d0}{d1}[{d2}-9]")
+                    if d1 < 9:
+                        parts.append(f"{d0}[{d1 + 1}-9]\\d")
+                    if d0 < 9:
+                        parts.append(f"[{d0 + 1}-9]\\d\\d")
+                parts.append(r"\d{4,}")
+                return f"({'|'.join(parts)})"
+            if len(s) == 1:
+                return f"([{n}-9]|[1-9]\\d+)"
+            return rf"([1-9]\d{{{len(s) - 1},}})"
+
         clauses: list[str] = []
 
-        if min_waystone_drop_pct >= 200:
-            drop_pat = r"nce: \+[2-9]\d\d%"
-        elif min_waystone_drop_pct >= 150:
-            drop_pat = r"nce: \+(1[5-9]|[2-9]\d)\d%"
-        elif min_waystone_drop_pct >= 120:
-            drop_pat = r"nce: \+(1[2-9]|[2-9]\d)\d%"
-        elif min_waystone_drop_pct >= 100:
-            drop_pat = r"nce: \+[1-9]\d\d%"
+        # Prefer compact factored forms for multiples of 10 so both Drop & Pack fit <=50 chars
+        if min_waystone_drop_pct == 200:
+            drop_pat = r"ce:..([2-9]\d|\d{3})\d"
+        elif min_waystone_drop_pct in (120, 150) or (
+            100 < min_waystone_drop_pct < 200 and min_waystone_drop_pct % 10 == 0
+        ):
+            d1 = (min_waystone_drop_pct // 10) % 10
+            drop_pat = rf"ce:..(1[{d1}-9]|[2-9]\d|\d{{3}})\d"
+        elif min_waystone_drop_pct == 100:
+            drop_pat = r"ce:..[1-9]\d\d+"
         else:
-            tens = max(1, min_waystone_drop_pct // 10)
-            drop_pat = rf"nce: \+([{tens}-9]\d|[1-9]\d\d)%"
+            drop_pat = rf"ce:..{_gte_num_expr(min_waystone_drop_pct)}"
         clauses.append(drop_pat)
 
-        if min_pack_size_pct is not None and min_pack_size_pct >= 20:
-            tens_p = min(9, max(2, min_pack_size_pct // 10))
-            p_cand = rf"size: \+[{tens_p}-9]\d%"
+        if min_pack_size_pct is not None and min_pack_size_pct >= 10:
+            if min_pack_size_pct % 10 == 0 and 20 <= min_pack_size_pct <= 90:
+                tens_p = min_pack_size_pct // 10
+                p_cand = rf"ze:..([{tens_p}-9]|1\d)\d"
+            else:
+                p_cand = rf"ze:..{_gte_num_expr(min_pack_size_pct)}"
             if len("|".join([*clauses, p_cand])) + 2 <= max_chars:
                 clauses.append(p_cand)
 

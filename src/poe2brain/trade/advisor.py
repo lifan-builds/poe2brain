@@ -697,7 +697,7 @@ class TradeAdvisor:
 
             is_craftable_gear = (
                 item.identified
-                and item.rarity == ItemRarity.RARE
+                and item.rarity in (ItemRarity.NORMAL, ItemRarity.MAGIC, ItemRarity.RARE)
                 and trade_cat is not None
                 and not trade_cat.startswith(("map", "gem", "currency", "flask", "card", "sanctum"))
             )
@@ -736,7 +736,7 @@ class TradeAdvisor:
                         sec_min_ex = unit_ex
                         price_source = f"economy:{q_obj.source}"
 
-            if unit_ex is None and (live_trade or self._trade2 is not None):
+            if unit_ex is None and live_trade:
                 pc = self.price_check_item(
                     raw_text,
                     league=league,
@@ -801,6 +801,7 @@ class TradeAdvisor:
                 )
             elif (
                 is_craftable_gear
+                and item.rarity == ItemRarity.RARE
                 and not item.corrupted
                 and not item.mirrored
                 and not item.sanctified
@@ -871,14 +872,19 @@ class TradeAdvisor:
                         f"({stack_qty}x @ {unit_ex:.1f} Ex)."
                     )
                 else:
-                    price_ref = sec_min_ex or unit_ex
+                    price_ref = (
+                        sec_min_ex
+                        if (sec_min_ex is not None and sec_min_ex >= min_sell_exalted)
+                        else est_total_ex
+                    )
+                    price_ref_div = round(price_ref / div_rate, 4) if div_rate > 0 else 0.0
                     next_step = (
                         f"List in Instant Buyout (securable) tab at ~{price_ref:.1f} Ex "
-                        f"({est_total_div:.2f} Div)."
+                        f"({price_ref_div:.2f} Div)."
                     )
                     rationale = (
                         f"Ready-to-sell item (~{est_total_ex:.1f} Ex >= {min_sell_exalted:.1f} Ex "
-                        "threshold) with no further deterministic crafting upside."
+                        "threshold)."
                     )
             else:
                 bucket = "salvage_or_vendor"
