@@ -5,6 +5,7 @@
 <br/>
 
 [![CI (Windows + macOS)](https://img.shields.io/github/actions/workflow/status/lifan-builds/poe2brain/ci.yml?branch=main&style=flat-square&label=CI%20Windows%20%2B%20macOS)](https://github.com/lifan-builds/poe2brain/actions/workflows/ci.yml)
+[![准确率基准](https://img.shields.io/badge/PoE2Bench%200.5.5-31.2%25%20%E2%86%92%20100%25-22c55e?style=flat-square)](#准确率实测接入-poe2brain-前后对比)
 [![版本](https://img.shields.io/badge/流放之路2-0.5.5%20禁忌秘仪-d4a24c?style=flat-square)](https://github.com/lifan-builds/poe2brain)
 [![工具数](https://img.shields.io/badge/MCP%20%2B%20CLI-45%20个全功能工具-38bdf8?style=flat-square)](#完整工具与命令速查)
 [![平台](https://img.shields.io/badge/支持系统-Windows%20%7C%20macOS%20%7C%20Linux-64748b?style=flat-square)](#windows--macos-3-分钟上手)
@@ -44,6 +45,34 @@
 | **做装靠感觉容易血本无归** | 不懂 0.5.5 阶梯通货等级下限与词池互斥 | **精确条件词池 MDP + 蒙特卡洛 (`p50`/`p80`/`p95`)**，直接算出「自己做 vs 市集买」谁更赚 |
 | **过滤器漏底材或进游戏直接报错** | `MapTier` / `Expert` 基底写错崩溃，或漏掉 82 物等/超凡工艺底材 | **7 类崩溃自校验编译器 + NeverSink 自动修复**：实时物价分层、绑定 PoB2 抓 82 物等/超凡底材、中英文语音播报 |
 | **担心封号 / Windows 装不上** | 要抠 `POESESSID` Cookie，或在 Windows 折腾 C 编译器 | **零 `POESESSID`、零读内存、零自动交易**（支持本地 PoB2 导入与官方 GGG OAuth 2.1）；**Windows 零编译开箱即用** |
+
+---
+
+## 准确率实测：接入 `poe2brain` 前后对比
+
+我们构建了开源可复现的 16 题 / 52 项核验离线基准测试 **[`PoE2Bench-0.5.5`](benchmarks/README.md)**，覆盖全部六大模块（0.5.5 核心机制、升华与基底、做装条件词池精算、异界与 50 字符引路石正则、无头 PoB2 去水与辅助扫榜、过滤器崩溃校验）。两组测试使用**完全相同的旗舰模型（`gpt-6.2-astra`）**、均关闭联网搜索，并向无工具基线组完整提供解码后的明文 PoB2 `.xml` 与 `.filter` 样本文件：
+
+| 评测指标（同模型 `gpt-6.2-astra`，零联网搜索） | 未接入 `poe2brain` | 接入 `poe2brain` | 提升幅度 |
+| :--- | :---: | :---: | :---: |
+| **整题完全通过率（Exact Pass）** | 5 / 16 (`31.2%`) | **16 / 16 (`100.0%`)** | **+68.8 pp（提升 `3.2×`）** |
+| **分项事实准确率（Sub-Checks）** | 28 / 52 (`53.8%`) | **52 / 52 (`100.0%`)** | **+46.2 pp** |
+| **流放 1 / 旧版本幻觉率** | 3 / 16 (`18.8%`) | **0 / 16 (`0.0%`)** | **幻觉清零** |
+
+### 典型实测题目对比（未接入 vs 接入 `poe2brain`）
+
+| 题号 | 真实玩家问题（Patch `0.5.5`） | 未接入 `poe2brain` | 接入 `poe2brain` |
+| :--- | :--- | :--- | :--- |
+| **Q02** | 被动格挡基础上限、`Glancing Blows`（扫荡打击）效果，以及敏捷装偏斜（Deflection）减伤比例与上限？ | ❌ 幻觉出流放 1 的 `75%` 格挡上限、`2× 格挡 / 承伤 65%` 与错误的 `75%` 偏斜上限 | ✅ **`50%` 格挡上限**、扫荡打击 = **闪避不幸 / 偏斜幸运**、偏斜 = **`40%` 减伤 / `95%` 上限** |
+| **Q09** | `82` 物等稀有 `Warmonger Bow` 裸点高阶崇高 vs 完美崇高出 T1 `% 物理伤害`（权重 25）的精确概率与期望次数？ | ❌ 无法计算 0.5.5 词池总权重，只能给符号公式 | ✅ **精确词池精算：**高阶 `40,482`（`0.0618%`，`1,619.3` 次）vs 完美 `24,782`（`0.1009%`，`991.3` 次，`1.634×`） |
+| **Q10** | `0/2/4/6` 词缀引路石复活次数、碑牌放哪、0.5 三位异界大师叫什么，以及 0.5.5 `Sacred Blooms` 生成什么？ | ❌ 把 0 词缀复活误说成 `6` 次，且答不出三位异界大师与 Sacred Blooms | ✅ **`5/4/2/0` 次复活**、碑牌直插地图仪、**`Jado / Hilda / Doryani`**（同启 1 位）、生成**翠绿荒林 / 灵体** |
+| **Q12** | 为 CI 能量护盾 BD 编译一条 `<=50` 字符的 PoE2 仓库排除正则（避开减最大抗/穿透/元素要害/深渊无敌） | ❌ 写出缺少 `!"..."` 引号的错误语法（49 字符），游戏内失效 | ✅ **`!"ever\|pene\|weak\|player r"`**（仅 **26 字符**，实测 `0` 漏报、`0` 误伤） |
+| **Q13** | 对真实 `0.5.5` 亚马逊冰箭 PoB2 XML 跑去水审计：面板 vs 真实攻坚 DPS、虚高比例、头号水分与精魂/混沌抗/物抗一击线？ | ❌ 仅读出旧 XML 缓存头（`237,936`），无法算出真实攻坚 DPS 与水分贡献 | ✅ **`237,993 → 121,674`（虚高 `+95.6%`）**，头号水分 `multiplierRage=30`（`+48.36%`），`pinnacle_ready=false`，`-96` 精魂 / `21%` 混抗 / `3,340` 物理一击线 |
+| **Q14** | 扫描同一套亚马逊冰箭 BD 全部 254 颗兼容 0.5.5 辅助宝石，哪一颗单颗 DPS 提升最高？是否导致精魂溢出？ | ❌ 无法真跑 PoB2 逐颗模拟，直接回答 `0%` | ✅ **`Hit and Run` 排名第一**（`237,993 → 332,692`，**`+39.8%` DPS**），`spirit_overflow=false` |
+
+> 完整 16 题明细、分模块通过率、原始对话存档（[`benchmarks/results/codex_0_5_5.json`](benchmarks/results/codex_0_5_5.json)）与一键复现命令详见 **[`benchmarks/README.md`](benchmarks/README.md)**：
+> ```bash
+> uv run python benchmarks/run_benchmark.py score benchmarks/results/codex_0_5_5.json
+> ```
 
 ---
 

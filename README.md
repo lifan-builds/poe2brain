@@ -5,6 +5,7 @@
 <br/>
 
 [![CI (Windows + macOS)](https://img.shields.io/github/actions/workflow/status/lifan-builds/poe2brain/ci.yml?branch=main&style=flat-square&label=CI%20Windows%20%2B%20macOS)](https://github.com/lifan-builds/poe2brain/actions/workflows/ci.yml)
+[![Benchmark](https://img.shields.io/badge/PoE2Bench%200.5.5-31.2%25%20%E2%86%92%20100%25-22c55e?style=flat-square)](#benchmark-how-accurate-is-poe2brain)
 [![Patch](https://img.shields.io/badge/PoE2-0.5.5%20Forbidden%20Rites-d4a24c?style=flat-square)](https://github.com/lifan-builds/poe2brain)
 [![MCP Tools](https://img.shields.io/badge/MCP%20%2B%20CLI-45%20Tools%20(1%3A1)-38bdf8?style=flat-square)](#11-mcp-tool--cli-command-reference)
 [![Platforms](https://img.shields.io/badge/OS-Windows%20%7C%20macOS%20%7C%20Linux-64748b?style=flat-square)](#60-second-quickstart)
@@ -49,6 +50,34 @@ General-purpose LLMs constantly hallucinate **Path of Exile 1** mechanics onto *
 | **Crafting Cost Guessing** | Eyeballs odds or recommends removed `0.4` Omens / `0.5` Recombinators | **Exact conditional mod-pool MDP + Monte Carlo** (`p50`/`p80`/`p95`) with mid-craft collateral brick protection |
 | **Loot Filter Clutter & Crashes** | Hand-written `.filter` rules crash PoE2 or miss `ilvl 82` / Exceptional bases | **7-trap `0.5.5` compiler, NeverSink restyler & Filter Doctor**: live economy tiers, PoB2 + Exceptional (`21%+`/`3-socket`) crafting bases, EN/ZH voice callouts |
 | **Account Safety & Windows Setup** | Asks for `POESESSID` cookies or breaks compiling C/Lua on Windows | **Zero `POESESSID`** (Local PoB2 sync + official GGG OAuth 2.1 PKCE); **zero C compiler needed on Windows** |
+
+---
+
+## Benchmark: How Accurate Is `poe2brain`?
+
+To measure accuracy objectively, we built **[`PoE2Bench-0.5.5`](benchmarks/README.md)** — a reproducible 16-question, 52-check offline benchmark spanning all 6 pillars (Patch `0.5.5` Mechanics, Roster & Bases, Exact Conditional Crafting Math, Atlas & Waystone Regex, Headless PoB2 Auditing, and Loot Filter Validation). Both arms ran the **exact same frontier model (`gpt-6.2-astra`)** with zero web search and identical decoded plain-text `.xml` PoB2 and `.filter` fixture files:
+
+| Metric (`gpt-6.2-astra`, same model, 0 web search) | Without `poe2brain` | With `poe2brain` | Improvement |
+| :--- | :---: | :---: | :---: |
+| **Exact Task Pass Rate** | 5 / 16 (`31.2%`) | **16 / 16 (`100.0%`)** | **+68.8 pp (`3.2×`)** |
+| **Sub-Check Factual Accuracy** | 28 / 52 (`53.8%`) | **52 / 52 (`100.0%`)** | **+46.2 pp** |
+| **PoE1 / Stale-Patch Hallucinations** | 3 / 16 (`18.8%`) | **0 / 16 (`0.0%`)** | **Zero hallucinations** |
+
+### Sample Benchmark Questions (Without vs. With `poe2brain`)
+
+| # | Real Player Question (`Patch 0.5.5`) | Without `poe2brain` | With `poe2brain` |
+| :--- | :--- | :--- | :--- |
+| **Q02** | What is the base passive Block cap, what does `Glancing Blows` do, and what are `Deflection`'s mitigation % & cap? | ❌ Hallucinated PoE1 `75%` Block cap, PoE1 Glancing Blows (`2×` Block / `65%` taken), and wrong `75%` Deflect cap | ✅ **`50%` Block cap**, Glancing Blows = **Evade Unlucky / Deflect Lucky**, Deflection = **`40%` / `95%` cap** |
+| **Q09** | On an `ilvl 82` Rare `Warmonger Bow`, compare `Greater` vs. `Perfect Exalted Orb` odds to hit T1 `% Physical Damage` (weight 25) | ❌ Cannot compute `0.5.5` affix pool weights (symbolic formula only) | ✅ **Exact pool math:** `40,482` weight (`0.0618%`, `1,619.3` tries) vs. `24,782` weight (`0.1009%`, `991.3` tries — `1.634×`) |
+| **Q10** | `0/2/4/6`-mod Waystone revives, Tablet placement, 3 Patch `0.5` Atlas Masters, and `0.5.5` Sacred Blooms | ❌ Wrong `6` revives on 0-mod; couldn't name Atlas Masters or Sacred Blooms | ✅ **`5/4/2/0` revives**, Map Device Tablets, **`Jado / Hilda / Doryani`** (1 active), **Viridian Wildwood / Azmeri Wisps** |
+| **Q12** | Compile a `<=50`-char PoE2 negated stash regex hiding CI/ES brick Waystones (`-max res`, `pen`, `ele weak`, `Abyss cycle`) | ❌ Broken `!maximum.player.res\|...` (49 chars, invalid syntax without `!"..."`) | ✅ **`!"ever\|pene\|weak\|player r"`** (**26 chars**, verified `0` false negatives & `0` false positives) |
+| **Q13** | Dewater a real `0.5.5` Amazon Ice Shot PoB2 XML: raw vs. sustainable Pinnacle DPS, `%` inflation, #1 culprit, Spirit / Chaos / Phys Max Hit | ❌ Read stale XML header (`237,936`); could not compute sustainable Pinnacle DPS or culprit delta | ✅ **`237,993 → 121,674` (`+95.6%` inflation)**, #1 culprit `multiplierRage = 30` (`+48.36%`), `pinnacle_ready = false`, `-96` Spirit, `21%` Chaos Res, `3,340` Phys Max Hit |
+| **Q14** | Rank all compatible `0.5.5` Support Gems for that Amazon Ice Shot PoB2 build by DPS gain & Spirit overflow | ❌ Could not simulate the 254 compatible supports; reported `0%` | ✅ **`Hit and Run`** ranked #1 (`237,993 → 332,692`, **`+39.8%` DPS**), `spirit_overflow = false` |
+
+> Full 16-question suite, per-pillar breakdown, archived raw transcripts ([`benchmarks/results/codex_0_5_5.json`](benchmarks/results/codex_0_5_5.json)), and reproduction instructions: **[`benchmarks/README.md`](benchmarks/README.md)**. Re-score deterministically in 1 second:
+> ```bash
+> uv run python benchmarks/run_benchmark.py score benchmarks/results/codex_0_5_5.json
+> ```
 
 ---
 

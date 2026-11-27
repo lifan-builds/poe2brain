@@ -1,0 +1,7 @@
+Show
+    Class "Body Armours"
+    BaseType "Expert Hexer's Robe"
+    MapTier >= 15
+    LinkedSockets >= 5
+    SetFontSize 60
+    PlayAlertSound 1 300
