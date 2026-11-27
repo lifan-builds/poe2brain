@@ -34,6 +34,7 @@ from poe2brain.trade.economy import (
     normalize_market_slug,
 )
 from poe2brain.trade.ee2_bundle import DEFAULT_EE2_DATA_DIR, EE2Bundle, get_default_bundle
+from poe2brain.trade.farming import FarmingFocus, LeagueStage, recommend_farming_strategies
 from poe2brain.trade.item_parser import (
     extract_stack_size,
     extract_unrevealed_desecrated_sides,
@@ -84,6 +85,8 @@ __all__ = [
     "MatchedStat",
     "NaturalStatCandidate",
     "OrderBookQuote",
+    "FarmingFocus",
+    "LeagueStage",
     "PriceHistoryPoint",
     "ReferenceRates",
     "Trade2Client",
@@ -106,6 +109,7 @@ __all__ = [
     "normalize_market_slug",
     "parse_clipboard_item",
     "parsed_item_to_pob2_text",
+    "recommend_farming_strategies",
     "resolve_natural_stat",
     "resolve_slot_or_category",
     "resolve_trade_category",

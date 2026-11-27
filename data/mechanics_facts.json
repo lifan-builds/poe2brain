@@ -883,5 +883,104 @@
     "formula_expr": "PassiveRespecCurrency = Gold (NO Orbs of Regret)",
     "source_ref": "PoB2 v0.23.1 Data/Misc.lua goldRespecPrices & AtlasPassiveRespecCost",
     "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "item_rarity_diminishing_returns_and_negative_mf",
+    "title": "Player Item Rarity (IIR) 100–125% Sweet Spot, Area Rarity Multiplier & Negative-Rarity Farming",
+    "category": "atlas",
+    "tags": [
+      "item rarity",
+      "iir",
+      "magic find",
+      "mf",
+      "diminishing returns",
+      "negative rarity",
+      "ventors gamble",
+      "farming"
+    ],
+    "poe1_or_stale_trap": "Assuming PoE1's rule that Item Rarity ignores currency drops, stacking 300%+ IIR at the cost of clear speed on Day 1, or ignoring Negative Rarity for white crafting bases.",
+    "poe2_live_rule": "In PoE2, Player Item Rarity (IIR) upgrades both equipment AND currency drop tiers and multiplies with Area/Map Rarity, but suffers steep diminishing returns past ~125–150%. Target ~100–125% Player IIR once clear speed and resists are locked (Day 1 prioritizes Atlas speed over IIR). Conversely, Negative Player IIR (<0%, e.g. negative-rarity Ventor's Gamble) suppresses Normal->Magic/Rare upgrades to flood ilvl 82 / Exceptional (21%+ quality / 3-socket) white crafting bases.",
+    "formula_expr": "SweetSpot(PlayerIIR) = 100%..125%; DiminishingPlateau > 150%; WhiteBaseFarm < 0%",
+    "source_ref": "PoB2 CalcPerform.lua EffectiveLootRarityMod & PoE2 0.5 Mapping Economy",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "forbidden_rites_sacred_blooms_wildwood_0_5_5",
+    "title": "Patch 0.5.5 Forbidden Rites: Campaign Ritual Cascades, Sacred Blooms & Viridian Wildwood Wisps",
+    "category": "atlas",
+    "tags": [
+      "forbidden rites",
+      "sacred bloom",
+      "viridian wildwood",
+      "wisps",
+      "primal",
+      "vivid",
+      "wild",
+      "ritual",
+      "ritual tablet"
+    ],
+    "poe1_or_stale_trap": "Treating Ritual as a low-yield side mechanic or forgetting that Ritual Tablets directly boost Viridian Wildwood Wisp yields in 0.5.5.",
+    "poe2_live_rule": "Patch 0.5.5 Forbidden Rites adds Campaign Rituals (with cascading Boss Ritual clusters where killing the boss inside a Ritual carries it into subsequent altars) and endgame Sacred Blooms. Applying a Sacred Bloom to an Atlas cluster spawns Viridian Wildwood entrances where Azmeri Wisps empower map monsters: Primal Wisps upgrade Normal->Magic, Vivid Wisps add Rare modifiers, Wild Wisps multiply Item Rarity, and White Wisps restore light/reveal paths. Slotting Ritual Tablets in the Map Device on Sacred Bloom maps directly increases Wildwood Wisp density.",
+    "formula_expr": "SacredBloom(AtlasCluster) + RitualTablet(MapDevice) -> Amplified Wildwood Wisps + Ritual Omens",
+    "source_ref": "PoE2 Patch 0.5.5 Forbidden Rites Release Notes",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "origins_of_divinity_fortress_atlas_0_5",
+    "title": "Patch 0.5 Origins of Divinity Fortress Progression, Atlas Masters (Jado/Hilda/Doryani) & +1 Waystones",
+    "category": "atlas",
+    "tags": [
+      "origins of divinity",
+      "precursor fortress",
+      "enigma chamber",
+      "arbiter of divinity",
+      "jado",
+      "hilda",
+      "doryani",
+      "powerful map boss",
+      "waystone sustain"
+    ],
+    "poe1_or_stale_trap": "Grinding low-tier map bonus objectives for Atlas points or expecting mundane map bosses to drop +1 tier Waystones.",
+    "poe2_live_rule": "Patch 0.5 replaced basic map bonus Atlas points with the Origins of Divinity Precursor Fortress (clearing Towers, Gateways, Enigma Chambers, and Halls grants Atlas points; defeating Quest Arbiter of Divinity auto-completes Fortress sections). Only 1 Atlas Master is active at a time: Jado (Partial Translations/Long Days/Unforeseen Treats — versatile tablets & Lineage gems), Hilda (Breeding Season/Mighty Prey — rare density & powerful bosses), or Doryani (Improved Calibration/Disengaged Safeties/Dam the River — map/irradiated manipulation). Powerful Map Bosses drop +1 tier Waystones.",
+    "formula_expr": "ActiveAtlasMasters = 1 of {Jado, Hilda, Doryani}; +1WaystoneDrop = PowerfulMapBoss",
+    "source_ref": "PoE2 Patch 0.5 Return of the Ancients Patch Notes",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "trial_of_sekhemas_honour_relics_0_5",
+    "title": "Trial of the Sekhemas: Honour Pool (Life+ES), 75% Honour Resist Cap & Double Unique Relic Breakpoint",
+    "category": "atlas",
+    "tags": [
+      "sekhemas",
+      "trial of the sekhemas",
+      "honour",
+      "honour resistance",
+      "djinn barya",
+      "relic",
+      "zarokh",
+      "ascendancy"
+    ],
+    "poe1_or_stale_trap": "Running 4-floor Trial of the Sekhemas without capping 75% Honour Resistance or stacking Player IIR instead of Relic Quantity for Zarokh.",
+    "poe2_live_rule": "Maximum Honour in Trial of the Sekhemas scales from your combined Life + Energy Shield pool (mitigated by Armour, Evasion, Block, and capped 75% Honour Resistance on Relics). Stacking >=120% increased Quantity of Relics dropped by Monsters on Relics pushes Zarokh, the Temporal into dropping double Unique Relics (hunting Against the Darkness and The Last Flame for Temporalis) alongside Day 1–3 Ascendancy carry income.",
+    "formula_expr": "HonourResCap = 75%; DoubleUniqueRelicTarget >= 120% Monster Relic Quantity",
+    "source_ref": "PoE2 Trial of the Sekhemas Mechanics & Relic Formulas",
+    "patch_verified": "0.5.5"
+  },
+  {
+    "slug": "alchemy_orb_magic_reroll_0_5",
+    "title": "Patch 0.5 Orb of Alchemy Works Directly on Magic Items (Wipes & Rerolls as Rare)",
+    "category": "crafting",
+    "tags": [
+      "orb of alchemy",
+      "alchemy",
+      "magic item",
+      "waystone",
+      "crafting"
+    ],
+    "poe1_or_stale_trap": "Assuming Orbs of Alchemy only work on Normal (white) items as in PoE1 and discarding Magic Waystones or crafting bases.",
+    "poe2_live_rule": "Since Patch 0.5, Orbs of Alchemy can be applied directly to Magic items as well as Normal items, wiping the existing Magic modifiers and reforging the item as a fresh Rare — smoothing early Waystone rolling and league-start rare crafting without Orbs of Scouring.",
+    "formula_expr": "OrbOfAlchemy(Normal | Magic) -> Fresh Rare",
+    "source_ref": "PoE2 Patch 0.5 Crafting & Waystone Notes",
+    "patch_verified": "0.5.5"
   }
 ]

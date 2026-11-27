@@ -158,6 +158,10 @@ class BuildStats(Poe2Model):
             "movement_speed_while_using_skill", "MovementSpeedWhileUsingSkill"
         ),
     )
+    item_rarity_pct: float = Field(
+        default=0.0,
+        validation_alias=AliasChoices("item_rarity_pct", "ItemRarityPct"),
+    )
     attack_cast_speed: float = Field(
         default=0.0, validation_alias=AliasChoices("attack_cast_speed", "Speed")
     )

@@ -318,6 +318,95 @@ def _is_support_gem(gem_el: ET.Element, cat: _InspectorCatalog) -> bool:
     return False
 
 
+_UTILITY_NON_MAIN_SKILLS: frozenset[str] = frozenset(
+    {
+        "despair",
+        "elemental weakness",
+        "flammability",
+        "hypothermia",
+        "conductivity",
+        "enfeeble",
+        "temporal chains",
+        "vulnerability",
+        "blasphemy",
+        "arctic armour",
+        "defiance banner",
+        "war banner",
+        "dread banner",
+        "wind dancer",
+        "ghost dance",
+        "discipline",
+        "blink",
+        "profane ritual",
+        "time of need",
+        "convalescence",
+        "barkskin",
+        "alchemist's boon",
+        "charge regulation",
+        "overwhelming presence",
+        "grim feast",
+        "clarity",
+        "vitality",
+        "precision",
+        "herald of ash",
+        "herald of ice",
+        "herald of thunder",
+        "herald of blood",
+        "herald of plague",
+        "withering presence",
+        "combat frenzy",
+        "archmage",
+        "berserk",
+        "eternal rage",
+        "sacrifice",
+        "bow shot",
+        "mace strike",
+        "quarterstaff strike",
+        "crossbow shot",
+        "spear stab",
+        "life remnants",
+        "mana remnants",
+        "sigil of power",
+        "trinity",
+        "parry",
+        "runic tempering",
+        "spellslinger",
+        "elemental conflux",
+        "hollow form",
+        "into the breach",
+    }
+)
+
+
+def _is_utility_non_main_skill(skill_name: str | None) -> bool:
+    if not skill_name:
+        return True
+    low = skill_name.strip().lower()
+    return low in _UTILITY_NON_MAIN_SKILLS or low.startswith("companion:")
+
+
+def _select_best_main_skill(
+    selected_main: str | None,
+    skill_groups: list[NinjaSkillGroupSummary],
+    active_skills: list[str],
+) -> str | None:
+    if selected_main and not _is_utility_non_main_skill(selected_main):
+        return selected_main
+    # Prefer the enabled skill group with the most support gems whose active skill deals damage
+    best_cand: tuple[int, str] | None = None
+    for grp in skill_groups:
+        if grp.active_skill and not _is_utility_non_main_skill(grp.active_skill):
+            score = len(grp.support_gems)
+            if best_cand is None or score > best_cand[0]:
+                best_cand = (score, grp.active_skill)
+    if best_cand is not None:
+        return best_cand[1]
+    for sk in active_skills:
+        if not _is_utility_non_main_skill(sk):
+            return sk
+    return selected_main or (active_skills[0] if active_skills else None)
+
+
 def inspect_pob2_xml_or_code(
     code_or_xml: str,
     *,
@@ -576,8 +665,7 @@ def inspect_pob2_xml_or_code(
                 )
             )
 
-    if main_skill is None and active_skills:
-        main_skill = active_skills[0]
+    main_skill = _select_best_main_skill(main_skill, skill_groups, active_skills)
 
     return InspectedPob2Build(
         tree_version=tree_version,

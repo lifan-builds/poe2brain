@@ -2101,6 +2101,128 @@ def econ_bosses_cmd(
     _run_cli(json_output, _compute, _render)
 
 
+@econ_app.command("farming")
+def econ_farming_cmd(
+    stage: Annotated[
+        str,
+        typer.Option(
+            "--stage",
+            help="League progression stage: day1 | early | mid | endgame.",
+        ),
+    ] = "early",
+    budget: Annotated[
+        str | None,
+        typer.Option(
+            "--budget",
+            help="Optional starting capital in Exalted or Divines (e.g. '100', '5d').",
+        ),
+    ] = None,
+    focus: Annotated[
+        str,
+        typer.Option(
+            "--focus",
+            help="Farming preference: balanced | steady | jackpot | speed.",
+        ),
+    ] = "balanced",
+    slot: Annotated[
+        str | None,
+        typer.Option(
+            "--slot",
+            help="Optional persisted PoB2 slot (e.g. 'main') to score build fit, IIR, and safety.",
+        ),
+    ] = None,
+    league: Annotated[str, typer.Option("--league", help="PoE2 league name.")] = DEFAULT_LEAGUE,
+    force_refresh: Annotated[
+        bool, typer.Option("--refresh", help="Force live economy refresh.")
+    ] = False,
+    json_output: JsonOpt = False,
+) -> None:
+    """Rank Patch 0.5.5 league-start & Atlas farming loops with live prices & optional PoB2 fit."""
+
+    def _compute() -> dict[str, Any]:
+        from poe2brain.mcp_server import parse_unified_budget
+        from poe2brain.trade.farming import recommend_farming_strategies
+
+        norm_stage = stage.strip().lower()
+        if norm_stage not in ("day1", "early", "mid", "endgame"):
+            raise ValueError(f"Unsupported --stage {stage!r}; expected day1|early|mid|endgame.")
+        norm_focus = focus.strip().lower()
+        if norm_focus not in ("balanced", "steady", "jackpot", "speed"):
+            raise ValueError(
+                f"Unsupported --focus {focus!r}; expected balanced|steady|jackpot|speed."
+            )
+
+        econ = get_economy_service()
+        budget_ex: float | None = None
+        if budget is not None:
+            parsed = parse_unified_budget(budget)
+            if parsed is not None:
+                amt, unit = parsed
+                if unit == "div":
+                    rates = econ.get_reference_rates(league, force_refresh=force_refresh)
+                    budget_ex = amt * max(1.0, float(rates.divine_exalted or 450.0))
+                else:
+                    budget_ex = amt
+
+        b_stats = None
+        if slot:
+            b_svc = get_build_service()
+            ensure_pob_slot_loaded(b_svc, slot=slot, require_existing=True)
+            b_stats = b_svc.audit_build(slot=slot).sustainable_pinnacle_stats
+
+        return recommend_farming_strategies(
+            econ,
+            league=league,
+            stage=norm_stage,  # type: ignore[arg-type]
+            budget_exalted=budget_ex,
+            focus=norm_focus,  # type: ignore[arg-type]
+            build_stats=b_stats,
+            slot_name=slot,
+            force_refresh=force_refresh,
+        )
+
+    def _render(data: dict[str, Any]) -> None:
+        div_ex = data["divine_exalted"]
+        bp = data.get("build_profile")
+        if bp:
+            console.print(
+                f"[bold cyan]Build Fit Profile ({bp['slot']}):[/bold cyan] "
+                f"{bp['ascendancy']} Lv{bp['level']} {bp['main_skill']} | "
+                f"DPS={bp['effective_dps']:,.0f} | EHP={bp['total_ehp']:,.0f} | "
+                f"PhysMH={bp['phys_max_hit']:,.0f} | MS={bp['movement_speed_mod']:.2f}x | "
+                f"IIR={bp['item_rarity_pct']:+.0f}%"
+            )
+        table = Table(
+            title=(
+                f"PoE2 0.5.5 Farming Strategies — {data['league']} "
+                f"(stage={data['stage']} | focus={data['focus']} | 1 Div = {div_ex:.0f} ex)"
+            )
+        )
+        table.add_column("#", justify="right")
+        table.add_column("Strategy", style="bold cyan")
+        table.add_column("Score", justify="right", style="green")
+        table.add_column("Atlas Master", style="yellow")
+        table.add_column("Top Drop", style="magenta")
+        table.add_column("Variance")
+        for s in data.get("strategies", []):
+            top_drop = (
+                f"{s['top_payout_item']} ({s['top_payout_divine']:.1f}d)"
+                if s.get("top_payout_item") and s.get("top_payout_divine") is not None
+                else "-"
+            )
+            table.add_row(
+                str(s["rank"]),
+                s["name"],
+                f"{s['score']:.1f}",
+                s["atlas_master"],
+                top_drop,
+                s["variance"],
+            )
+        console.print(table)
+
+    _run_cli(json_output, _compute, _render)
+
+
 @econ_app.command("arbitrage")
 def econ_arbitrage_cmd(
     budget: Annotated[

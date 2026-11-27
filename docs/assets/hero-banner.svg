@@ -70,7 +70,7 @@
     <rect x="0" y="52" width="520" height="2" rx="1" fill="url(#goldLine)"/>
 
     <text x="0" y="88" fill="#e2e8f0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="21" font-weight="500">
-      Agent-Native PoE2 Intelligence Engine · CLI + 44 MCP Tools
+      Agent-Native PoE2 Intelligence Engine · CLI + 45 MCP Tools
     </text>
     <text x="0" y="118" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="15.5">
       Headless PoB2 · 0.5.5 Ground Truth · Live Trade2 · Crafting EV · Loot Filters
@@ -89,7 +89,7 @@
 
     <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12">
       <text x="18" y="64" fill="#38bdf8">$ poe2 version --json</text>
-      <text x="18" y="86" fill="#94a3b8">patch: <tspan fill="#f0c774">"0.5.5"</tspan> · mcp: <tspan fill="#34d399">44 tools</tspan></text>
+      <text x="18" y="86" fill="#94a3b8">patch: <tspan fill="#f0c774">"0.5.5"</tspan> · mcp: <tspan fill="#34d399">45 tools</tspan></text>
       <text x="18" y="106" fill="#94a3b8">pob2:  <tspan fill="#34d399">headless LuaJIT (0 compiler on Win)</tspan></text>
 
       <line x1="18" y1="122" x2="346" y2="122" stroke="#1e293b" stroke-width="1"/>

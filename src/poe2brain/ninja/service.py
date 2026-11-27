@@ -53,7 +53,11 @@ from poe2brain.ninja.store import (
     normalize_league_slug,
     utc_now_iso,
 )
-from poe2brain.ninja.xml_inspector import decode_pob2_code_to_xml, inspect_pob2_xml_or_code
+from poe2brain.ninja.xml_inspector import (
+    _is_utility_non_main_skill,
+    decode_pob2_code_to_xml,
+    inspect_pob2_xml_or_code,
+)
 
 if TYPE_CHECKING:
     from poe2brain.pob.service import BuildService
@@ -1324,18 +1328,33 @@ class NinjaBuildsService:
             elif norm_preset == "zoom_mapper":
                 if not has_fast_move:
                     continue
+                if eff_min_dps is None and real_dps < 100_000.0:
+                    continue
+            elif norm_preset == "league_start":
+                if eff_min_dps is None and real_dps < 25_000.0:
+                    continue
             elif norm_preset == "boss_killer":
                 if eff_min_ehp is None and real_ehp < 22_000.0:
                     continue
                 if phys_mh is not None and float(phys_mh) < 5_500.0:
                     continue
+                if eff_min_dps is None and real_dps < 500_000.0:
+                    continue
             elif norm_preset == "hc_tank":
+                if eff_min_dps is None and real_dps < 100_000.0:
+                    continue
                 if phys_mh is not None and float(phys_mh) < 6_500.0:
                     continue
                 if not chaos_imm and chaos_mh is not None and float(chaos_mh) < 6_000.0:
                     continue
 
-            ms_main = raw_rec.get("main_skill")
+            raw_main = raw_rec.get("main_skill")
+            if raw_main and _is_utility_non_main_skill(str(raw_main)):
+                for alt_sk in raw_rec.get("active_skills") or ():
+                    if not _is_utility_non_main_skill(str(alt_sk)):
+                        raw_main = str(alt_sk)
+                        break
+            ms_main = raw_main
             c_skill_cnt = corpus_skill_counts.get(_norm_token(str(ms_main)), 1) if ms_main else 1
             s_score = _compute_sleeper_score(
                 raw_rec,
@@ -1346,6 +1365,8 @@ class NinjaBuildsService:
             )
 
             enriched = dict(raw_rec)
+            if ms_main:
+                enriched["main_skill"] = ms_main
             enriched["ascendancy_share_pct"] = asc_share
             enriched["corpus_skill_count"] = c_skill_cnt
             enriched["mobility_tags"] = mob_tags
@@ -1466,7 +1487,7 @@ class NinjaBuildsService:
             else:
                 dps_metric = (
                     r_real_dps
-                    if norm_preset == "boss_killer"
+                    if norm_preset in ("boss_killer", "league_start")
                     else float(r.get("effective_dps") or 0.0)
                 )
                 base_k = (

@@ -6,7 +6,7 @@
 
 [![CI (Windows + macOS)](https://img.shields.io/github/actions/workflow/status/lifan-builds/poe2brain/ci.yml?branch=main&style=flat-square&label=CI%20Windows%20%2B%20macOS)](https://github.com/lifan-builds/poe2brain/actions/workflows/ci.yml)
 [![版本](https://img.shields.io/badge/流放之路2-0.5.5%20禁忌秘仪-d4a24c?style=flat-square)](https://github.com/lifan-builds/poe2brain)
-[![工具数](https://img.shields.io/badge/MCP%20%2B%20CLI-44%20个全功能工具-38bdf8?style=flat-square)](#完整工具与命令速查)
+[![工具数](https://img.shields.io/badge/MCP%20%2B%20CLI-45%20个全功能工具-38bdf8?style=flat-square)](#完整工具与命令速查)
 [![平台](https://img.shields.io/badge/支持系统-Windows%20%7C%20macOS%20%7C%20Linux-64748b?style=flat-square)](#windows--macos-3-分钟上手)
 [![免费开源](https://img.shields.io/badge/协议-GPL--3.0--only%20完全免费开源-e11d48?style=flat-square)](LICENSE)
 
@@ -33,11 +33,11 @@
 
 直接拿通用大模型问《流放之路 2》配装、做装或市集捡漏，90% 会翻车：AI 会用流放 1 的老黄历告诉你「75% 格挡上限」「改造石洗词缀」「用工艺台」「用 0.4 就删掉的同质化预兆」，甚至把 PoB 战神勾选的虚高面板当成真实伤害。
 
-**`poe2brain`** 是一套 **完全免费开源、跨平台（Windows 零编译）** 的 PoE2 专属智能引擎：同一套核心同时提供 **命令行 (`poe2`)** 与 **MCP Server (`poe2brain-mcp`，44 个 1:1 工具)**，把本地后台真跑的 **Path of Building 2**、Patch `0.5.5` 离线真值数据库、实时市集一口价捡漏、做装期望求解器和防崩过滤器工坊直接交给你的 AI 助手。
+**`poe2brain`** 是一套 **完全免费开源、跨平台（Windows 零编译）** 的 PoE2 专属智能引擎：同一套核心同时提供 **命令行 (`poe2`)** 与 **MCP Server (`poe2brain-mcp`，45 个 1:1 工具)**，把本地后台真跑的 **Path of Building 2**、Patch `0.5.5` 离线真值数据库、实时市集一口价捡漏、做装期望求解器和防崩过滤器工坊直接交给你的 AI 助手。
 
 | 玩家 / AI 常见痛点 | 直接问普通 AI / 手工查表 | 用 `poe2brain` (`Patch 0.5.5`) |
 | :--- | :--- | :--- |
-| **拿流放 1 规则套流放 2** | 瞎编 75% 格挡、工艺台、已删除通货 | **离线 SQLite + FTS5 真值库**：769 条官方弹窗、49 条防幻觉铁律、23 升华，**支持中文直接搜** |
+| **拿流放 1 规则套流放 2** | 瞎编 75% 格挡、工艺台、已删除通货 | **离线 SQLite + FTS5 真值库**：769 条官方弹窗、54 条防幻觉铁律、23 升华，**支持中文直接搜** |
 | **抄到「PoB 战神」水货 BD** | 只看勾满药剂/满感电的虚假面板 | **本地后台真跑 PoB2**：一键**去水审计 (`pob audit`)**（含怒火锤炼/召唤契约等条件辅助与虚高攻速预警）+ 前 5 项配装瓶颈 |
 | **想找冷门高伤高速黑马 BD** | 榜一全是天价镜子装或烂大街 Meta | **每日自动去水更新的实时 BD 索引**（GitHub Actions 滚动发布 + 本地 SQLite 缓存）：一句 `--preset sleeper` 1 秒算出真实 DPS × 移速 × 稀有度黑马榜 |
 | **市集被密语压价号钓鱼** | 最低价全是 1 崇高不卖人的脚本号 | 自动拆分 **金币一口价 (`securable`，离线秒买)** vs **密语 (`whisper`)**，自动补满 20% 品质与符文再跑分 |
@@ -86,7 +86,7 @@ uv run poe2 ninja search --preset sleeper --limit 5
 flowchart TB
     A["玩家 & AI 助手<br/>Claude Code · Cursor · Antigravity · Codex · Cherry Studio"]
     A -->|JSON 命令行| CLI["poe2 (CLI)"]
-    A -->|MCP 协议| MCP["poe2brain-mcp (44 个 1:1 工具)"]
+    A -->|MCP 协议| MCP["poe2brain-mcp (45 个 1:1 工具)"]
     CLI --> CORE["Python 3.12+ 强类型核心引擎"]
     MCP --> CORE
 
@@ -217,14 +217,14 @@ uv run poe2 filter generate --slot main --strictness strict \
 ## 完整工具与命令速查
 
 <details>
-<summary><strong>点击展开：全部 42 个 MCP 工具与 CLI 命令一览</strong></summary>
+<summary><strong>点击展开：全部 45 个 MCP 工具与 CLI 命令一览</strong></summary>
 
 | 模块 | 代表 MCP 工具 | 对应 CLI 命令 | 核心用途 |
 | :--- | :--- | :--- | :--- |
 | **状态** | `poe2_status` | `poe2 version --json` | 检查补丁 (`0.5.5`)、数据库与无头 PoB2 就绪状态 |
 | **知识库 (9)** | `poe2_search_knowledge`, `poe2_explain_mechanic`, `poe2_inspect_gem/base/unique/augment/ascendancy`, `poe2_meta_ladder`, `poe2_waystone_regex` | `poe2 wiki search/mechanic/gem/base/unique/augment/ascendancy/meta/regex` | 中英文真值检索、23 升华、全服 Meta、50 字符防翻车引路石/碑牌正则 |
-| **无头 PoB2 (14)** | `poe2_pob_load/stats/audit/compare/hc_audit/eval_item/stat_weights/suggest_nodes/calc_breakdown/supports/radius_jewels/what_if/import_local/import_character` | `poe2 pob load/stats/audit/compare/hc-audit/eval-item/weights/nodes/calc-breakdown/supports/radius-jewels/what-if/import-local/import-character` | 多槽位 PoB2 计算、去水体检与瓶颈定位、HC 猝死审计、词缀溯源、辅助/范围珠宝排榜、无损假设沙盒 |
-| **经济套利 (3)** | `poe2_currency_price`, `poe2_market_scan`, `poe2_scan_arbitrage` | `poe2 econ price/scan/arbitrage` | 崇高本位实时物价、异动扫描、金币税感知套利与复利阶梯 |
+| **无头 PoB2 (15)** | `poe2_pob_load/stats/audit/compare/hc_audit/eval_item/stat_weights/suggest_nodes/optimize_runes/calc_breakdown/supports/radius_jewels/what_if/import_local/import_character` | `poe2 pob load/stats/audit/compare/hc-audit/eval-item/weights/nodes/runes/calc-breakdown/supports/radius-jewels/what-if/import-local/import-character` | 多槽位 PoB2 计算、去水体检与瓶颈/IIR 定位、HC 猝死审计、词缀溯源、符文/辅助/范围珠宝排榜、无损假设沙盒 |
+| **经济搬砖 (5)** | `poe2_currency_price`, `poe2_market_scan`, `poe2_boss_ev`, `poe2_farming_strategy`, `poe2_scan_arbitrage` | `poe2 econ price/scan/bosses/farming/arbitrage` | 崇高本位实时物价、赛季初/终局异界搬砖与大师策略、门票收益比、金币税感知套利与复利阶梯 |
 | **市集估价 (4)** | `poe2_parse_item`, `poe2_price_check`, `poe2_triage_dump`, `poe2_find_upgrades` | `poe2 trade parse/check/triage/upgrades` | 中英文 `Ctrl+C` 解析、一口价 vs 密语估价、四倍仓分拣、PoB2 真实提升捡漏 |
 | **做装求解 (3)** | `poe2_craft_odds`, `poe2_craft_plan`, `poe2_scan_craft_profit` | `poe2 craft odds/plan/profit` | 精确条件词池概率、防砸词保护、期望与 p80 脸黑成本、高利润低竞争做装榜 |
 | **poe.ninja (3)** | `poe2_ninja_snapshots`, `poe2_ninja_search`, `poe2_ninja_character` | `poe2 ninja snapshots/search/character` | 全服快照、`--preset` 黑马/开荒/速刷检索、`!反向过滤`、时光机低预算过渡点探测 |

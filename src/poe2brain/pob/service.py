@@ -538,12 +538,20 @@ def _to_build_stats(
     crit_mult = float(
         stats_dict.get("crit_multiplier", stats_dict.get("CritMultiplier", 0.0)) or 0.0
     )
+    raw_iir_mod = stats_dict.get("EffectiveLootRarityMod")
+    if "item_rarity_pct" in stats_dict and stats_dict["item_rarity_pct"] is not None:
+        iir_pct = float(stats_dict["item_rarity_pct"])
+    elif raw_iir_mod is not None and float(raw_iir_mod) != 0.0:
+        iir_pct = (float(raw_iir_mod) - 1.0) * 100.0
+    else:
+        iir_pct = 0.0
 
     payload: dict[str, Any] = {
         **dict(stats_dict),
         "chaos_immune": chaos_immune,
         "movement_speed_mod": round(ms_mod, 4),
         "movement_speed_while_using_skill": round(ms_skill, 4),
+        "item_rarity_pct": round(iir_pct, 1),
         "attack_cast_speed": round(atk_cast_spd, 4),
         "crit_chance": round(crit_ch, 2),
         "crit_multiplier": round(crit_mult, 4),
@@ -2163,6 +2171,24 @@ class BuildService:
             bottlenecks.append(
                 f"Slow map mobility ({(sust_stats.movement_speed_mod - 1.0) * 100:+.0f}% MS) — "
                 "upgrade Boots MS (30–35%) or add a travel skill (Blink/Shattering Palm/Pounce)."
+            )
+        if sust_stats.level >= 78 and sust_stats.item_rarity_pct > 165.0:
+            bottlenecks.append(
+                f"Over-invested Player IIR ({sust_stats.item_rarity_pct:.0f}% > 150% soft cap) — "
+                "PoE2 Item Rarity hits steep diminishing returns past ~125–150%; "
+                "reclaim suffixes for DPS/EHP/MS."
+            )
+        elif sust_stats.level >= 78 and 0.0 <= sust_stats.item_rarity_pct < 35.0:
+            warnings.append(
+                f"Low Player Item Rarity ({sust_stats.item_rarity_pct:.0f}% IIR) — "
+                "for endgame mapping (Breach/Wildwood/Expedition), targeting ~100–125% IIR "
+                "on rings/helm gives the steepest drop-tier gain."
+            )
+        elif sust_stats.item_rarity_pct < 0.0:
+            warnings.append(
+                f"Negative Player Item Rarity ({sust_stats.item_rarity_pct:+.0f}% IIR) — "
+                "configured for white/Exceptional ilvl 82 crafting-base farming "
+                "rather than raw currency/unique drops."
             )
         if total_dps_inf >= 30.0:
             top_culprit = stripped[0].flag if stripped else "config"

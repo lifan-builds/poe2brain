@@ -1826,6 +1826,53 @@ def poe2_boss_ev(
     return _safe_tool_call(_run)
 
 
+@mcp.tool()
+def poe2_farming_strategy(
+    stage: Literal["day1", "early", "mid", "endgame"] = "early",
+    budget: str | float | int | None = None,
+    focus: Literal["balanced", "steady", "jackpot", "speed"] = "balanced",
+    slot: str | None = None,
+    league: str = DEFAULT_LEAGUE,
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    """Rank Patch 0.5.5 league-start & endgame Atlas farming loops with live prices,
+    Atlas Masters, Tablet/Waystone setups, and optional PoB2 build-fit scoring.
+    """
+
+    def _run() -> dict[str, Any]:
+        from poe2brain.trade.farming import recommend_farming_strategies
+
+        econ = get_economy_service()
+        budget_ex: float | None = None
+        if budget is not None:
+            parsed = parse_unified_budget(budget)
+            if parsed is not None:
+                amt, unit = parsed
+                if unit == "div":
+                    rates = econ.get_reference_rates(league, force_refresh=force_refresh)
+                    budget_ex = amt * max(1.0, float(rates.divine_exalted or 450.0))
+                else:
+                    budget_ex = amt
+
+        b_stats = None
+        if slot:
+            b_svc = get_build_service()
+            b_stats = b_svc.audit_build(slot=slot).sustainable_pinnacle_stats
+
+        return recommend_farming_strategies(
+            econ,
+            league=league,
+            stage=stage,
+            budget_exalted=budget_ex,
+            focus=focus,
+            build_stats=b_stats,
+            slot_name=slot,
+            force_refresh=force_refresh,
+        )
+
+    return _safe_tool_call(_run)
+
+
 _BUDGET_AMOUNT_RE = re.compile(
     r"^\s*([0-9]+(?:\.[0-9]+)?)\s*(d|div|divine|divines|ex|exalt|exalted|exalteds)?\s*$",
     re.IGNORECASE,

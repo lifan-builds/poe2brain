@@ -694,6 +694,7 @@ local CORE_STAT_KEYS = {
 	"Str", "Dex", "Int", "TotalAttr", "ReqStr", "ReqDex", "ReqInt",
 	"ReqStrString", "ReqDexString", "ReqIntString",
 	"MovementSpeedMod", "EffectiveMovementSpeedMod", "MovementSpeedWhileUsingSkill",
+	"EffectiveLootRarityMod",
 }
 
 local function extractStatsTable(out, extraFields)

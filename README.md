@@ -6,7 +6,7 @@
 
 [![CI (Windows + macOS)](https://img.shields.io/github/actions/workflow/status/lifan-builds/poe2brain/ci.yml?branch=main&style=flat-square&label=CI%20Windows%20%2B%20macOS)](https://github.com/lifan-builds/poe2brain/actions/workflows/ci.yml)
 [![Patch](https://img.shields.io/badge/PoE2-0.5.5%20Forbidden%20Rites-d4a24c?style=flat-square)](https://github.com/lifan-builds/poe2brain)
-[![MCP Tools](https://img.shields.io/badge/MCP%20%2B%20CLI-44%20Tools%20(1%3A1)-38bdf8?style=flat-square)](#11-mcp-tool--cli-command-reference)
+[![MCP Tools](https://img.shields.io/badge/MCP%20%2B%20CLI-45%20Tools%20(1%3A1)-38bdf8?style=flat-square)](#11-mcp-tool--cli-command-reference)
 [![Platforms](https://img.shields.io/badge/OS-Windows%20%7C%20macOS%20%7C%20Linux-64748b?style=flat-square)](#60-second-quickstart)
 [![Python](https://img.shields.io/badge/Python-3.12%2B-3776ab?style=flat-square)](pyproject.toml)
 [![License](https://img.shields.io/badge/License-GPL--3.0--only-e11d48?style=flat-square)](LICENSE)
@@ -38,11 +38,11 @@
 
 General-purpose LLMs constantly hallucinate **Path of Exile 1** mechanics onto **Path of Exile 2** — quoting `75%` Block caps, Scouring Orbs, Crafting Bench mods, removed `0.4` Homogenising Omens, or fake PoB-warrior DPS inflated by unsustainable flasks and 100% Shock.
 
-**`poe2brain`** replaces guesswork with a single typed Python 3.12+ engine exposing **44 MCP tools** (`poe2brain-mcp`) and **1:1 JSON CLI commands** (`poe2 ... --json`) backed by live headless **PathOfBuilding-PoE2**, an offline Patch `0.5.5` SQLite + FTS5 database, official `trade2` pricing, exact crafting probability solvers, and a self-validating loot filter studio.
+**`poe2brain`** replaces guesswork with a single typed Python 3.12+ engine exposing **45 MCP tools** (`poe2brain-mcp`) and **1:1 JSON CLI commands** (`poe2 ... --json`) backed by live headless **PathOfBuilding-PoE2**, an offline Patch `0.5.5` SQLite + FTS5 database, official `trade2` pricing, exact crafting probability solvers, and a self-validating loot filter studio.
 
 | Problem Players & AI Agents Hit | Generic LLM / Ad-Hoc Scripts | `poe2brain` (`Patch 0.5.5`) |
 | :--- | :--- | :--- |
-| **PoE1 vs PoE2 Mechanics** | Hallucinates 75% Block, Scouring/Alt, Bench, PoE1 bases | **SQLite + FTS5 truth**: 769 GGG popups, 49 `0.5.5` anti-hallucination rules, 23 Ascendancies, EN + `zh-CN`/`zh-TW` |
+| **PoE1 vs PoE2 Mechanics** | Hallucinates 75% Block, Scouring/Alt, Bench, PoE1 bases | **SQLite + FTS5 truth**: 769 GGG popups, 54 `0.5.5` anti-hallucination rules, 23 Ascendancies, EN + `zh-CN`/`zh-TW` |
 | **Fake PoB-Warrior Numbers** | Trusts inflated 100% Shock / flask-up tooltip DPS | **Headless LuaJIT PoB2** (`GetMiscCalculator()`) with automatic **dewatering audits** + top-5 upgrade `bottlenecks` |
 | **Finding Hidden Builds** | Scrapes stale guides or top-1 meta mirror builds | **Daily-synced PoB2-audited build index** (GitHub Actions rolling release + SQLite cache): `--preset sleeper` ranks real DPS × move speed × rarity in `<1s` |
 | **Trade Price-Fixers & Traps** | Blends fake 1-Exalt whisper spam with real buyouts | Splits **Instant Buyout (`securable`, Gold fee)** vs **Whisper**, deduplicates fixers, and normalizes `+20%` Quality + Runes |
@@ -107,7 +107,7 @@ uv run poe2 filter generate --slot main --strictness strict \
 flowchart TB
     A["AI Agents & Players<br/>Claude Code · Cursor · Antigravity · Codex · Devin · Terminal"]
     A -->|JSON-first CLI| CLI["poe2 (Typer)"]
-    A -->|stdio MCP| MCP["poe2brain-mcp (44 Tools, 1:1 Parity)"]
+    A -->|stdio MCP| MCP["poe2brain-mcp (45 Tools, 1:1 Parity)"]
     CLI --> CORE["Typed Python 3.12+ Domain Core"]
     MCP --> CORE
 
@@ -122,7 +122,7 @@ flowchart TB
 <details>
 <summary><strong>Deep Dive: What's Inside Each of the Six Pillars</strong></summary>
 
-1. **Knowledge, Ascendancies & Live Ladder Meta (`poe2brain.knowledge`)** — Read-only SQLite + FTS5 index (`data/poe2_0.5.5.sqlite`) over **769** official GGG `KeywordPopups`, **49** Patch `0.5.5` anti-hallucination rules & formulas, **1,711** gems, **435** uniques, **3,219** live PoE2 bases (catching PoE1 / stale `0.1` `Expert ` base traps), **313** socketable augments, **293** crafting levers, and **882** Verisium/Kalguuran runeforge recipes, plus `MetaService` (`TreeData/0_5` **8 playable classes & 23 Ascendancies**, `Abyssal Lich` inheritance, choice notables, bilingual `zh-CN`/`zh-TW` aliases, and live SC/HC/SSF/HCSSF ladder shares).
+1. **Knowledge, Ascendancies & Live Ladder Meta (`poe2brain.knowledge`)** — Read-only SQLite + FTS5 index (`data/poe2_0.5.5.sqlite`) over **769** official GGG `KeywordPopups`, **54** Patch `0.5.5` anti-hallucination rules & formulas, **1,711** gems, **435** uniques, **3,219** live PoE2 bases (catching PoE1 / stale `0.1` `Expert ` base traps), **313** socketable augments, **293** crafting levers, and **882** Verisium/Kalguuran runeforge recipes, plus `MetaService` (`TreeData/0_5` **8 playable classes & 23 Ascendancies**, `Abyssal Lich` inheritance, choice notables, bilingual `zh-CN`/`zh-TW` aliases, and live SC/HC/SSF/HCSSF ladder shares).
 2. **Headless Path of Building 2 (`poe2brain.pob`)** — Persistent native `LuaJIT` + `PathOfBuilding-PoE2` (`tree 0_5`) JSON-RPC 2.0 daemon supporting multi-slot builds (`main`, `ref`, `candidate`), `eN...` / `poe.ninja` / `poe2db.tw` / `maxroll.gg` / `pobb.in` / XML / GGG `.build` JSON I/O, **dewatering audits with automatic upgrade bottlenecks**, `explain_calc` formula provenance, `rank_support_gems`, `rank_radius_jewels`, transactional `what_if` sandboxing, `<10ms` `GetMiscCalculator()` item sweeps, and marginal `trade2` stat weights.
 3. **Live Economy, Arbitrage & Official Trade2 (`poe2brain.trade`)** — 3-tier pricing router normalized to **`Exalted Orb = 1.0`** combining `api.poe2scout.com` + `poe.ninja` exchange overviews with unauthenticated `pathofexile.com/api/trade2` (`GGGRateLimiter` + `1.0s` buffer), `ArbitrageScanner` (`--budget`/`--gold`, `profit_ex_per_10k_gold`, compounding ladders, trap filters), `Exiled-Exchange-2`-backed EN/ZH `Ctrl+C` / `Ctrl+Alt+C` item parsing, **Instant Buyout (`securable` Gold fee) vs Whisper** splitting, and multi-item quad-tab triage.
 4. **Exact Crafting Odds, Policy & Profit Scanner (`poe2brain.crafting`)** — Conditional `ModPoolEngine` (`display_tier = 1` best, tiered orb `min_mod_level` floors, family mutual exclusion, dynamic elemental tag-blocking, 3-draw without-replacement Well of Souls unveil, `Omen of Whittling`, cross-pool `Crystallisation`, blocking removed `0.4` Homogenising Omens & `0.5` Recombinators) + sunk-cost-disciplined `CraftingPlanner` (`4-mod Fracturing Orb`, `p50`/`p80`/`p95` Monte Carlo, buy-vs-craft) + `CraftProfitScanner` with automatic `competition_level` & `niche_score`.
@@ -211,15 +211,15 @@ uv run poe2brain-mcp
 
 ## 1:1 MCP Tool & CLI Command Reference
 
-Every single MCP tool maps 1:1 to a `poe2 ... --json` CLI command over the exact same typed domain services (**44 tools total**):
+Every single MCP tool maps 1:1 to a `poe2 ... --json` CLI command over the exact same typed domain services (**45 tools total**):
 
 <details open>
-<summary><strong>Expand / Collapse Full 42-Tool Reference Table</strong></summary>
+<summary><strong>Expand / Collapse Full 45-Tool Reference Table</strong></summary>
 
 | Pillar | MCP Tool (`poe2brain`) | CLI Command (`uv run ...`) | Purpose |
 | :--- | :--- | :--- | :--- |
 | **Health** | `poe2_status` | `poe2 version --json` | Verify patch (`0.5.5`), default league (`Forbidden Rites`), SQLite DB, and headless PoB2 readiness. |
-| **Knowledge** | `poe2_search_knowledge` | `poe2 wiki search "<query>" [--category <cat>] [--limit 12] --json` | FTS5 + exact search across 769 GGG `KeywordPopups`, 49 anti-hallucination rules, 1,711 gems, 435 uniques, 3,219 live bases, 313 augments, 293 levers, and 882 runeforge recipes. |
+| **Knowledge** | `poe2_search_knowledge` | `poe2 wiki search "<query>" [--category <cat>] [--limit 12] --json` | FTS5 + exact search across 769 GGG `KeywordPopups`, 54 anti-hallucination rules, 1,711 gems, 435 uniques, 3,219 live bases, 313 augments, 293 levers, and 882 runeforge recipes. |
 | **Knowledge** | `poe2_explain_mechanic` | `poe2 wiki mechanic "<topic>" --json` | Authoritative `MechanicFact` (`poe1_trap`, `poe2_live_rule`, `formula_expr`) + official GGG keyword popups. |
 | **Knowledge** | `poe2_inspect_gem` | `poe2 wiki gem "<name>" --json` | Active, Spirit, Meta, Tiered Support (`I`/`II`/`III`), and `lineage_support` (`max_copies_per_char=1`) gem inspection. |
 | **Knowledge** | `poe2_inspect_base` | `poe2 wiki base "<name>" [--ilvl 82] --json` | Base properties, implicits, `display_tier=1` affixes at `ilvl`, and PoE1 / stale `Expert ` trap warnings. |
@@ -246,6 +246,7 @@ Every single MCP tool maps 1:1 to a `poe2 ... --json` CLI command over the exact
 | **Economy** | `poe2_currency_price` | `poe2 econ price "<query>" [--league "Forbidden Rites"] --json` | Live `CurrencyQuote` normalized to `{exalted, chaos, divine}` (`Exalted = 1.0`) with 7d trend and volume. |
 | **Economy** | `poe2_market_scan` | `poe2 econ scan [--category <cat>] [--min-volume-divine 5.0] [--league "Forbidden Rites"] --json` | High-liquidity exchange movers, numeraire-normalized cross-source spreads, and chanceable Uniques. |
 | **Economy** | `poe2_boss_ev` | `poe2 econ bosses [--encounter <id>] [--league "Forbidden Rites"] --json` | Live Pinnacle Boss & Trial entry costs vs chase unique drops (Arbiter, Xesht, Simulacrum, King in the Mists, Olroth, Sekhema, Trialmaster) with jackpot ratios & variable-roll notes. |
+| **Economy** | `poe2_farming_strategy` | `poe2 econ farming [--stage day1\|early\|mid\|endgame] [--budget 100\|5d] [--focus balanced\|steady\|jackpot\|speed] [--slot main] --json` | Rank Patch `0.5.5` league-start & Atlas farming loops (Fortress Rush, Expedition, Ritual+Wildwood, Breach, Sekhema, Chaos, Delirium, Boss Rush, Negative-IIR) with live prices, Atlas Masters (`Jado`/`Hilda`/`Doryani`), Tablets, IIR guidance, and optional PoB2 build-fit scoring. |
 | **Economy** | `poe2_scan_arbitrage` | `poe2 econ arbitrage [--budget 500\|5d] [--gold <g>] [--ladder-target-divine <d>] [--min-volume-divine 2.0] [--live-books/--no-live-books] --json` | Executable `0.5.5` conversions, Alva spreads, order books, `profit_ex_per_10k_gold`, trap warnings, or multi-rung capital & Gold compounding ladder. |
 | **Trade** | `poe2_parse_item` | `poe2 trade parse [--file <path> \| --text "<ctrl_c>"] --json` | Parse PoE2 `Ctrl+C` / `Ctrl+Alt+C` text into `ParsedItem` and PoB2 `Item.lua` text. |
 | **Trade** | `poe2_price_check` | `poe2 trade check [--file <path> \| --text "<ctrl_c>"] [--securable-only] [--league "Forbidden Rites"] --json` | 3-tier price check splitting **Instant Buyout (`securable`, Gold `fee`)** vs **In-Person (`whisper`)** with fixer warnings. |
