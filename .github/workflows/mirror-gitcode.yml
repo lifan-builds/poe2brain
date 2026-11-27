@@ -1,0 +1,58 @@
+name: Mirror to GitCode (CN)
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check GitCode mirror secrets
+        id: check
+        env:
+          GITCODE_MIRROR_URL: ${{ secrets.GITCODE_MIRROR_URL }}
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          if [ -z "$GITCODE_MIRROR_URL" ] || [ -z "$GITCODE_TOKEN" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "GitCode mirror secrets (GITCODE_MIRROR_URL, GITCODE_TOKEN) are not configured yet; skipping."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout full history
+        if: steps.check.outputs.configured == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push main and tags to GitCode
+        if: steps.check.outputs.configured == 'true'
+        env:
+          GITCODE_MIRROR_URL: ${{ secrets.GITCODE_MIRROR_URL }}
+          GITCODE_USERNAME: ${{ secrets.GITCODE_USERNAME }}
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import os, subprocess, urllib.parse
+
+          raw_url = os.environ["GITCODE_MIRROR_URL"].strip()
+          user = os.environ.get("GITCODE_USERNAME", "oauth2").strip() or "oauth2"
+          token = os.environ["GITCODE_TOKEN"].strip()
+          parsed = urllib.parse.urlparse(raw_url)
+          if parsed.scheme not in ("https", "http") or not parsed.netloc:
+              raise SystemExit("GITCODE_MIRROR_URL must be an https:// URL")
+          authed = parsed._replace(
+              netloc=f"{urllib.parse.quote(user, safe='')}:{urllib.parse.quote(token, safe='')}@{parsed.netloc}"
+          ).geturl()
+          subprocess.run(["git", "push", "--force", authed, "HEAD:refs/heads/main"], check=True)
+          subprocess.run(["git", "push", "--tags", authed], check=True)
+          PY

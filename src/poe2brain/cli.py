@@ -3722,13 +3722,204 @@ def bootstrap_pob2_cmd(
     force: Annotated[
         bool, typer.Option("--force", help="Force re-seed/rebuild of LuaJIT + PathOfBuilding-PoE2.")
     ] = False,
+    cn: Annotated[
+        bool,
+        typer.Option("--cn", help="Prefer China GitHub mirrors before falling back to github.com."),
+    ] = False,
+    mirror: Annotated[
+        str | None,
+        typer.Option(
+            "--mirror", help="Custom GitHub mirror prefix URL (e.g. https://ghfast.top/)."
+        ),
+    ] = None,
     json_output: JsonOpt = False,
 ) -> None:
     """Bootstrap local headless LuaJIT + PathOfBuilding-PoE2 runtime."""
     _run_cli(
         json_output,
-        lambda: run_bootstrap_script(force=force),
+        lambda: run_bootstrap_script(force=force, cn=cn, mirror=mirror),
         lambda d: console.print(d["output"]),
+    )
+
+
+@app.command("doctor")
+def doctor_cmd(
+    network: Annotated[
+        bool,
+        typer.Option("--network", help="Probe GitHub and China mirror (Aliyun/NJU) reachability."),
+    ] = False,
+    json_output: JsonOpt = False,
+) -> None:
+    """Diagnose local poe2brain paths, uv, PoB2 runtime, AI clients, and mirror reachability."""
+    from poe2brain.setup_tools import run_doctor
+
+    def _render(d: dict[str, Any]) -> None:
+        badge = (
+            "[bold green]OK[/bold green]" if d["ok"] else "[bold yellow]ISSUES FOUND[/bold yellow]"
+        )
+        console.print(f"[bold cyan]poe2brain doctor[/bold cyan] — {badge} (PoE2 {d['patch']})")
+        console.print(f"  Repo dir     : {d['repo_dir']}")
+        console.print(f"  uv path      : {d['uv_path'] or '[red]missing[/red]'}")
+        db_ok = "[green]ready[/green]" if d["gamedata_db_ready"] else "[red]missing[/red]"
+        pob_ok = "[green]ready[/green]" if d["pob2_runtime_ready"] else "[red]missing[/red]"
+        console.print(f"  Gamedata DB  : {db_ok}")
+        console.print(f"  PoB2 runtime : {pob_ok}")
+        console.print(f"  Cache dir    : {d['cache_dir']} ({d['cache_size_mb']} MB)")
+        detected = [k for k, v in d["clients"].items() if v["detected"]] or ["none"]
+        configured = [k for k, v in d["clients"].items() if v["configured"]] or ["none"]
+        console.print(f"  AI clients   : detected={detected} | configured={configured}")
+        if d.get("network"):
+            for k, v in d["network"].items():
+                st = (
+                    f"[green]OK ({v.get('status')})[/green]"
+                    if v["ok"]
+                    else f"[red]FAIL ({v.get('error')})[/red]"
+                )
+                console.print(f"  Net {k:<17}: {st}")
+        for issue in d["issues"]:
+            console.print(f"  [yellow]! {issue['message']}[/yellow]")
+            console.print(f"    Fix: [cyan]{issue['fix']}[/cyan]")
+
+    _run_cli(json_output, lambda: run_doctor(check_network=network), _render)
+
+
+@app.command("setup-mcp")
+def setup_mcp_cmd(
+    client: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--client",
+            "-c",
+            help="Target AI client(s): cursor, trae, claude, codex, cherry, all. Repeatable.",
+        ),
+    ] = None,
+    profile: Annotated[
+        str,
+        typer.Option(
+            "--profile",
+            help="MCP profile: 'full' (45 tools) or 'core' (17 tools, great for DeepSeek/Qwen).",
+        ),
+    ] = "full",
+    copy: Annotated[
+        bool,
+        typer.Option(
+            "--copy",
+            help="Copy generated JSON snippet to system clipboard (great for Cherry Studio).",
+        ),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Preview changes without modifying any config files."),
+    ] = False,
+    json_output: JsonOpt = False,
+) -> None:
+    """Zero-JSON MCP setup wizard for Cursor, Trae, Claude Code, Codex, and Cherry Studio."""
+    from poe2brain.setup_tools import setup_mcp_clients
+
+    targets = list(client) if client else ["cursor", "cherry"]
+
+    def _render(d: dict[str, Any]) -> None:
+        console.print(
+            f"[bold green]MCP setup ready[/bold green] (profile=[cyan]{d['profile']}[/cyan], "
+            f"{d['tool_count']} tools, dry_run={d['dry_run']})"
+        )
+        for name, info in d["clients"].items():
+            if name == "cherry":
+                clip_note = "（已复制到剪贴板！）" if info.get("copied_to_clipboard") else ""
+                console.print(f"  [bold]Cherry Studio[/bold] {clip_note}")
+                for step in info["steps_zh"]:
+                    console.print(f"    • {step}")
+            elif isinstance(info, list):
+                for item in info:
+                    console.print(
+                        f"  [bold]{name}[/bold] -> {item['path']} (written={item['written']})"
+                    )
+            else:
+                console.print(
+                    f"  [bold]{name}[/bold] -> {info['path']} (written={info['written']})"
+                )
+        if "cherry" in d["clients"] or dry_run:
+            console.print("\n[dim]JSON snippet:[/dim]")
+            console.print(d["json_snippet"])
+
+    _run_cli(
+        json_output,
+        lambda: setup_mcp_clients(targets, profile=profile, dry_run=dry_run, copy_clipboard=copy),
+        _render,
+    )
+
+
+@app.command("update")
+def update_cmd(
+    cn: Annotated[
+        bool,
+        typer.Option(
+            "--cn", help="Use China mirrors (Aliyun PyPI + NJU Python + GitHub mirror fallback)."
+        ),
+    ] = False,
+    mirror: Annotated[
+        str | None,
+        typer.Option("--mirror", help="Custom GitHub mirror prefix URL."),
+    ] = None,
+    force_pob2: Annotated[
+        bool,
+        typer.Option(
+            "--force-pob2",
+            help="Force refresh of the headless PoB2 runtime (recommended on 1.0 launch).",
+        ),
+    ] = False,
+    json_output: JsonOpt = False,
+) -> None:
+    """One-command upgrade (git pull + uv sync + bootstrap pob2) for patch updates like 1.0."""
+    from poe2brain.setup_tools import run_update
+
+    def _render(d: dict[str, Any]) -> None:
+        if d["ok"]:
+            console.print(f"[bold green]poe2brain updated[/bold green] (PoE2 {d['patch']})")
+        else:
+            console.print(f"[bold red]Update failed:[/bold red] {d.get('error')}")
+        for s in d["steps"]:
+            console.print(
+                f"  • {s['step']}: {'OK' if s.get('ok') or s.get('skipped') else 'FAILED'}"
+            )
+
+    _run_cli(json_output, lambda: run_update(cn=cn, mirror=mirror, force_pob2=force_pob2), _render)
+
+
+@app.command("uninstall")
+def uninstall_cmd(
+    keep_cache: Annotated[
+        bool,
+        typer.Option("--keep-cache", help="Keep ~/.cache/poe2brain instead of deleting it."),
+    ] = False,
+    keep_mcp: Annotated[
+        bool,
+        typer.Option("--keep-mcp", help="Leave MCP entries in AI client configs untouched."),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Preview what would be removed without deleting anything."),
+    ] = False,
+    json_output: JsonOpt = False,
+) -> None:
+    """Cleanly remove poe2brain MCP entries and local cache (zero Windows registry edits)."""
+    from poe2brain.setup_tools import run_uninstall
+
+    def _render(d: dict[str, Any]) -> None:
+        prefix = "[DRY RUN] " if d["dry_run"] else ""
+        console.print(f"[bold cyan]{prefix}poe2brain uninstall summary[/bold cyan]")
+        console.print(f"  MCP configs cleaned : {d['removed_mcp_configs'] or ['none']}")
+        console.print(f"  Cache removed       : {d['cache_removed']} ({d['cache_dir']})")
+        console.print(
+            f"  Final step (delete repo folder): [yellow]{d['final_step_delete_repo']}[/yellow]"
+        )
+
+    _run_cli(
+        json_output,
+        lambda: run_uninstall(
+            remove_cache=not keep_cache, remove_mcp=not keep_mcp, dry_run=dry_run
+        ),
+        _render,
     )
 
 

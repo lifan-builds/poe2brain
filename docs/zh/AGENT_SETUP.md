@@ -6,7 +6,17 @@
 
 ## 1. 各大 AI 客户端一键接入
 
-> 注意：把下面路径里的 `/ABSOLUTE/PATH/TO/poe2brain`（或 Windows 的 `C:/dev/poe2brain`，**推荐用正斜杠 `/`**）换成你电脑上的实际目录。
+> **零手写 JSON（推荐）：** 在 `poe2brain` 目录直接运行一键配置命令，自动填入 `uv` 绝对路径（根治 Windows GUI 找不到 `uv` 报错），省去手改 JSON：
+> ```bash
+> # Cherry Studio + DeepSeek/豆包/Qwen（精简 17 核心工具并自动复制到剪贴板，去软件里「从 JSON 导入」粘贴即可）
+> uv run poe2 setup-mcp --client cherry --profile core --copy
+> # Trae / Cursor / Claude Code / Codex 自动写入配置文件
+> uv run poe2 setup-mcp --client trae --profile core
+> uv run poe2 setup-mcp --client cursor
+> ```
+> 详细国内免费方案（Trae 国内版 / Cherry Studio + 硅基流动/DeepSeek）见 **[国内免代理一键装 & 零 JSON 接入指南](CN_FREE_SETUP.md)**。
+
+> 手动配置注意：把下面路径里的 `/ABSOLUTE/PATH/TO/poe2brain`（或 Windows 的 `C:/dev/poe2brain`，**推荐用正斜杠 `/`**）换成你电脑上的实际目录。
 
 ### Claude Code（最推荐）
 直接在 `poe2brain` 目录启动 `claude` 会自动加载仓库内的 `.mcp.json`；如果想在任意目录都能用，运行一行命令全局注册：

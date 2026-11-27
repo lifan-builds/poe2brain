@@ -90,6 +90,7 @@ from poe2brain.trade import (
 )
 
 _MCP_TOOL_REGISTRY: list[Callable[..., Any]] = []
+_MCP_SERVERS: dict[str, Any] = {}
 
 
 def _mcp_tool(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -97,11 +98,21 @@ def _mcp_tool(fn: Callable[..., Any]) -> Callable[..., Any]:
     return fn
 
 
-def get_mcp_server() -> Any:
-    """Lazily import FastMCP and register all MCP tools (avoids ~300ms CLI cold-start tax)."""
-    existing = globals().get("mcp")
-    if existing is not None:
-        return existing
+def get_mcp_server(profile: str = "full") -> Any:
+    """Lazily import FastMCP and register MCP tools for `full` (45) or `core` (17) profile."""
+    from poe2brain.setup_tools import CORE_MCP_TOOL_NAMES, SUPPORTED_MCP_PROFILES
+
+    prof = (profile or "full").strip().lower()
+    if prof not in SUPPORTED_MCP_PROFILES:
+        raise ValueError(
+            f"Unsupported MCP profile {profile!r}; expected one of {SUPPORTED_MCP_PROFILES}"
+        )
+    if prof == "full":
+        existing = globals().get("mcp")
+        if existing is not None:
+            return existing
+    if prof in _MCP_SERVERS:
+        return _MCP_SERVERS[prof]
     from mcp.server.fastmcp import FastMCP
 
     server = FastMCP(
@@ -111,8 +122,12 @@ def get_mcp_server() -> Any:
     )
     server._mcp_server.version = __version__
     for fn in _MCP_TOOL_REGISTRY:
+        if prof == "core" and fn.__name__ not in CORE_MCP_TOOL_NAMES:
+            continue
         server.tool()(fn)
-    globals()["mcp"] = server
+    _MCP_SERVERS[prof] = server
+    if prof == "full":
+        globals()["mcp"] = server
     return server
 
 
@@ -859,14 +874,14 @@ def poe2_search_knowledge(
 
 
 @_mcp_tool
-def poe2_explain_mechanic(
-    topic: str, limit: int = 4, compact: bool = False
-) -> dict[str, Any]:
+def poe2_explain_mechanic(topic: str, limit: int = 4, compact: bool = False) -> dict[str, Any]:
     """Return Patch 0.5.5 MechanicFact (poe1_trap, poe2_live_rule, formula) and GGG keywords."""
     return _safe_tool_call(
-        lambda: get_knowledge_service()
-        .explain_mechanic(topic, limit=limit, compact=compact)
-        .model_dump(mode="json")
+        lambda: (
+            get_knowledge_service()
+            .explain_mechanic(topic, limit=limit, compact=compact)
+            .model_dump(mode="json")
+        )
     )
 
 
@@ -3215,10 +3230,15 @@ def poe2_filter_heal(
     )
 
 
-def run_bootstrap_script(*, force: bool = False) -> dict[str, Any]:
+def run_bootstrap_script(
+    *,
+    force: bool = False,
+    cn: bool = False,
+    mirror: str | None = None,
+) -> dict[str, Any]:
     from poe2brain.pob.bootstrap import bootstrap_pob2_runtime
 
-    paths = bootstrap_pob2_runtime(force=force)
+    paths = bootstrap_pob2_runtime(force=force, cn=cn, mirror=mirror)
     status = collect_engine_status()
     return {
         "ok": True,
@@ -3321,14 +3341,27 @@ def run_with_service_cleanup(entry_fn: Callable[[], Any]) -> None:
             signal.signal(signal.SIGTERM, prev_sigterm)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    import argparse
+
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             try:
                 stream.reconfigure(encoding="utf-8", errors="replace")
             except Exception:
                 pass
-    run_with_service_cleanup(get_mcp_server().run)
+    parser = argparse.ArgumentParser(prog="poe2brain-mcp")
+    parser.add_argument(
+        "--profile",
+        choices=("full", "core"),
+        default=os.environ.get("POE2BRAIN_MCP_PROFILE", "full").strip().lower() or "full",
+        help=(
+            "MCP tool profile: 'full' (all 45 tools) or 'core' "
+            "(17 high-frequency tools for DeepSeek/Qwen/small models)."
+        ),
+    )
+    parsed = parser.parse_args(argv)
+    run_with_service_cleanup(get_mcp_server(profile=parsed.profile).run)
 
 
 if __name__ == "__main__":

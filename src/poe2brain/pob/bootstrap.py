@@ -38,10 +38,76 @@ from poe2brain.config import (
     Pob2RuntimePaths,
     get_pob2_paths,
 )
+from poe2brain.setup_tools import CN_GITHUB_MIRRORS
 
 POB2_UPSTREAM_REPO = "https://github.com/PathOfBuildingCommunity/PathOfBuilding-PoE2"
 POB2_UPSTREAM_GIT = f"{POB2_UPSTREAM_REPO}.git"
 BOOTSTRAP_SCRIPT_PATH: Path = REPO_ROOT / "scripts" / "bootstrap_pob2.sh"
+
+
+def _candidate_github_urls(
+    raw_url: str,
+    *,
+    cn: bool = False,
+    mirror: str | None = None,
+) -> list[str]:
+    """Return ordered download URLs honoring explicit mirror, --cn, and automatic fallback."""
+    explicit = (mirror or os.environ.get("POE2BRAIN_GITHUB_MIRROR", "")).strip()
+    urls: list[str] = []
+
+    def _prefixed(prefix: str) -> str:
+        clean = prefix.rstrip("/") + "/"
+        return f"{clean}{raw_url}"
+
+    if explicit:
+        urls.append(_prefixed(explicit))
+        urls.append(raw_url)
+    elif cn:
+        for m in CN_GITHUB_MIRRORS:
+            urls.append(_prefixed(m))
+        urls.append(raw_url)
+    else:
+        urls.append(raw_url)
+        for m in CN_GITHUB_MIRRORS:
+            urls.append(_prefixed(m))
+    return list(dict.fromkeys(urls))
+
+
+def _download_with_mirror_fallback(
+    raw_url: str,
+    dest_path: Path,
+    *,
+    cn: bool = False,
+    mirror: str | None = None,
+    timeout: float = 180.0,
+) -> str:
+    """Download a GitHub archive with automatic mirror fallback on network errors."""
+    candidates = _candidate_github_urls(raw_url, cn=cn, mirror=mirror)
+    errors: list[str] = []
+    with httpx.Client(
+        headers={"User-Agent": USER_AGENT},
+        follow_redirects=True,
+        timeout=timeout,
+    ) as client:
+        for url in candidates:
+            try:
+                with client.stream("GET", url) as resp:
+                    resp.raise_for_status()
+                    with dest_path.open("wb") as fh:
+                        for chunk in resp.iter_bytes(chunk_size=131072):
+                            fh.write(chunk)
+                return url
+            except Exception as exc:
+                errors.append(f"{url} -> {exc}")
+                if dest_path.exists():
+                    dest_path.unlink(missing_ok=True)
+    joined = "; ".join(errors)
+    raise RuntimeError(
+        f"Failed to download {raw_url} from all sources ({joined}). "
+        "China users: retry with `uv run poe2 bootstrap pob2 --cn`, set "
+        "`POE2BRAIN_GITHUB_MIRROR`, or point `POE2BRAIN_POB2_APP_DIR` to desktop PoB2."
+    )
+
 
 _SMOKE_LUA = r"""
 local count = 1
@@ -81,6 +147,14 @@ def _windows_existing_pob2_candidates() -> list[Path]:
                 b / "Path of Building (PoE2)",
             ]
         )
+    for drive in ("C:", "D:", "E:"):
+        candidates.extend(
+            [
+                Path(f"{drive}/Path of Building Community (PoE2)"),
+                Path(f"{drive}/Games/Path of Building Community (PoE2)"),
+                Path(f"{drive}/PoB2"),
+            ]
+        )
     return candidates
 
 
@@ -93,20 +167,19 @@ def _is_valid_windows_pob2_tree(root: Path) -> bool:
     )
 
 
-def _download_pob2_archive(dest_repo_dir: Path, ref: str) -> str:
+def _download_pob2_archive(
+    dest_repo_dir: Path,
+    ref: str,
+    *,
+    cn: bool = False,
+    mirror: str | None = None,
+) -> str:
     url = f"{POB2_UPSTREAM_REPO}/archive/{ref}.zip"
     with tempfile.TemporaryDirectory(prefix="p2b_pob2_dl_") as td:
         zip_path = Path(td) / "pob2.zip"
-        with httpx.Client(
-            headers={"User-Agent": USER_AGENT},
-            follow_redirects=True,
-            timeout=180.0,
-        ) as client:
-            with client.stream("GET", url) as resp:
-                resp.raise_for_status()
-                with zip_path.open("wb") as fh:
-                    for chunk in resp.iter_bytes(chunk_size=131072):
-                        fh.write(chunk)
+        used_url = _download_with_mirror_fallback(
+            url, zip_path, cn=cn, mirror=mirror, timeout=180.0
+        )
 
         extract_root = Path(td) / "extracted"
         with zipfile.ZipFile(zip_path) as zf:
@@ -114,14 +187,16 @@ def _download_pob2_archive(dest_repo_dir: Path, ref: str) -> str:
 
         top_dirs = [p for p in extract_root.iterdir() if p.is_dir()]
         if not top_dirs:
-            raise RuntimeError(f"Downloaded PoB2 archive from {url} contained no root directory")
+            raise RuntimeError(
+                f"Downloaded PoB2 archive from {used_url} contained no root directory"
+            )
         src_root = top_dirs[0]
 
         if dest_repo_dir.exists():
             shutil.rmtree(dest_repo_dir)
         dest_repo_dir.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src_root), str(dest_repo_dir))
-    return ref
+    return used_url
 
 
 def _smoke_test_windows_runtime(paths: Pob2RuntimePaths) -> bool:
@@ -155,7 +230,13 @@ def _smoke_test_posix_runtime(paths: Pob2RuntimePaths) -> bool:
     return proc.returncode == 0
 
 
-def _bootstrap_windows(paths: Pob2RuntimePaths, *, force: bool = False) -> Pob2RuntimePaths:
+def _bootstrap_windows(
+    paths: Pob2RuntimePaths,
+    *,
+    force: bool = False,
+    cn: bool = False,
+    mirror: str | None = None,
+) -> Pob2RuntimePaths:
     paths.root_dir.mkdir(parents=True, exist_ok=True)
     paths.bin_dir.mkdir(parents=True, exist_ok=True)
 
@@ -177,7 +258,8 @@ def _bootstrap_windows(paths: Pob2RuntimePaths, *, force: bool = False) -> Pob2R
                 reused = True
                 break
         if not reused:
-            _download_pob2_archive(paths.repo_dir, ref)
+            used_url = _download_pob2_archive(paths.repo_dir, ref, cn=cn, mirror=mirror)
+            source_note = f"archive:{used_url}"
 
     # Mirror DLLs into bin_dir for consistent layout checks
     for dll_name in ("lua51.dll", "lua-utf8.dll", "zlib1.dll"):
@@ -210,7 +292,12 @@ def _bootstrap_windows(paths: Pob2RuntimePaths, *, force: bool = False) -> Pob2R
 
 
 def _bootstrap_posix_python(
-    paths: Pob2RuntimePaths, *, force: bool = False, timeout: float = 240.0
+    paths: Pob2RuntimePaths,
+    *,
+    force: bool = False,
+    timeout: float = 240.0,
+    cn: bool = False,
+    mirror: str | None = None,
 ) -> Pob2RuntimePaths:
     paths.root_dir.mkdir(parents=True, exist_ok=True)
     paths.bin_dir.mkdir(parents=True, exist_ok=True)
@@ -220,21 +307,14 @@ def _bootstrap_posix_python(
             td_path = Path(td)
             lj_tar = td_path / "luajit.tar.gz"
             u8_tar = td_path / "luautf8.tar.gz"
-            with httpx.Client(
-                headers={"User-Agent": USER_AGENT},
-                follow_redirects=True,
-                timeout=120.0,
-            ) as client:
-                for url, dst in (
-                    (f"https://github.com/LuaJIT/LuaJIT/archive/{LUAJIT_COMMIT}.tar.gz", lj_tar),
-                    (
-                        f"https://github.com/starwing/luautf8/archive/refs/tags/{LUAUTF8_VERSION}.tar.gz",
-                        u8_tar,
-                    ),
-                ):
-                    r = client.get(url)
-                    r.raise_for_status()
-                    dst.write_bytes(r.content)
+            for url, dst in (
+                (f"https://github.com/LuaJIT/LuaJIT/archive/{LUAJIT_COMMIT}.tar.gz", lj_tar),
+                (
+                    f"https://github.com/starwing/luautf8/archive/refs/tags/{LUAUTF8_VERSION}.tar.gz",
+                    u8_tar,
+                ),
+            ):
+                _download_with_mirror_fallback(url, dst, cn=cn, mirror=mirror, timeout=120.0)
 
             lj_dir = td_path / "luajit"
             u8_dir = td_path / "luautf8"
@@ -286,7 +366,7 @@ def _bootstrap_posix_python(
     if force and paths.repo_dir.exists():
         shutil.rmtree(paths.repo_dir)
     if not (paths.src_dir / "HeadlessWrapper.lua").is_file():
-        _download_pob2_archive(paths.repo_dir, ref)
+        _download_pob2_archive(paths.repo_dir, ref, cn=cn, mirror=mirror)
 
     if not paths.is_ready:
         raise RuntimeError(
@@ -300,6 +380,8 @@ def bootstrap_pob2_runtime(
     pob2_dir: Path | None = None,
     force: bool = False,
     timeout: float = 240.0,
+    cn: bool = False,
+    mirror: str | None = None,
 ) -> Pob2RuntimePaths:
     """Provision the headless PathOfBuilding-PoE2 runtime on Windows, macOS, or Linux."""
     paths = get_pob2_paths(pob2_dir)
@@ -307,9 +389,10 @@ def bootstrap_pob2_runtime(
         return paths
 
     if os.name == "nt":
-        return _bootstrap_windows(paths, force=force)
+        return _bootstrap_windows(paths, force=force, cn=cn, mirror=mirror)
 
-    if BOOTSTRAP_SCRIPT_PATH.is_file():
+    use_mirror = cn or bool(mirror or os.environ.get("POE2BRAIN_GITHUB_MIRROR", "").strip())
+    if BOOTSTRAP_SCRIPT_PATH.is_file() and not use_mirror:
         env = os.environ.copy()
         if pob2_dir is not None:
             env["POE2BRAIN_CACHE_DIR"] = str(pob2_dir.parent)
@@ -330,4 +413,4 @@ def bootstrap_pob2_runtime(
             raise RuntimeError(f"bootstrap_pob2.sh failed (rc={proc.returncode}): {detail}")
         return refreshed
 
-    return _bootstrap_posix_python(paths, force=force, timeout=timeout)
+    return _bootstrap_posix_python(paths, force=force, timeout=timeout, cn=cn, mirror=mirror)

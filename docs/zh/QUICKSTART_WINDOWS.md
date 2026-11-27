@@ -4,7 +4,17 @@
 
 `poe2brain` 专门针对 Windows 玩家做了零编译适配：初始化无头 Path of Building 2 引擎时，会自动检测你电脑里已安装的桌面版 PoB2，或者自动拉取合规的 MIT 开源 x64 `lua51.dll` 运行时，全程纯命令行 3 分钟跑通。
 
-> **懒人最快方式（不懂命令行也能用）：** 如果你已经装了 **Cursor / Claude Code / Codex / Antigravity**，直接把下面这句话发给它，让 AI 全自动帮你执行下面所有步骤：
+> **国内直连免代理一键装（推荐）：** 直接在 PowerShell 运行仓库自带的国内镜像脚本（自动配置南京大学 Python 镜像 + 阿里云 PyPI 镜像 + GitHub 镜像兜底，无 Git 也能装）：
+> ```powershell
+> powershell -ExecutionPolicy ByPass -File .\scripts\install_cn.ps1
+> ```
+> 或在线一行拉取并安装（详见 **[国内免代理一键装 &amp; Cherry Studio / Trae 零 JSON 接入指南](CN_FREE_SETUP.md)**）：
+> ```powershell
+> powershell -ExecutionPolicy ByPass -c "irm https://ghfast.top/https://raw.githubusercontent.com/lifan-builds/poe2brain/main/scripts/install_cn.ps1 | iex"
+> ```
+> 装完直接跑 `uv run poe2 setup-mcp --client cherry --profile core --copy`（或 `--client trae` / `cursor`）即可零 JSON 接入；排错用 `uv run poe2 doctor --network`，后续升 1.0 用 `uv run poe2 update --cn --force-pob2`，卸载用 `uv run poe2 uninstall`。
+
+> **懒人最快方式（不懂命令行也能用）：** 如果你已经装了 **Cursor / Claude Code / Codex / Antigravity / Trae**，直接把下面这句话发给它，让 AI 全自动帮你执行下面所有步骤：
 >
 > > *「帮我把 `https://github.com/lifan-builds/poe2brain` 克隆到 `C:\dev\poe2brain`，按 `docs/zh/QUICKSTART_WINDOWS.md` 装好 `uv`、执行 `uv sync` 和 `uv run poe2 bootstrap pob2`，最后跑 `uv run poe2 version --json` 确认成功并帮我配好 MCP。」*
 

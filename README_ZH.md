@@ -19,6 +19,7 @@
 <p>
   <a href="README.md">English</a> ·
   <a href="README_ZH.md"><strong>简体中文</strong></a> ·
+  <a href="docs/zh/CN_FREE_SETUP.md"><strong>国内免代理一键装 &amp; 零 JSON 接入</strong></a> ·
   <a href="docs/zh/QUICKSTART_WINDOWS.md"><strong>Windows 零编译保姆教程</strong></a> ·
   <a href="docs/zh/AGENT_SETUP.md"><strong>AI 客户端接入 &amp; 提示词</strong></a> ·
   <a href="docs/zh/PLAYBOOKS.md"><strong>六大实战工作流手册</strong></a>
@@ -132,7 +133,9 @@ flowchart TB
 
 ## Windows / macOS 3 分钟上手
 
-> **不会命令行？最省心的方法（推荐）：** 直接把下面这句话发给你的 AI 编程/桌面客户端（**Claude Code / Cursor / Codex / Antigravity**），让 AI 全自动帮你装好：
+> **国内直连卡顿 / 没有付费 Claude？** 见 **[国内免代理一键装 &amp; Cherry Studio / Trae + DeepSeek 零 JSON 接入指南](docs/zh/CN_FREE_SETUP.md)**：自带阿里云/南京大学镜像脚本 `scripts/install_cn.ps1`、`poe2 setup-mcp --profile core`（精简 17 工具适配国产模型）、`poe2 doctor` 自检、`poe2 update --cn`（1.0 一键更新）与 `poe2 uninstall` 一键卸载。
+>
+> **不会命令行？最省心的方法（推荐）：** 直接把下面这句话发给你的 AI 编程/桌面客户端（**Claude Code / Cursor / Codex / Antigravity / Trae**），让 AI 全自动帮你装好：
 >
 > > *「请帮我克隆 `https://github.com/lifan-builds/poe2brain`，按照里面的 `docs/zh/QUICKSTART_WINDOWS.md` 帮我装好 `uv`、执行 `uv sync`、`uv run poe2 bootstrap pob2`，验证 `uv run poe2 version --json` 通过后帮我接好 MCP。」*
 >
