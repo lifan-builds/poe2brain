@@ -153,9 +153,14 @@ def test_journey11_vendor_sekhema_relic_and_tablet_regex_under_50_chars() -> Non
         archetypes="ci",
         vendor_preset="salvage_sockets",
         relic_preset="sekhema_starter",
+        stash_want_keywords="movement speed,spirit,rarity of items",
     )
     assert mcp_out["vendor_regex"]["within_client_limit"] is True
     assert mcp_out["relic_regex"]["within_client_limit"] is True
+    assert mcp_out["custom_stash_regex"] is not None
+    assert mcp_out["custom_stash_regex"]["within_client_limit"] is True
+    assert mcp_out["custom_stash_regex"]["char_length"] <= 50
+    assert mcp_out["custom_stash_regex"]["false_negatives"] == 0
 
 
 def test_journey14_boss_ev_and_zh_economy_and_tablet_jewel_profit_recipes(

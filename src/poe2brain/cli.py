@@ -642,6 +642,27 @@ def wiki_regex_cmd(
         list[str] | None,
         typer.Option("--relic-want", help="Custom Sekhema Relic mod keywords (CSV/repeatable)."),
     ] = None,
+    stash_want: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--stash-want",
+            help="General PoE2 stash/vendor/crafting desired mod/base keywords (CSV/repeatable).",
+        ),
+    ] = None,
+    stash_avoid: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--stash-avoid",
+            help="General PoE2 stash/vendor/crafting unwanted mod keywords to exclude (CSV).",
+        ),
+    ] = None,
+    stash_base: Annotated[
+        str | None,
+        typer.Option(
+            "--stash-base",
+            help="Optional item base/class filter for --stash-want (e.g. Boots, Wands, Bows).",
+        ),
+    ] = None,
     min_waystone_drop: Annotated[
         int, typer.Option("--min-waystone-drop", help="Minimum +Waystone Drop Chance %.")
     ] = 120,
@@ -677,6 +698,9 @@ def wiki_regex_cmd(
             vendor_want_keywords=vendor_want,
             relic_preset=relic_preset,
             relic_want_keywords=relic_want,
+            stash_want_keywords=stash_want,
+            stash_avoid_keywords=stash_avoid,
+            stash_base_group=stash_base,
             min_waystone_drop_pct=min_waystone_drop,
             min_pack_size_pct=min_pack_size,
             item_text=raw_ws,
@@ -688,12 +712,13 @@ def wiki_regex_cmd(
         arch_s = ", ".join(data.get("detected_archetypes") or []) or "default_mapper"
         console.print(f"[bold cyan]PoE2 0.5.5 Stash Regex Plan[/bold cyan] (archetypes: {arch_s})")
         for key, label in (
-            ("brick_regex", "Brick Highlight"),
-            ("safe_runnable_regex", "Safe Runnable"),
-            ("juicing_regex", "Waystone Juicing"),
-            ("tablet_regex", "Tablet Rolling"),
+            ("custom_stash_regex", "Custom Stash"),
             ("vendor_regex", "Vendor Shopping"),
+            ("tablet_regex", "Tablet Rolling"),
             ("relic_regex", "Sekhema Relics"),
+            ("juicing_regex", "Waystone Juicing"),
+            ("safe_runnable_regex", "Safe Runnable"),
+            ("brick_regex", "Brick Highlight"),
         ):
             rx = data.get(key)
             if not rx:

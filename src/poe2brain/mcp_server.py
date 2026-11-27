@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
-from mcp.server.fastmcp import FastMCP
 
 from poe2brain import ATTRIBUTION, LICENSE_SPDX, LICENSE_SUMMARY, __version__
 from poe2brain.config import (
@@ -87,14 +86,42 @@ from poe2brain.trade import (
     TradeAdvisor,
     parse_clipboard_item,
     parsed_item_to_pob2_text,
+    split_multi_item_clipboard_dump,
 )
 
-mcp = FastMCP(
-    "poe2brain",
-    instructions=f"{ATTRIBUTION}. License: {LICENSE_SUMMARY}.",
-    website_url=REPO_URL,
-)
-mcp._mcp_server.version = __version__
+_MCP_TOOL_REGISTRY: list[Callable[..., Any]] = []
+
+
+def _mcp_tool(fn: Callable[..., Any]) -> Callable[..., Any]:
+    _MCP_TOOL_REGISTRY.append(fn)
+    return fn
+
+
+def get_mcp_server() -> Any:
+    """Lazily import FastMCP and register all MCP tools (avoids ~300ms CLI cold-start tax)."""
+    existing = globals().get("mcp")
+    if existing is not None:
+        return existing
+    from mcp.server.fastmcp import FastMCP
+
+    server = FastMCP(
+        "poe2brain",
+        instructions=f"{ATTRIBUTION}. License: {LICENSE_SUMMARY}.",
+        website_url=REPO_URL,
+    )
+    server._mcp_server.version = __version__
+    for fn in _MCP_TOOL_REGISTRY:
+        server.tool()(fn)
+    globals()["mcp"] = server
+    return server
+
+
+def __getattr__(name: str) -> Any:
+    if name == "mcp":
+        return get_mcp_server()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
@@ -326,17 +353,6 @@ def normalize_item_text_for_pob2(raw_text: str) -> str:
     return stripped
 
 
-_ITEM_CLASS_HEADER_RE = re.compile(
-    r"^(?:Item Class|物\s*品\s*(?:類\s*別|类\s*别|種\s*類|种\s*类))\s*[:：]\s*\S", re.I
-)
-_RARITY_HEADER_RE = re.compile(
-    r"^(?:Rarity\s*:\s*(?:Normal|Magic|Rare|Unique|Currency|Gem|Divination Card)\b"
-    r"|稀\s*有\s*度\s*[:：]\s*\S)",
-    re.I,
-)
-_DUMP_DIVIDER_ONLY_RE = re.compile(r"^[=#*~_]{3,}$")
-
-
 def _coerce_str_list(val: Sequence[str] | str | None) -> list[str]:
     if val is None:
         return []
@@ -385,65 +401,6 @@ def _parse_callouts_arg(
             raise ValueError(f"Expected non-empty tier=text for custom callout, got {entry!r}")
         parsed[tier_k.strip()] = phrase.strip()
     return parsed
-
-
-def split_multi_item_clipboard_dump(items: Sequence[str] | str) -> list[str]:
-    """Split a multi-item paste string or sequence into clean per-item Ctrl+C strings."""
-    raw_blocks = [items] if isinstance(items, str) else [str(x) for x in items]
-    split_items: list[str] = []
-
-    for block in raw_blocks:
-        if not block or not block.strip():
-            continue
-        lines = block.splitlines()
-        has_headers = any(
-            _ITEM_CLASS_HEADER_RE.match(ln.strip()) or _RARITY_HEADER_RE.match(ln.strip())
-            for ln in lines
-        )
-        if not has_headers:
-            for sub in re.split(r"\n\s*\n+", block.strip()):
-                if sub.strip():
-                    split_items.append(sub.strip())
-            continue
-
-        chunks: list[list[str]] = []
-        current: list[str] = []
-        last_non_empty = ""
-
-        for ln in lines:
-            stripped = ln.strip()
-            if _DUMP_DIVIDER_ONLY_RE.match(stripped):
-                continue
-            if _ITEM_CLASS_HEADER_RE.match(stripped):
-                if any(x.strip() for x in current):
-                    chunks.append(current)
-                    current = []
-                current.append(ln)
-                last_non_empty = stripped
-            elif _RARITY_HEADER_RE.match(stripped):
-                if any(x.strip() for x in current) and not _ITEM_CLASS_HEADER_RE.match(
-                    last_non_empty
-                ):
-                    chunks.append(current)
-                    current = []
-                current.append(ln)
-                last_non_empty = stripped
-            else:
-                current.append(ln)
-                if stripped:
-                    last_non_empty = stripped
-
-        if any(x.strip() for x in current):
-            chunks.append(current)
-
-        for chunk in chunks:
-            joined = "\n".join(chunk).strip()
-            if joined:
-                split_items.append(joined)
-
-    if not split_items:
-        raise ValueError("Provide at least one PoE2 Ctrl+C item to triage.")
-    return split_items
 
 
 def resolve_live_crafting_prices(
@@ -875,13 +832,13 @@ def execute_find_upgrades(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_status() -> dict[str, Any]:
     """Verify PoE2 0.5.5 patch, default league, SQLite DB, and headless PoB2 readiness."""
     return _safe_tool_call(lambda: collect_engine_status().model_dump(mode="json"))
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_search_knowledge(
     query: str,
     category: str | None = None,
@@ -901,7 +858,7 @@ def poe2_search_knowledge(
     return _safe_tool_call(_run)
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_explain_mechanic(
     topic: str, limit: int = 4, compact: bool = False
 ) -> dict[str, Any]:
@@ -913,7 +870,7 @@ def poe2_explain_mechanic(
     )
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_inspect_gem(name: str) -> dict[str, Any]:
     """Inspect PoE2 active, Spirit, Meta, Tiered Support (I/II/III), and Lineage Support gems."""
     return _safe_tool_call(
@@ -921,7 +878,7 @@ def poe2_inspect_gem(name: str) -> dict[str, Any]:
     )
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_inspect_base(name: str, ilvl: int = 82) -> dict[str, Any]:
     """Inspect PoE2 base stats, implicits, T1 (display_tier=1) affixes, and PoE1/'Expert' traps."""
     return _safe_tool_call(
@@ -929,7 +886,7 @@ def poe2_inspect_base(name: str, ilvl: int = 82) -> dict[str, Any]:
     )
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_inspect_unique(name: str) -> dict[str, Any]:
     """Inspect PoE2 unique item base type, implicits, explicits, and is_chanceable status."""
     return _safe_tool_call(
@@ -937,7 +894,7 @@ def poe2_inspect_unique(name: str) -> dict[str, Any]:
     )
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_inspect_augment(query: str, limit: int = 8) -> dict[str, Any]:
     """Inspect PoE2 Runes, Soul Cores, Idols, Shaman Bonded bonuses, and Runeforge recipes."""
 
@@ -999,7 +956,7 @@ def execute_meta_ladder(
     return report.model_dump(mode="json")
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_inspect_ascendancy(
     name_or_class: str | None = None,
     class_filter: str | None = None,
@@ -1025,6 +982,9 @@ def execute_waystone_regex(
     vendor_want_keywords: Sequence[str] | str | None = None,
     relic_preset: str | None = None,
     relic_want_keywords: Sequence[str] | str | None = None,
+    stash_want_keywords: Sequence[str] | str | None = None,
+    stash_avoid_keywords: Sequence[str] | str | None = None,
+    stash_base_group: str | None = None,
     min_waystone_drop_pct: int = 120,
     min_pack_size_pct: int | None = 20,
     item_text: str | None = None,
@@ -1048,6 +1008,8 @@ def execute_waystone_regex(
     tablet_list = _coerce_csv_or_list(tablet_want_keywords) or None
     vendor_list = _coerce_csv_or_list(vendor_want_keywords) or None
     relic_list = _coerce_csv_or_list(relic_want_keywords) or None
+    stash_want_list = _coerce_csv_or_list(stash_want_keywords) or None
+    stash_avoid_list = _coerce_csv_or_list(stash_avoid_keywords) or None
     clean_item = item_text.strip() if (item_text and item_text.strip()) else None
 
     plan = build_waystone_regex_plan(
@@ -1061,6 +1023,9 @@ def execute_waystone_regex(
         vendor_want_keywords=vendor_list,
         relic_preset=relic_preset,
         relic_want_keywords=relic_list,
+        stash_want_keywords=stash_want_list,
+        stash_avoid_keywords=stash_avoid_list,
+        stash_base_group=stash_base_group,
         min_waystone_drop_pct=min_waystone_drop_pct,
         min_pack_size_pct=min_pack_size_pct,
         waystone_item=clean_item,
@@ -1073,7 +1038,7 @@ def execute_waystone_regex(
     return out
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_meta_ladder(
     league: str = DEFAULT_LEAGUE,
     top_n: int = 200,
@@ -1091,7 +1056,7 @@ def poe2_meta_ladder(
     )
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_waystone_regex(
     slot: str | None = None,
     archetypes: list[str] | str | None = None,
@@ -1103,13 +1068,16 @@ def poe2_waystone_regex(
     vendor_want_keywords: list[str] | str | None = None,
     relic_preset: str | None = None,
     relic_want_keywords: list[str] | str | None = None,
+    stash_want_keywords: list[str] | str | None = None,
+    stash_avoid_keywords: list[str] | str | None = None,
+    stash_base_group: str | None = None,
     min_waystone_drop_pct: int = 120,
     min_pack_size_pct: int | None = 20,
     item_text: str | None = None,
     include_dangerous: bool = False,
     max_chars: int = 50,
 ) -> dict[str, Any]:
-    """Compile <=50-char Waystone, Precursor Tablet, Vendor Shopping & Sekhema Relic regexes."""
+    """Compile general <=50-char PoE2 Stash, Vendor, Crafting, Tablet, Relic & Waystone regexes."""
     return _safe_tool_call(
         lambda: execute_waystone_regex(
             slot=slot,
@@ -1122,6 +1090,9 @@ def poe2_waystone_regex(
             vendor_want_keywords=vendor_want_keywords,
             relic_preset=relic_preset,
             relic_want_keywords=relic_want_keywords,
+            stash_want_keywords=stash_want_keywords,
+            stash_avoid_keywords=stash_avoid_keywords,
+            stash_base_group=stash_base_group,
             min_waystone_drop_pct=min_waystone_drop_pct,
             min_pack_size_pct=min_pack_size_pct,
             item_text=item_text,
@@ -1131,7 +1102,7 @@ def poe2_waystone_regex(
     )
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_pob_load(
     source: str,
     slot: str = "main",
@@ -1150,7 +1121,7 @@ def poe2_pob_load(
     return _safe_tool_call(_run)
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_pob_stats(slot: str = "main") -> dict[str, Any]:
     """Extract FullDPS, TotalEHP, Life/ES/Mana, Spirit, resists, Block, Deflection, and Armour."""
 
@@ -1164,7 +1135,7 @@ def poe2_pob_stats(slot: str = "main") -> dict[str, Any]:
     return _safe_tool_call(_run)
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_pob_audit(
     source: str | None = None,
     slot: str = "main",
@@ -1187,7 +1158,7 @@ def poe2_pob_audit(
     return _safe_tool_call(_run)
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_pob_eval_item(
     equip_slot: str,
     item_text: str,
@@ -1211,7 +1182,7 @@ def poe2_pob_eval_item(
     return _safe_tool_call(_run)
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_pob_stat_weights(
     equip_slot: str,
     objective: str = "balanced",
@@ -1239,7 +1210,7 @@ def poe2_pob_stat_weights(
     return _safe_tool_call(_run)
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_pob_suggest_nodes(
     mode: Literal["perPoint", "total", "anoint", "megalomaniac"] = "perPoint",
     slot: str = "main",
@@ -1288,7 +1259,7 @@ def poe2_pob_suggest_nodes(
     return _safe_tool_call(_run)
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_pob_optimize_runes(
     slot: str = "main",
     objective: Literal["balanced", "dps", "ehp", "spirit", "rarity"] = "balanced",
@@ -1349,7 +1320,7 @@ def execute_pob_hc_audit(
     return report.model_dump(mode="json")
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_pob_compare(
     slot_a: str = "early",
     slot_b: str = "main",
@@ -1365,7 +1336,7 @@ def poe2_pob_compare(
     )
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_pob_hc_audit(
     source: str | None = None,
     slot: str = "main",
@@ -1537,7 +1508,7 @@ def execute_pob_what_if(
     return report.model_dump(mode="json")
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_pob_calc_breakdown(
     query: str = "FullDPS",
     slot: str = "main",
@@ -1555,7 +1526,7 @@ def poe2_pob_calc_breakdown(
     )
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_pob_supports(
     slot: str = "main",
     group_index: int | None = None,
@@ -1585,7 +1556,7 @@ def poe2_pob_supports(
     )
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_pob_radius_jewels(
     jewel_name: str = "Controlled Metamorphosis",
     slot: str = "main",
@@ -1605,7 +1576,7 @@ def poe2_pob_radius_jewels(
     )
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_pob_what_if(
     slot: str = "main",
     equip_items: dict[str, str] | list[str] | None = None,
@@ -1698,7 +1669,7 @@ def execute_pob_import_character(
     }
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_pob_import_local(
     name_or_path: str | None = None,
     builds_dir: str | None = None,
@@ -1716,7 +1687,7 @@ def poe2_pob_import_local(
     )
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_pob_import_character(
     character_name: str | None = None,
     realm: str = "poe2",
@@ -1758,7 +1729,7 @@ def export_pob_slot(
     return _safe_tool_call(_run)
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_currency_price(
     query: str,
     league: str = DEFAULT_LEAGUE,
@@ -1788,7 +1759,7 @@ def poe2_currency_price(
     return _safe_tool_call(_run)
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_market_scan(
     category: str | None = None,
     min_volume_divine: float = 5.0,
@@ -1819,7 +1790,7 @@ def poe2_market_scan(
     return _safe_tool_call(_run)
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_boss_ev(
     league: str = DEFAULT_LEAGUE,
     encounter: str | None = None,
@@ -1838,7 +1809,7 @@ def poe2_boss_ev(
     return _safe_tool_call(_run)
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_farming_strategy(
     stage: Literal["day1", "early", "mid", "endgame"] = "early",
     budget: str | float | int | None = None,
@@ -1992,7 +1963,7 @@ def execute_scan_arbitrage(
     return report.model_dump(mode="json")
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_scan_arbitrage(
     budget: str | float | None = None,
     gold: int | None = None,
@@ -2028,7 +1999,7 @@ def poe2_scan_arbitrage(
     )
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_parse_item(item_text: str) -> dict[str, Any]:
     """Parse PoE2 Ctrl+C / Ctrl+Alt+C clipboard text into ParsedItem plus PoB2-ready item text."""
 
@@ -2041,7 +2012,7 @@ def poe2_parse_item(item_text: str) -> dict[str, Any]:
     return _safe_tool_call(_run)
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_price_check(
     item_text: str,
     securable_only: bool = False,
@@ -2062,7 +2033,7 @@ def poe2_price_check(
     return _safe_tool_call(_run)
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_find_upgrades(
     equip_slot: str,
     max_exalted: float | None = 50.0,
@@ -2115,7 +2086,7 @@ def execute_triage_dump(
     return report.model_dump(mode="json")
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_triage_dump(
     items: list[str] | str,
     min_exalted: float = 5.0,
@@ -2137,7 +2108,7 @@ def poe2_triage_dump(
     )
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_craft_odds(
     base: str,
     ilvl: int = 82,
@@ -2165,7 +2136,7 @@ def poe2_craft_odds(
     )
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_craft_plan(
     base: str,
     target: list[str] | str,
@@ -2221,7 +2192,7 @@ def execute_scan_craft_profit(
     return report.model_dump(mode="json")
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_scan_craft_profit(
     budget: Literal["all", "low", "mid", "high"] = "all",
     max_budget_divine: float | None = None,
@@ -3018,7 +2989,7 @@ def execute_filter_validate(
     return out
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_ninja_snapshots(
     league: str = DEFAULT_LEAGUE,
     force_refresh: bool = False,
@@ -3029,7 +3000,7 @@ def poe2_ninja_snapshots(
     )
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_ninja_search(
     league: str = DEFAULT_LEAGUE,
     preset: Literal["sleeper", "zoom_mapper", "league_start", "boss_killer", "hc_tank"]
@@ -3076,7 +3047,7 @@ def poe2_ninja_search(
     )
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_ninja_character(
     account_or_url: str,
     character: str | None = None,
@@ -3104,13 +3075,13 @@ def poe2_ninja_character(
     )
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_filter_presets() -> dict[str, Any]:
     """List PoE2 0.5.5 visual theme presets, strictnesses, soundpack styles, and filter folder."""
     return _safe_tool_call(execute_filter_presets)
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_filter_generate(
     strictness: str = "semi_strict",
     theme: str | None = None,
@@ -3162,7 +3133,7 @@ def poe2_filter_generate(
     )
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_filter_restyle(
     source: str,
     theme: str | None = None,
@@ -3214,7 +3185,7 @@ def poe2_filter_restyle(
     )
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_filter_validate(
     filter_file_or_text: str,
     sound_dir: str | None = None,
@@ -3228,7 +3199,7 @@ def poe2_filter_validate(
     )
 
 
-@mcp.tool()
+@_mcp_tool
 def poe2_filter_heal(
     filter_file_or_text: str,
     out_path: str | None = None,
@@ -3357,7 +3328,7 @@ def main() -> None:
                 stream.reconfigure(encoding="utf-8", errors="replace")
             except Exception:
                 pass
-    run_with_service_cleanup(mcp.run)
+    run_with_service_cleanup(get_mcp_server().run)
 
 
 if __name__ == "__main__":

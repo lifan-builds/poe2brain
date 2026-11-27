@@ -112,6 +112,7 @@ class WaystoneRegexPlan(Poe2Model):
     tablet_regex: CompiledStashRegex
     vendor_regex: CompiledStashRegex | None = None
     relic_regex: CompiledStashRegex | None = None
+    custom_stash_regex: CompiledStashRegex | None = None
     revive_schedule: list[WaystoneReviveRule] = Field(default_factory=list)
     atlas_warnings: list[str] = Field(default_factory=list)
     item_check: WaystoneItemCheckResult | None = None
@@ -1003,63 +1004,46 @@ class WaystoneRegexEngine:
         """Compile a `<= 50` char PoE2 Stash Regex highlighting high-Waystone-Drop-Chance /
         high-Pack-Size / juiced Waystones.
         """
-        def _gte_num_expr(threshold: int) -> str:
-            """Build an exact compact regex matching integers >= threshold (no rounding down)."""
+        def _gte_int_regex(threshold: int, *, pack_size_cap: bool = False) -> str:
+            """Compile an exact, compact regex matching integers >= threshold (no rounding down)."""
             n = max(1, int(threshold))
             s = str(n)
-            parts: list[str] = []
+            if len(s) == 1:
+                return f"([{n}-9]|[1-9]\\d+)"
             if len(s) == 2:
                 d0, d1 = int(s[0]), int(s[1])
-                if d1 == 0:
-                    parts.append(f"[{d0}-9]\\d")
-                else:
-                    parts.append(f"{d0}[{d1}-9]")
-                    if d0 < 9:
-                        parts.append(f"[{d0 + 1}-9]\\d")
+                if d1 == 0 and pack_size_cap:
+                    return f"([{d0}-9]|1\\d)\\d"
+                parts = [f"[{d0}-9]\\d"] if d1 == 0 else [f"{d0}[{d1}-9]"]
+                if d1 != 0 and d0 < 9:
+                    parts.append(f"[{d0 + 1}-9]\\d")
                 parts.append(r"[1-9]\d\d+")
                 return f"({'|'.join(parts)})"
             if len(s) == 3:
                 d0, d1, d2 = int(s[0]), int(s[1]), int(s[2])
                 if d1 == 0 and d2 == 0:
-                    parts.append(f"[{d0}-9]\\d\\d")
-                elif d2 == 0:
-                    parts.append(f"{d0}[{d1}-9]\\d")
+                    return (
+                        r"[1-9]\d\d+" if d0 == 1 else f"([{d0}-9]\\d|\\d{{3}})\\d"
+                    )
+                if d2 == 0:
+                    parts = [f"{d0}[{d1}-9]"]
                     if d0 < 9:
-                        parts.append(f"[{d0 + 1}-9]\\d\\d")
-                else:
-                    parts.append(f"{d0}{d1}[{d2}-9]")
-                    if d1 < 9:
-                        parts.append(f"{d0}[{d1 + 1}-9]\\d")
-                    if d0 < 9:
-                        parts.append(f"[{d0 + 1}-9]\\d\\d")
+                        parts.append(f"[{d0 + 1}-9]\\d")
+                    parts.append(r"\d{3}")
+                    return f"({'|'.join(parts)})\\d"
+                parts = [f"{d0}{d1}[{d2}-9]"]
+                if d1 < 9:
+                    parts.append(f"{d0}[{d1 + 1}-9]\\d")
+                if d0 < 9:
+                    parts.append(f"[{d0 + 1}-9]\\d\\d")
                 parts.append(r"\d{4,}")
                 return f"({'|'.join(parts)})"
-            if len(s) == 1:
-                return f"([{n}-9]|[1-9]\\d+)"
             return rf"([1-9]\d{{{len(s) - 1},}})"
 
-        clauses: list[str] = []
-
-        # Prefer compact factored forms for multiples of 10 so both Drop & Pack fit <=50 chars
-        if min_waystone_drop_pct == 200:
-            drop_pat = r"ce:..([2-9]\d|\d{3})\d"
-        elif min_waystone_drop_pct in (120, 150) or (
-            100 < min_waystone_drop_pct < 200 and min_waystone_drop_pct % 10 == 0
-        ):
-            d1 = (min_waystone_drop_pct // 10) % 10
-            drop_pat = rf"ce:..(1[{d1}-9]|[2-9]\d|\d{{3}})\d"
-        elif min_waystone_drop_pct == 100:
-            drop_pat = r"ce:..[1-9]\d\d+"
-        else:
-            drop_pat = rf"ce:..{_gte_num_expr(min_waystone_drop_pct)}"
-        clauses.append(drop_pat)
+        clauses: list[str] = [f"ce:..{_gte_int_regex(min_waystone_drop_pct)}"]
 
         if min_pack_size_pct is not None and min_pack_size_pct >= 10:
-            if min_pack_size_pct % 10 == 0 and 20 <= min_pack_size_pct <= 90:
-                tens_p = min_pack_size_pct // 10
-                p_cand = rf"ze:..([{tens_p}-9]|1\d)\d"
-            else:
-                p_cand = rf"ze:..{_gte_num_expr(min_pack_size_pct)}"
+            p_cand = f"ze:..{_gte_int_regex(min_pack_size_pct, pack_size_cap=True)}"
             if len("|".join([*clauses, p_cand])) + 2 <= max_chars:
                 clauses.append(p_cand)
 
@@ -1337,6 +1321,179 @@ class WaystoneRegexEngine:
             ),
         )
 
+    def compile_general_stash_regex(
+        self,
+        *,
+        want_keywords: Sequence[str] | None = None,
+        avoid_keywords: Sequence[str] | None = None,
+        base_group: str | None = None,
+        max_chars: int = POE2_STASH_REGEX_MAX_CHARS,
+    ) -> CompiledStashRegex:
+        """Compile a general-purpose <=50-char PoE2 Stash/Vendor/Crafting regex from SQLite
+        `mod_tiers` and `base_items` for arbitrary `want_keywords` and/or `avoid_keywords`.
+        """
+        wants = [k.strip() for k in (want_keywords or []) if k and k.strip()]
+        avoids = [k.strip() for k in (avoid_keywords or []) if k and k.strip()]
+        bg = (base_group or "").strip()
+
+        if bg:
+            mod_rows = self.db.query_all(
+                """
+                SELECT DISTINCT mod_type, affix_name, stat_text
+                FROM mod_tiers
+                WHERE base_group_slug LIKE ? AND stat_text != ''
+                LIMIT 1200
+                """,
+                (f"%{bg}%",),
+            )
+            base_rows = self.db.query_all(
+                """
+                SELECT DISTINCT name, item_class
+                FROM base_items
+                WHERE is_live_poe2 = 1 AND (poe2db_slug LIKE ? OR item_class LIKE ? OR name LIKE ?)
+                LIMIT 400
+                """,
+                (f"%{bg}%", f"%{bg}%", f"%{bg}%"),
+            )
+        else:
+            mod_rows = self.db.query_all(
+                """
+                SELECT DISTINCT mod_type, affix_name, stat_text
+                FROM mod_tiers
+                WHERE stat_text != ''
+                LIMIT 2000
+                """
+            )
+            base_rows = self.db.query_all(
+                """
+                SELECT DISTINCT name, item_class
+                FROM base_items
+                WHERE is_live_poe2 = 1
+                LIMIT 600
+                """
+            )
+
+        mod_entries: list[tuple[str, str]] = []
+        seen_samples: set[str] = set()
+        for r in mod_rows:
+            clean = _sanitize_stat_text(str(r["stat_text"]))
+            if not clean:
+                continue
+            lo_s, _ = _render_roll_endpoints(clean)
+            if lo_s not in seen_samples:
+                seen_samples.add(lo_s)
+                hay = f"{r['mod_type']} {r['affix_name']} {clean} {lo_s}".lower()
+                mod_entries.append((hay, lo_s))
+
+        base_entries: list[tuple[str, str]] = [
+            (f"{r['name']} {r['item_class']}".lower(), str(r["name"])) for r in base_rows
+        ]
+
+        def _build_groups(kws: Sequence[str]) -> tuple[list[tuple[str, list[str]]], set[str]]:
+            groups: list[tuple[str, list[str]]] = []
+            matched_samples: set[str] = set()
+            for kw in kws:
+                kl = kw.lower()
+                hits: list[str] = []
+                for hay, sample in mod_entries:
+                    if kl in hay:
+                        if sample not in hits:
+                            hits.append(sample)
+                        if len(hits) >= 4:
+                            break
+                if not hits:
+                    for hay, bname in base_entries:
+                        if kl in hay:
+                            if bname not in hits:
+                                hits.append(bname)
+                            if len(hits) >= 4:
+                                break
+                if hits:
+                    matched_samples.update(hits)
+                    groups.append((kw, hits))
+                else:
+                    groups.append((kw, [kw]))
+            return groups, matched_samples
+
+        all_neg_pool = [
+            *_STANDARD_TOOLTIP_BOILERPLATE,
+            *[s for _, s in mod_entries[:350]],
+        ]
+
+        if wants and not avoids:
+            pos_groups, pos_hit = _build_groups(wants)
+            neg = [t for t in all_neg_pool if t not in pos_hit]
+            return compile_minimal_stash_regex(
+                "custom_stash_search",
+                pos_groups,
+                neg,
+                negate=False,
+                max_chars=max_chars,
+                usage_note=(
+                    f"General PoE2 Stash/Vendor/Crafting regex matching: {', '.join(wants)} "
+                    f"(strictly <= {max_chars} chars)."
+                ),
+            )
+
+        if avoids and not wants:
+            neg_groups, neg_hit = _build_groups(avoids)
+            neg = [t for t in all_neg_pool if t not in neg_hit]
+            return compile_minimal_stash_regex(
+                "custom_stash_search",
+                neg_groups,
+                neg,
+                negate=True,
+                max_chars=max_chars,
+                usage_note=(
+                    f"General negated PoE2 Stash regex hiding items with: {', '.join(avoids)} "
+                    f"(strictly <= {max_chars} chars)."
+                ),
+            )
+
+        if wants and avoids:
+            pos_budget = max(14, (max_chars - 1) // 2 + 4)
+            neg_budget = max(12, max_chars - 1 - pos_budget)
+            pos_groups, pos_hit = _build_groups(wants)
+            neg_groups, neg_hit = _build_groups(avoids)
+            pos_rx = compile_minimal_stash_regex(
+                "custom_stash_pos",
+                pos_groups,
+                [t for t in all_neg_pool if t not in pos_hit],
+                negate=False,
+                max_chars=pos_budget,
+            )
+            rem_budget = max(10, max_chars - 1 - pos_rx.char_length)
+            neg_rx = compile_minimal_stash_regex(
+                "custom_stash_neg",
+                neg_groups,
+                [t for t in all_neg_pool if t not in neg_hit],
+                negate=True,
+                max_chars=min(rem_budget, max(neg_budget, rem_budget)),
+            )
+            combined = f"{pos_rx.regex} {neg_rx.regex}"
+            if len(combined) > max_chars:
+                combined = pos_rx.regex
+            return CompiledStashRegex(
+                purpose="custom_stash_search",
+                regex=combined,
+                char_length=len(combined),
+                max_chars=max_chars,
+                within_client_limit=len(combined) <= max_chars,
+                tokens=[*pos_rx.tokens, *(f"!{t}" for t in neg_rx.tokens)],
+                matched_target_count=pos_rx.matched_target_count + neg_rx.matched_target_count,
+                total_targets=pos_rx.total_targets + neg_rx.total_targets,
+                false_negatives=pos_rx.false_negatives + neg_rx.false_negatives,
+                false_positives=pos_rx.false_positives + neg_rx.false_positives,
+                usage_note=(
+                    f"General PoE2 Stash regex matching ({', '.join(wants)}) while excluding "
+                    f"({', '.join(avoids)})."
+                ),
+            )
+
+        return compile_minimal_stash_regex(
+            "custom_stash_search", [], [], negate=False, max_chars=max_chars
+        )
+
     def build_plan(
         self,
         build: BuildStats | DewateredAudit | Mapping[str, Any] | None = None,
@@ -1350,6 +1507,9 @@ class WaystoneRegexEngine:
         vendor_want_keywords: Sequence[str] | None = None,
         relic_preset: str | None = None,
         relic_want_keywords: Sequence[str] | None = None,
+        stash_want_keywords: Sequence[str] | None = None,
+        stash_avoid_keywords: Sequence[str] | None = None,
+        stash_base_group: str | None = None,
         min_waystone_drop_pct: int = 120,
         min_pack_size_pct: int | None = 20,
         waystone_item: ParsedItem | str | None = None,
@@ -1437,7 +1597,7 @@ class WaystoneRegexEngine:
                 build=build,
                 max_chars=max_chars,
             )
-            if (vendor_preset or vendor_want_keywords)
+            if (vendor_preset or vendor_want_keywords or build is not None)
             else None
         )
         relic_rx = (
@@ -1447,6 +1607,16 @@ class WaystoneRegexEngine:
                 max_chars=max_chars,
             )
             if (relic_preset or relic_want_keywords)
+            else None
+        )
+        custom_stash_rx = (
+            self.compile_general_stash_regex(
+                want_keywords=stash_want_keywords,
+                avoid_keywords=stash_avoid_keywords,
+                base_group=stash_base_group,
+                max_chars=max_chars,
+            )
+            if (stash_want_keywords or stash_avoid_keywords)
             else None
         )
         revive_sched = build_revive_schedule()
@@ -1487,6 +1657,7 @@ class WaystoneRegexEngine:
             tablet_regex=tablet_rx,
             vendor_regex=vendor_rx,
             relic_regex=relic_rx,
+            custom_stash_regex=custom_stash_rx,
             revive_schedule=revive_sched,
             atlas_warnings=atlas_warnings,
             item_check=item_check,
@@ -1564,6 +1735,9 @@ def build_waystone_regex_plan(
     vendor_want_keywords: Sequence[str] | None = None,
     relic_preset: str | None = None,
     relic_want_keywords: Sequence[str] | None = None,
+    stash_want_keywords: Sequence[str] | None = None,
+    stash_avoid_keywords: Sequence[str] | None = None,
+    stash_base_group: str | None = None,
     min_waystone_drop_pct: int = 120,
     min_pack_size_pct: int | None = 20,
     waystone_item: ParsedItem | str | None = None,
@@ -1571,7 +1745,7 @@ def build_waystone_regex_plan(
     max_chars: int = POE2_STASH_REGEX_MAX_CHARS,
     db: GamedataDB | Path | str | None = None,
 ) -> WaystoneRegexPlan:
-    """Top-level convenience entrypoint for PoB2-aware Waystone, Tablet, Vendor & Relic Regexes."""
+    """Top-level entrypoint for PoB2-aware Stash, Vendor, Tablet, Relic & Waystone Regexes."""
     with WaystoneRegexEngine(db=db) as eng:
         return eng.build_plan(
             build=build,
@@ -1584,6 +1758,9 @@ def build_waystone_regex_plan(
             vendor_want_keywords=vendor_want_keywords,
             relic_preset=relic_preset,
             relic_want_keywords=relic_want_keywords,
+            stash_want_keywords=stash_want_keywords,
+            stash_avoid_keywords=stash_avoid_keywords,
+            stash_base_group=stash_base_group,
             min_waystone_drop_pct=min_waystone_drop_pct,
             min_pack_size_pct=min_pack_size_pct,
             waystone_item=waystone_item,
