@@ -18,7 +18,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
-from poe2brain.config import REPO_ROOT, Pob2RuntimePaths, get_pob2_paths
+from poe2brain.config import REPO_ROOT, Pob2RuntimePaths, get_pob2_dir, get_pob2_paths
 from poe2brain.pob.bootstrap import bootstrap_pob2_runtime
 
 BRIDGE_LUA_PATH: Path = Path(__file__).resolve().parent / "lua" / "pob2_bridge.lua"
@@ -102,6 +102,8 @@ def _idle_watchdog_entry(
 
 class Pob2Bridge:
     """Thread-safe JSON-RPC 2.0 client for PathOfBuilding-PoE2 (stdio or Unix socket)."""
+
+    _default_target: tuple[Path | None, Path]
 
     def __init__(
         self,
@@ -640,21 +642,17 @@ _DEFAULT_BRIDGE: Pob2Bridge | None = None
 def get_default_pob2_bridge() -> Pob2Bridge:
     """Return the process-wide shared Pob2Bridge singleton."""
     global _DEFAULT_BRIDGE
-    target_sock = os.environ.get(POB_SOCKET_ENV_VAR, "").strip() or None
-    target_pob_dir = str(get_pob2_paths().root_dir)
     with _DEFAULT_BRIDGE_LOCK:
-        if _DEFAULT_BRIDGE is not None:
-            cur_sock = (
-                str(_DEFAULT_BRIDGE.socket_path)
-                if _DEFAULT_BRIDGE.socket_path is not None
-                else None
-            )
-            cur_dir = str(_DEFAULT_BRIDGE.paths.root_dir)
-            if cur_sock != target_sock or cur_dir != target_pob_dir:
-                _DEFAULT_BRIDGE.close()
-                _DEFAULT_BRIDGE = None
+        raw_socket = os.environ.get(POB_SOCKET_ENV_VAR, "").strip()
+        socket_path = Path(raw_socket).resolve() if raw_socket else None
+        runtime_root = get_pob2_dir().resolve()
+        target = (socket_path, runtime_root)
+        if _DEFAULT_BRIDGE is not None and target != _DEFAULT_BRIDGE._default_target:
+            _DEFAULT_BRIDGE.close()
+            _DEFAULT_BRIDGE = None
         if _DEFAULT_BRIDGE is None:
-            _DEFAULT_BRIDGE = Pob2Bridge(request_timeout=120.0)
+            _DEFAULT_BRIDGE = Pob2Bridge(socket_path=socket_path, pob2_dir=runtime_root)
+            _DEFAULT_BRIDGE._default_target = target
         return _DEFAULT_BRIDGE
 
 

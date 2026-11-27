@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import os
 import re
 import tempfile
@@ -71,6 +72,8 @@ def _parse_triplets(raw: str) -> list[tuple[int, float, float]]:
         hits = int(parts[0])
         window_s = float(parts[1])
         ban_s = float(parts[2])
+        if not (math.isfinite(window_s) and math.isfinite(ban_s)):
+            raise ValueError(f"Non-finite GGG rate-limit triplet: {token!r}")
         out.append((hits, window_s, ban_s))
     return out
 
@@ -117,19 +120,23 @@ def parse_rate_limit_headers(headers: Mapping[str, str]) -> list[RateLimitWindow
     return windows
 
 
+def _retry_after_delay(raw: str | None, safety_buffer: float) -> float:
+    try:
+        seconds = float(raw or "")
+    except ValueError:
+        return 0.0
+    if not math.isfinite(seconds) or seconds < 0:
+        return 0.0
+    return seconds + safety_buffer
+
+
 def compute_rate_limit_delay(
     headers: Mapping[str, str],
     *,
     safety_buffer: float = RATE_LIMIT_SAFETY_BUFFER_SECONDS,
 ) -> float:
     lower = {k.lower(): v for k, v in headers.items()}
-    delay = 0.0
-    retry_after = lower.get("retry-after")
-    if retry_after:
-        try:
-            delay = max(delay, float(retry_after.strip()) + safety_buffer)
-        except ValueError:
-            pass
+    delay = _retry_after_delay(lower.get("retry-after"), safety_buffer)
 
     for win in parse_rate_limit_headers(headers):
         delay = max(delay, win.required_delay(safety_buffer=safety_buffer))
@@ -232,13 +239,7 @@ class GGGRateLimiter:
                 state.windows = windows
             self._prune(state, ts)
 
-            delay = 0.0
-            retry_after = lower.get("retry-after")
-            if retry_after:
-                try:
-                    delay = max(delay, float(retry_after.strip()) + self.safety_buffer)
-                except ValueError:
-                    pass
+            delay = _retry_after_delay(lower.get("retry-after"), self.safety_buffer)
 
             for win in windows:
                 if win.active_ban_seconds > 0:
@@ -390,7 +391,7 @@ class Poe2HttpClient:
     ) -> Any:
         is_ggg = _is_ggg_url(url)
         bucket = infer_ggg_bucket(url) if is_ggg else ""
-        attempts = 2 if retry_on_429 else 1
+        attempts = 2 if method.upper() == "GET" or retry_on_429 else 1
 
         for attempt in range(attempts):
             if is_ggg:
@@ -410,7 +411,7 @@ class Poe2HttpClient:
                 raise
             if is_ggg:
                 self.rate_limiter.update_from_headers(resp.headers, url=url, bucket=bucket)
-            if resp.status_code == 429 and attempt + 1 < attempts:
+            if retry_on_429 and resp.status_code == 429 and attempt + 1 < attempts:
                 if not is_ggg:
                     wait_s = compute_rate_limit_delay(
                         resp.headers, safety_buffer=self.rate_limiter.safety_buffer
@@ -434,7 +435,7 @@ class Poe2HttpClient:
     ) -> Any:
         is_ggg = _is_ggg_url(url)
         bucket = infer_ggg_bucket(url) if is_ggg else ""
-        attempts = 2 if retry_on_429 else 1
+        attempts = 2 if method.upper() == "GET" or retry_on_429 else 1
 
         for attempt in range(attempts):
             if is_ggg:
@@ -454,7 +455,7 @@ class Poe2HttpClient:
                 raise
             if is_ggg:
                 self.rate_limiter.update_from_headers(resp.headers, url=url, bucket=bucket)
-            if resp.status_code == 429 and attempt + 1 < attempts:
+            if retry_on_429 and resp.status_code == 429 and attempt + 1 < attempts:
                 if not is_ggg:
                     wait_s = compute_rate_limit_delay(
                         resp.headers, safety_buffer=self.rate_limiter.safety_buffer
@@ -486,24 +487,20 @@ class Poe2HttpClient:
         force_refresh: bool = False,
         retry_on_429: bool = True,
     ) -> str:
-        req_headers = {"Accept": "text/plain, */*"}
-        if headers:
-            req_headers.update(headers)
+        req_headers = httpx.Headers({"Accept": "text/plain, */*"})
+        req_headers.update(headers)
+        client = self.sync_client
+        request = client.build_request("GET", url, params=params, headers=req_headers)
 
         def _fetch_text() -> str:
             is_ggg = _is_ggg_url(url)
             bucket = infer_ggg_bucket(url) if is_ggg else ""
-            attempts = 2 if retry_on_429 else 1
+            attempts = 2
             for attempt in range(attempts):
                 if is_ggg:
                     self.rate_limiter.acquire_sync(bucket)
                 try:
-                    resp = self.sync_client.request(
-                        "GET",
-                        url,
-                        params=params,
-                        headers=req_headers,
-                    )
+                    resp = client.send(request)
                 except (httpx.TimeoutException, httpx.RemoteProtocolError):
                     if attempt + 1 < attempts:
                         self.rate_limiter._sleep_sync(0.5)
@@ -511,7 +508,7 @@ class Poe2HttpClient:
                     raise
                 if is_ggg:
                     self.rate_limiter.update_from_headers(resp.headers, url=url, bucket=bucket)
-                if resp.status_code == 429 and attempt + 1 < attempts:
+                if retry_on_429 and resp.status_code == 429 and attempt + 1 < attempts:
                     if not is_ggg:
                         wait_s = compute_rate_limit_delay(
                             resp.headers, safety_buffer=self.rate_limiter.safety_buffer
@@ -523,10 +520,18 @@ class Poe2HttpClient:
                 return resp.text
             raise RuntimeError(f"Unreachable HTTP retry state for {url}")
 
-        if ttl_seconds is not None and (self._sync_transport is None or cache_dir is not None):
+        # HTTPX auth flows and request hooks can supply identity after build_request().
+        if (
+            ttl_seconds is not None
+            and (self._sync_transport is None or cache_dir is not None)
+            and client.auth is None
+            and not client.event_hooks["request"]
+        ):
+            material = json.dumps(
+                [str(request.url), request.headers.multi_items()], separators=(",", ":")
+            ).encode("utf-8")
             envelope = get_cached_json(
-                url,
-                params=params,
+                "text-v2:" + hashlib.sha256(material).hexdigest(),
                 ttl_seconds=ttl_seconds,
                 fetcher=lambda: {"text": _fetch_text()},
                 cache_dir=cache_dir,
@@ -609,6 +614,25 @@ def _write_cache_envelope(path: Path, key: str, data: Any, now_epoch: float) -> 
         raise
 
 
+def _stale_cache_entry(
+    path: Path | None, error: httpx.HTTPError, allow_stale: bool
+) -> tuple[float, Any] | None:
+    if path is None:
+        return None
+    if isinstance(error, httpx.HTTPStatusError):
+        status = error.response.status_code
+        if status in {401, 403, 404, 407, 410}:
+            path.unlink(missing_ok=True)
+        transient = status in {408, 429} or 500 <= status < 600
+    else:
+        transient = isinstance(
+            error, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
+        )
+    if transient and allow_stale:
+        return _read_cache_envelope(path)
+    return None
+
+
 def get_cached_json(
     key_or_url: str,
     *,
@@ -649,11 +673,10 @@ def get_cached_json(
             finally:
                 if owned:
                     http_client.close()
-    except Exception:
-        if allow_stale_on_error and cache_path is not None:
-            stale = _read_cache_envelope(cache_path)
-            if stale is not None:
-                return stale[1]
+    except httpx.HTTPError as exc:
+        stale = _stale_cache_entry(cache_path, exc, allow_stale_on_error)
+        if stale is not None:
+            return stale[1]
         raise
 
     if cache_path is not None:
@@ -701,11 +724,10 @@ async def aget_cached_json(
             finally:
                 if owned:
                     await http_client.aclose()
-    except Exception:
-        if allow_stale_on_error and cache_path is not None:
-            stale = _read_cache_envelope(cache_path)
-            if stale is not None:
-                return stale[1]
+    except httpx.HTTPError as exc:
+        stale = _stale_cache_entry(cache_path, exc, allow_stale_on_error)
+        if stale is not None:
+            return stale[1]
         raise
 
     if cache_path is not None:

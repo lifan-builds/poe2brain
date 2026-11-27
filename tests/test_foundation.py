@@ -6,7 +6,9 @@ import json
 import os
 import subprocess
 import sys
+from functools import partial
 from pathlib import Path
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
@@ -99,6 +101,27 @@ def test_parse_ggg_rate_limit_headers() -> None:
     assert windows[0].remaining_hits == 3
     assert not windows[0].is_exhausted
     assert compute_rate_limit_delay(headers) == 0.0
+
+
+@pytest.mark.parametrize(
+    ("raw", "delay"),
+    [("NaN", 0.0), ("+inf", 0.0), ("-inf", 0.0), ("-0.5", 0.0), ("0", 1.0), ("2.5", 3.5)],
+)
+def test_retry_after_delay(raw: str, delay: float) -> None:
+    headers = {"Retry-After": raw}
+    limiter = GGGRateLimiter(clock=lambda: 100.0)
+    assert compute_rate_limit_delay(headers) == delay
+    assert limiter.update_from_headers(headers, bucket="test") == delay
+    assert limiter.pending_delay("test") == delay
+
+
+@pytest.mark.parametrize("header", ["X-Rate-Limit-Ip", "X-Rate-Limit-Ip-State"])
+@pytest.mark.parametrize("triplet", ["2:NaN:0", "2:+inf:0", "2:10:-inf", "2:10:NaN"])
+def test_rate_limit_triplets_reject_nonfinite_fields(header: str, triplet: str) -> None:
+    headers = {"X-Rate-Limit-Ip": "5:10:60", "X-Rate-Limit-Ip-State": "2:10:0"}
+    headers[header] = triplet
+    with pytest.raises(ValueError):
+        parse_rate_limit_headers(headers)
 
 
 def test_rate_limiter_safety_buffer_and_sliding_window() -> None:
@@ -272,6 +295,186 @@ async def test_http_client_429_retry_and_disk_ttl_cache(tmp_path: Path) -> None:
 
 async def _async_val(val: dict[str, int]) -> dict[str, int]:
     return val
+
+
+@pytest.fixture(params=[get_cached_json, aget_cached_json], ids=["sync", "async"])
+async def cached_endpoint(request: pytest.FixtureRequest, tmp_path: Path):
+    handler = Mock(return_value=httpx.Response(200, json={"version": 1}))
+    transport = httpx.MockTransport(handler)
+    client = Poe2HttpClient(
+        sync_transport=transport,
+        async_transport=transport,
+        rate_limiter=GGGRateLimiter(sleep_sync=Mock(), sleep_async=AsyncMock()),
+    )
+
+    async def fetch(**options):
+        result = request.param(
+            "https://example.test/data", client=client, cache_dir=tmp_path, **options
+        )
+        return await result if request.param is aget_cached_json else result
+
+    assert await fetch(now_fn=lambda: 100.0) == {"version": 1}
+    yield handler, fetch
+    client.close()
+    await client.aclose()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        408,
+        429,
+        500,
+        502,
+        503,
+        504,
+        599,
+        httpx.ConnectError,
+        httpx.ReadTimeout,
+        httpx.RemoteProtocolError,
+    ],
+)
+async def test_stale_cache_serves_transient_failures(cached_endpoint, failure) -> None:
+    handler, fetch = cached_endpoint
+    if isinstance(failure, int):
+        handler.return_value = httpx.Response(failure)
+        error_type = httpx.HTTPStatusError
+    else:
+        handler.side_effect = failure("disconnected")
+        error_type = failure
+
+    assert await fetch() == {"version": 1}
+    with pytest.raises(error_type):
+        await fetch(allow_stale_on_error=False)
+
+
+@pytest.mark.parametrize("status", [401, 403, 404, 407, 410])
+@pytest.mark.parametrize("allow_stale", [True, False])
+async def test_denied_or_gone_invalidates_cache(cached_endpoint, status, allow_stale) -> None:
+    handler, fetch = cached_endpoint
+    handler.return_value = httpx.Response(status)
+    with pytest.raises(httpx.HTTPStatusError) as error:
+        await fetch(force_refresh=True, allow_stale_on_error=allow_stale)
+    assert error.value.response.status_code == status
+
+    handler.side_effect = httpx.ConnectError("disconnected")
+    with pytest.raises(httpx.ConnectError):
+        await fetch(now_fn=lambda: 101.0)
+
+
+@pytest.mark.parametrize(
+    ("make_failure", "error_type"),
+    [
+        (partial(httpx.Response, 422), httpx.HTTPStatusError),
+        (partial(httpx.Response, 200, text="invalid JSON"), json.JSONDecodeError),
+        (partial(httpx.LocalProtocolError, "invalid request"), httpx.LocalProtocolError),
+    ],
+    ids=["unprocessable", "invalid-json", "invalid-request"],
+)
+async def test_stale_cache_propagates_permanent_and_payload_errors(
+    cached_endpoint, make_failure, error_type
+) -> None:
+    handler, fetch = cached_endpoint
+    handler.side_effect = [make_failure()]
+    with pytest.raises(error_type):
+        await fetch()
+
+
+@pytest.mark.parametrize("entry", ["sync-json", "async-json", "text"])
+async def test_get_timeout_retry_with_429_retries_disabled(entry: str) -> None:
+    handler = Mock(
+        side_effect=[
+            httpx.ReadTimeout("first read"),
+            httpx.Response(200, text="42"),
+            httpx.ReadTimeout("first read"),
+            httpx.ReadTimeout("second read"),
+            httpx.Response(429),
+            httpx.Response(200, text="unexpected retry"),
+        ]
+    )
+    transport = httpx.MockTransport(handler)
+    client = Poe2HttpClient(
+        sync_transport=transport,
+        async_transport=transport,
+        rate_limiter=GGGRateLimiter(sleep_sync=Mock(), sleep_async=AsyncMock()),
+    )
+    url = "https://example.test/data"
+
+    async def fetch():
+        if entry == "text":
+            return client.get_text(url, retry_on_429=False)
+        if entry == "async-json":
+            return await client.arequest_json("GET", url, retry_on_429=False)
+        return client.request_json("GET", url, retry_on_429=False)
+
+    try:
+        assert int(await fetch()) == 42
+        with pytest.raises(httpx.ReadTimeout, match="second read"):
+            await fetch()
+        with pytest.raises(httpx.HTTPStatusError) as error:
+            await fetch()
+        assert error.value.response.status_code == 429
+        assert handler.call_count == 5
+    finally:
+        client.close()
+        await client.aclose()
+
+
+def test_text_cache_uses_effective_url_and_headers(tmp_path: Path) -> None:
+    url = "https://example.test/document"
+    handler = Mock(side_effect=[httpx.Response(200, text=str(i)) for i in range(1, 10)])
+    client = Poe2HttpClient(sync_transport=httpx.MockTransport(handler))
+    fetch = partial(client.get_text, cache_dir=tmp_path, ttl_seconds=60)
+    try:
+        assert fetch(url) == fetch(url) == "1"
+        assert fetch(url, headers={"Accept": "text/csv"}) == "2"
+        assert fetch(url, headers={"accept": "text/csv"}) == "2"
+        client.sync_client.headers["X-Audience"] = "fixture-audience"
+        assert fetch(url) == "3"
+        client.sync_client.cookies.set("layout", "compact")
+        assert fetch(url) == "4"
+        assert fetch(url, params={"view": "fixture-view"}) == "5"
+        assert fetch(f"{url}?view=fixture-view") == "5"
+        client.sync_client.params = {"view": "other"}
+        assert fetch(url) == "6"
+        assert fetch(url + "/other") == "7"
+        assert fetch(url, headers={"Authorization": "fixture-account-a"}) == "8"
+        assert fetch(url, headers={"Authorization": "fixture-account-b"}) == "9"
+        assert handler.call_count == 9
+        cache_files = list(tmp_path.glob("*.json"))
+        assert cache_files
+        for path in cache_files:
+            assert "fixture-" not in path.name
+            assert "fixture-" not in path.read_text()
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("source", ["auth", "hook"])
+def test_text_cache_respects_headers_applied_at_send_time(source: str, tmp_path: Path) -> None:
+    language = "en"
+
+    def set_language(request: httpx.Request) -> httpx.Request:
+        request.headers["Accept-Language"] = language
+        return request
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=request.headers["Accept-Language"])
+
+    client = Poe2HttpClient(sync_transport=httpx.MockTransport(handler))
+    try:
+        if source == "auth":
+            client.sync_client.auth = set_language
+        else:
+            client.sync_client.event_hooks["request"].append(set_language)
+        fetch = partial(
+            client.get_text, "https://example.test/doc", cache_dir=tmp_path, ttl_seconds=60
+        )
+        assert fetch() == "en"
+        language = "de"
+        assert fetch() == "de"
+    finally:
+        client.close()
 
 
 def test_domain_models_contracts() -> None:

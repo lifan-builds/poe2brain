@@ -11,6 +11,7 @@ import socket
 import tempfile
 import threading
 import weakref
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -68,51 +69,48 @@ class Pob2SocketDaemon:
     def is_running(self) -> bool:
         return self._server_sock is not None and not self._stop_event.is_set()
 
+    def _publish_tcp_descriptor(self, port: int, token: str) -> None:
+        fd, tmp_name = tempfile.mkstemp(dir=self.socket_path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                os.chmod(tmp_name, 0o600)
+                json.dump(
+                    {"transport": "tcp", "host": "127.0.0.1", "port": port, "token": token},
+                    handle,
+                )
+            os.replace(tmp_name, self.socket_path)
+        except BaseException:
+            Path(tmp_name).unlink(missing_ok=True)
+            raise
+
     def start(self) -> Path:
         if self._server_sock is not None:
             return self.socket_path
 
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
-        if self.socket_path.exists():
-            self.socket_path.unlink()
-
-        if self._use_tcp:
-            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            try:
+        family = socket.AF_INET if self._use_tcp else socket.AF_UNIX
+        token = None
+        with ExitStack() as rollback:
+            srv = socket.socket(family, socket.SOCK_STREAM)
+            rollback.callback(srv.close)
+            if self._use_tcp:
                 srv.bind(("127.0.0.1", 0))
-                port = srv.getsockname()[1]
-                srv.listen(32)
-                srv.settimeout(0.5)
-                token = secrets.token_hex(24)
-                self._auth_token = token
-                self.socket_path.write_text(
-                    json.dumps(
-                        {
-                            "transport": "tcp",
-                            "host": "127.0.0.1",
-                            "port": port,
-                            "token": token,
-                        }
-                    ),
-                    encoding="utf-8",
-                )
-            except Exception:
-                srv.close()
-                raise
-        else:
-            srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            try:
+            else:
+                self.socket_path.unlink(missing_ok=True)
                 srv.bind(str(self.socket_path))
-                os.chmod(self.socket_path, 0o600)
-                srv.listen(32)
-                srv.settimeout(0.5)
-            except Exception:
-                srv.close()
-                raise
+                rollback.callback(self.socket_path.unlink, missing_ok=True)
+                self.socket_path.chmod(0o600)
+            srv.listen(32)
+            srv.settimeout(0.5)
+            if self._use_tcp:
+                token = secrets.token_hex(24)
+                self._publish_tcp_descriptor(srv.getsockname()[1], token)
+                rollback.callback(self.socket_path.unlink, missing_ok=True)
+            if not self._lazy:
+                self._bridge.ensure_started()
+            rollback.pop_all()
 
-        if not self._lazy:
-            self._bridge.ensure_started()
-
+        self._auth_token = token
         self._stop_event.clear()
         self._server_sock = srv
         self._accept_thread = threading.Thread(
@@ -253,8 +251,8 @@ class Pob2SocketDaemon:
         self._bridge.close()
 
         try:
-            if self.socket_path.exists():
-                self.socket_path.unlink()
+            if srv is not None:
+                self.socket_path.unlink(missing_ok=True)
         except OSError:
             pass
         if self._owns_temp_dir and self._temp_dir is not None and self._temp_dir.exists():
