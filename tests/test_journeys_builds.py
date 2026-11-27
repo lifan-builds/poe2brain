@@ -384,10 +384,12 @@ def test_journey2_ssf_chase_drop_reroll_architect(
             )
         return httpx.Response(404, text="not found")
 
+    sample_fixture = Path(__file__).resolve().parent / "fixtures" / "sample_builds_0.5.5.json.gz"
     mock_http = Poe2HttpClient(sync_transport=httpx.MockTransport(_ssf_snap_handler))
     try:
         with NinjaBuildsService(
             http_client=mock_http,
+            corpus_path=sample_fixture,
             cache_dir=tmp_path / "j2_cache",
             min_uncached_char_interval_seconds=0.0,
         ) as nsvc:
@@ -498,10 +500,12 @@ def test_journey3_hc_pinnacle_boss_oneshot_and_respec_audit(
     def _noop_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404, text="offline")
 
+    sample_fixture = Path(__file__).resolve().parent / "fixtures" / "sample_builds_0.5.5.json.gz"
     mock_http = Poe2HttpClient(sync_transport=httpx.MockTransport(_noop_handler))
     try:
         with NinjaBuildsService(
             http_client=mock_http,
+            corpus_path=sample_fixture,
             cache_dir=tmp_path / "j3_cache",
             min_uncached_char_interval_seconds=0.0,
         ) as nsvc:

@@ -1106,8 +1106,9 @@ def test_cross_process_ninja_character_to_pob_and_filter_generate(
         NinjaBuildsService,
     )
 
-    # Pick a real Martial Artist character from the bundled Forbidden Rites corpus
-    corpus_svc = NinjaBuildsService()
+    # Pick a real Martial Artist character from the deterministic test fixture
+    sample_fixture = Path(__file__).resolve().parent / "fixtures" / "sample_builds_0.5.5.json.gz"
+    corpus_svc = NinjaBuildsService(corpus_path=sample_fixture)
     _, corpus_rows = corpus_svc._ensure_corpus_loaded()
     sample = next(r for r in corpus_rows if r.get("ascendancy_name") == "Martial Artist")
     acct = str(sample["account"])
@@ -1377,7 +1378,10 @@ async def test_mcp_server_stdio_roundtrip(isolated_cli_env: dict[str, str], tmp_
 
             from poe2brain.ninja import NinjaBuildsService
 
-            _, c_rows = NinjaBuildsService()._ensure_corpus_loaded()
+            sample_fixture = (
+                Path(__file__).resolve().parent / "fixtures" / "sample_builds_0.5.5.json.gz"
+            )
+            _, c_rows = NinjaBuildsService(corpus_path=sample_fixture)._ensure_corpus_loaded()
             monk_row = next(r for r in c_rows if r.get("ascendancy_name") == "Martial Artist")
             lich_row = next(r for r in c_rows if r.get("ascendancy_name") == "Lich")
 

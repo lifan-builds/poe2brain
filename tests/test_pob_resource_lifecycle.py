@@ -88,7 +88,7 @@ def _rss_mb(pid: int) -> float:
 
 
 def _load_sample_corpus_builds(count: int = 4) -> list[dict[str, object]]:
-    corpus_path = REPO_ROOT / "data" / "ninja" / "forbidden_rites_0.5.5_builds.json.gz"
+    corpus_path = Path(__file__).resolve().parent / "fixtures" / "sample_builds_0.5.5.json.gz"
     with gzip.open(corpus_path, "rt", encoding="utf-8") as handle:
         builds = [b for b in json.load(handle)["builds"] if b.get("pob_code")]
     ranked = sorted(

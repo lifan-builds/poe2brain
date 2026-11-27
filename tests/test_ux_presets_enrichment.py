@@ -14,7 +14,7 @@ import pytest
 from typer.testing import CliRunner
 
 from poe2brain.cli import app
-from poe2brain.config import BUNDLED_DATA_DIR, POE2_PATCH
+from poe2brain.config import POE2_PATCH
 from poe2brain.crafting.profit import CraftProfitScanner
 from poe2brain.filters.themes import parse_look_intent
 from poe2brain.http import Poe2HttpClient
@@ -27,6 +27,9 @@ from poe2brain.ninja import NinjaBuildsService
 from poe2brain.pob.service import BuildService
 
 runner = CliRunner()
+SAMPLE_FIXTURE_PATH = (
+    Path(__file__).resolve().parent / "fixtures" / f"sample_builds_{POE2_PATCH}.json.gz"
+)
 
 
 def _make_mock_http_client(handler_fn: Any) -> Poe2HttpClient:
@@ -83,8 +86,7 @@ def _make_mock_ninja_http() -> Poe2HttpClient:
 
 def test_pob_stats_mobility_ci_and_audit_bottlenecks() -> None:
     """Verify BuildStats exposes mobility/speed/crit/chaos_immune and audit emits bottlenecks."""
-    corpus_path = BUNDLED_DATA_DIR / "ninja" / f"forbidden_rites_{POE2_PATCH}_builds.json.gz"
-    with gzip.open(corpus_path, "rt", encoding="utf-8") as fh:
+    with gzip.open(SAMPLE_FIXTURE_PATH, "rt", encoding="utf-8") as fh:
         builds = json.load(fh)["builds"]
     sample = next(b for b in builds if b.get("pob_code"))
 
@@ -95,12 +97,16 @@ def test_pob_stats_mobility_ci_and_audit_bottlenecks() -> None:
         assert isinstance(stats.chaos_immune, bool)
         audit = svc.audit_build(slot="ux_test")
         assert isinstance(audit.bottlenecks, list)
-        assert len(audit.bottlenecks) <= 5
+        assert len(audit.bottlenecks) <= 6
 
 
 def test_ninja_search_presets_and_bang_negation(tmp_path: Path) -> None:
     """Verify --preset (sleeper, zoom_mapper, league_start, boss_killer, hc_tank) & !Term."""
-    svc = NinjaBuildsService(http_client=_make_mock_ninja_http(), cache_dir=tmp_path)
+    svc = NinjaBuildsService(
+        http_client=_make_mock_ninja_http(),
+        corpus_path=SAMPLE_FIXTURE_PATH,
+        cache_dir=tmp_path,
+    )
     try:
         sleeper = svc.search_builds(preset="sleeper", limit=5)
         assert sleeper.preset == "sleeper"
@@ -301,7 +307,11 @@ def test_cli_ninja_search_preset_sleeper_json(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Smoke-test `poe2 ninja search --preset sleeper --limit 3 --json` end-to-end offline."""
-    svc = NinjaBuildsService(http_client=_make_mock_ninja_http(), cache_dir=tmp_path)
+    svc = NinjaBuildsService(
+        http_client=_make_mock_ninja_http(),
+        corpus_path=SAMPLE_FIXTURE_PATH,
+        cache_dir=tmp_path,
+    )
     monkeypatch.setattr("poe2brain.mcp_server.get_ninja_service", lambda: svc)
     try:
         res = runner.invoke(

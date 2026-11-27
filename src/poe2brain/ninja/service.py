@@ -21,10 +21,11 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 import httpx
 
 from poe2brain.config import (
-    BUNDLED_DATA_DIR,
     DEFAULT_LEAGUE,
     POE2_PATCH,
     POENINJA_POE2_BASE_URL,
+    get_build_index_manifest_url,
+    get_build_store_path,
 )
 from poe2brain.http import Poe2HttpClient, get_cached_json
 from poe2brain.knowledge.meta import (
@@ -34,6 +35,7 @@ from poe2brain.knowledge.meta import (
 )
 from poe2brain.models.builds import CharacterTimelinePoint, CharacterTimelineReport
 from poe2brain.models.ninja import (
+    BuildIndexSyncReport,
     NinjaBuildEntry,
     NinjaBuildSearchReport,
     NinjaCharacterImport,
@@ -44,6 +46,13 @@ from poe2brain.models.ninja import (
     NinjaStatSummary,
 )
 from poe2brain.ninja.protobuf import decode_ndic_dictionary
+from poe2brain.ninja.store import (
+    DEFAULT_BUILD_INDEX_SYNC_TTL_SECONDS,
+    BuildStore,
+    compute_pob_hash,
+    normalize_league_slug,
+    utc_now_iso,
+)
 from poe2brain.ninja.xml_inspector import decode_pob2_code_to_xml, inspect_pob2_xml_or_code
 
 if TYPE_CHECKING:
@@ -106,10 +115,6 @@ _WEAPON_SHORTHAND_MAP: dict[str, tuple[str, ...]] = {
 
 def _norm_token(value: str) -> str:
     return _NON_ALNUM_RE.sub("", value.strip().lower())
-
-
-def _default_corpus_path() -> Path:
-    return BUNDLED_DATA_DIR / "ninja" / f"forbidden_rites_{POE2_PATCH}_builds.json.gz"
 
 
 def _league_family_specs(
@@ -390,11 +395,11 @@ def sort_time_machine_labels(labels: Iterable[str]) -> list[str]:
 class NinjaBuildsService:
     """Clean-room Path of Exile 2 `poe.ninja` Builds & PoB2 Character Intelligence Service.
 
-    Strictly uses clean `HTTP 200` `poe.ninja` JSON/raw endpoints (`build-index-state`,
+    Uses live `HTTP 200` `poe.ninja` JSON/raw endpoints (`build-index-state`,
     `snapshot-versions`, `pob/raw/overview/code`, `api/lookup/poe2/builds/dictionary`, and
-    public PoB share raw links) plus the bundled MIT-licensed `Forbidden Rites` 353-build
-    leaderboard corpus (`data/ninja/forbidden_rites_0.5.5_builds.json.gz`). Never calls
-    `/api/protected/...` or attempts to bypass Cloudflare challenges.
+    public PoB share raw links) plus a runtime SQLite `BuildStore` (`builds.sqlite`)
+    synced via ETag from the rolling `build-index` GitHub Release (or an explicit `corpus_path`
+    for offline bundles/tests). Never calls `/api/protected/...` or bypasses Cloudflare.
     """
 
     def __init__(
@@ -404,6 +409,10 @@ class NinjaBuildsService:
         build_service: BuildService | None = None,
         meta_service: MetaService | None = None,
         corpus_path: Path | None = None,
+        build_store_path: Path | None = None,
+        index_manifest_url: str | None = None,
+        auto_sync_index: bool = True,
+        index_sync_ttl_seconds: float = DEFAULT_BUILD_INDEX_SYNC_TTL_SECONDS,
         cache_dir: Path | None = None,
         build_index_url: str = POENINJA_BUILD_INDEX_URL,
         snapshot_versions_url: str = POENINJA_SNAPSHOT_VERSIONS_URL,
@@ -422,8 +431,21 @@ class NinjaBuildsService:
         self.meta_service = meta_service or MetaService(
             http_client=self.http_client, cache_dir=cache_dir
         )
-        self.corpus_path = corpus_path if corpus_path is not None else _default_corpus_path()
+        self.corpus_path = corpus_path
         self.cache_dir = cache_dir
+        store_path = (
+            build_store_path
+            if build_store_path is not None
+            else get_build_store_path(cache_dir=cache_dir)
+        )
+        self.build_store = BuildStore(store_path)
+        self.index_manifest_url = (
+            index_manifest_url
+            if index_manifest_url is not None
+            else get_build_index_manifest_url()
+        )
+        self.auto_sync_index = auto_sync_index
+        self.index_sync_ttl_seconds = index_sync_ttl_seconds
         self.build_index_url = build_index_url
         self.snapshot_versions_url = snapshot_versions_url
         self.char_pob_raw_url = char_pob_raw_url
@@ -438,6 +460,7 @@ class NinjaBuildsService:
         self._missing_tm_cache: dict[tuple[str, str, str, str], int] = {}
         self._corpus_records: list[dict[str, Any]] | None = None
         self._deduped_corpus: list[dict[str, Any]] | None = None
+        self._corpus_updated_at: str | None = None
 
     def close(self) -> None:
         if self._owns_build_service and self._build_service is not None:
@@ -472,6 +495,11 @@ class NinjaBuildsService:
     # ------------------------------------------------------------------
 
     def _ensure_corpus_loaded(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Load builds from explicit `corpus_path` (if provided) or the local `BuildStore`."""
+        if self.corpus_path is None:
+            rows = self.build_store.load_builds()
+            return rows, rows
+
         if self._corpus_records is not None and self._deduped_corpus is not None:
             return self._corpus_records, self._deduped_corpus
 
@@ -483,6 +511,9 @@ class NinjaBuildsService:
         with gzip.open(self.corpus_path, "rt", encoding="utf-8") as handle:
             payload = json.load(handle)
         raw_list = list(payload.get("builds") or [])
+        self._corpus_updated_at = (
+            str(payload.get("updated_at") or "") or None
+        )
 
         # Deduplicate by (account.lower(), character.lower()), keeping latest snapshot
         # while preserving leaderboard rank_within_ascendancy.
@@ -498,7 +529,6 @@ class NinjaBuildsService:
             if existing is None:
                 by_ident[ident] = dict(rec)
             else:
-                # Keep newer fetched_at if available, preserving rank_within_ascendancy
                 cur_ts = str(rec.get("fetched_at") or "")
                 old_ts = str(existing.get("fetched_at") or "")
                 rnk = existing.get("rank_within_ascendancy") or rec.get("rank_within_ascendancy")
@@ -512,6 +542,108 @@ class NinjaBuildsService:
         self._corpus_records = raw_list
         self._deduped_corpus = list(by_ident.values())
         return self._corpus_records, self._deduped_corpus
+
+    def sync_build_index(
+        self,
+        league: str = DEFAULT_LEAGUE,
+        *,
+        force_refresh: bool = False,
+    ) -> BuildIndexSyncReport:
+        """Synchronize the runtime SQLite `BuildStore` from the remote build-index manifest."""
+        req_mode, family = _league_family_specs(league)
+        base_league_name = family["sc_trade"][0]
+        league_slug = normalize_league_slug(base_league_name)
+        if not self.auto_sync_index and not force_refresh:
+            return BuildIndexSyncReport(
+                status="disabled",
+                manifest_url=self.index_manifest_url,
+                store_path=str(self.build_store.db_path),
+                league=league_slug,
+                mode=req_mode,
+                index_updated_at=self.build_store.get_meta("manifest_updated_at"),
+                total_store_builds=self.build_store.count_builds(),
+            )
+        return self.build_store.sync_from_remote(
+            self.http_client,
+            self.index_manifest_url,
+            league_slug=league_slug,
+            mode=req_mode,
+            ttl_seconds=self.index_sync_ttl_seconds,
+            force_refresh=force_refresh,
+            now_fn=self._now_fn,
+        )
+
+    def _load_builds_for_query(
+        self,
+        *,
+        league_name: str,
+        mode: str,
+        force_refresh: bool = False,
+    ) -> tuple[list[dict[str, Any]], str | None, list[str]]:
+        """Return `(records, index_updated_at, notes)` for `(league_name, mode)`."""
+        notes: list[str] = []
+        league_slug = normalize_league_slug(league_name)
+
+        if self.corpus_path is not None:
+            _, all_rows = self._ensure_corpus_loaded()
+            matching_league = [
+                r
+                for r in all_rows
+                if normalize_league_slug(str(r.get("league") or league_name)) == league_slug
+            ]
+            exact_mode = [r for r in matching_league if str(r.get("mode") or "sc_trade") == mode]
+            if exact_mode:
+                return exact_mode, self._corpus_updated_at, notes
+            if matching_league:
+                if mode != "sc_trade":
+                    notes.append(
+                        f"Live snapshot & class playrates reflect {league_name!r}; "
+                        f"roster rows fell back to SC Trade entries for this league "
+                        f"because no dedicated {mode} slice is loaded."
+                    )
+                return matching_league, self._corpus_updated_at, notes
+            return [], self._corpus_updated_at, notes
+
+        if self.auto_sync_index:
+            sync_rep = self.build_store.sync_from_remote(
+                self.http_client,
+                self.index_manifest_url,
+                league_slug=league_slug,
+                mode=mode,
+                ttl_seconds=self.index_sync_ttl_seconds,
+                force_refresh=force_refresh,
+                now_fn=self._now_fn,
+            )
+            notes.extend(sync_rep.notes)
+
+        rows = self.build_store.load_builds(league_slug=league_slug, mode=mode)
+        updated_at = (
+            self.build_store.get_meta(f"slice:{league_slug}:{mode}:updated_at")
+            or self.build_store.get_meta("manifest_updated_at")
+        )
+        if rows:
+            return rows, updated_at, notes
+
+        if mode != "sc_trade":
+            sc_rows = self.build_store.load_builds(league_slug=league_slug, mode="sc_trade")
+            if sc_rows:
+                notes.append(
+                    f"Live snapshot & class playrates reflect {league_name!r}; "
+                    f"dedicated {mode} ladder slice is not yet indexed (requires GGG OAuth "
+                    f"service:leagues:ladder), showing SC Trade builds for {league_slug!r}."
+                )
+                updated_at = (
+                    self.build_store.get_meta(f"slice:{league_slug}:sc_trade:updated_at")
+                    or updated_at
+                )
+                return sc_rows, updated_at, notes
+
+        notes.append(
+            f"No audited builds indexed yet for {league_name!r} ({mode}). "
+            "Live poe.ninja class playrates are still shown above; run `poe2 ninja sync` "
+            "or import builds via `poe2 ninja character` to populate the local BuildStore."
+        )
+        return [], updated_at, notes
 
     @staticmethod
     def _assert_not_protected_url(url: str) -> None:
@@ -827,6 +959,8 @@ class NinjaBuildsService:
             account=str(rec["account"]),
             character=str(rec["character"]),
             league=str(rec.get("league") or DEFAULT_LEAGUE),
+            mode=str(rec.get("mode") or "sc_trade"),
+            fetched_at=str(rec["fetched_at"]) if rec.get("fetched_at") else None,
             rank_within_ascendancy=rec.get("rank_within_ascendancy"),
             class_name=str(rec.get("class_name") or "Unknown"),
             ascendancy_name=rec.get("ascendancy_name"),
@@ -892,7 +1026,7 @@ class NinjaBuildsService:
                 float(rec["sleeper_score"]) if rec.get("sleeper_score") is not None else None
             ),
             ninja_url=str(rec.get("ninja_url") or ""),
-            source=str(rec.get("source") or "poeninja_corpus"),
+            source=str(rec.get("source") or "build_index"),
             live_refreshed=bool(rec.get("live_refreshed", False)),
             pob_code=str(rec["pob_code"]) if (include_pob_code and rec.get("pob_code")) else None,
         )
@@ -954,15 +1088,13 @@ class NinjaBuildsService:
         snap_report = self.get_snapshot_state(league, force_refresh=force_refresh)
         primary_snap = snap_report.primary
         notes = list(snap_report.notes)
-        if primary_snap.mode != "sc_trade":
-            notes.append(
-                f"Live snapshot & class playrates reflect {primary_snap.league_name!r} "
-                f"({primary_snap.total_characters:,} indexed characters); build roster rows are "
-                f"filtered from the bundled {POE2_PATCH} Forbidden Rites leaderboard corpus "
-                "(poe.ninja gated /api/protected/.../search behind Cloudflare 403 on 2026-11-18)."
-            )
-
-        _, corpus = self._ensure_corpus_loaded()
+        corpus, index_updated_at, load_notes = self._load_builds_for_query(
+            league_name=primary_snap.league_name,
+            mode=primary_snap.mode,
+            force_refresh=force_refresh,
+        )
+        notes.extend(load_notes)
+        index_sources = sorted({str(r.get("source") or "build_index") for r in corpus})
 
         # Build normalized vocabularies, corpus main-skill rarity counts, and live ladder shares
         skill_vocab: dict[str, str] = {}
@@ -1350,7 +1482,11 @@ class NinjaBuildsService:
 
         # Optional live refresh of top N rows via HTTP 200 /poe2/pob/raw/overview/code
         if refresh_live_top > 0 and top_records:
-            ov_slug = snap_report.modes["sc_trade"].snapshot_name or "forbidden-rites"
+            ov_slug = (
+                primary_snap.snapshot_name
+                or snap_report.modes["sc_trade"].snapshot_name
+                or "forbidden-rites"
+            )
             n_refresh = min(refresh_live_top, len(top_records))
             for i in range(n_refresh):
                 cand = top_records[i]
@@ -1388,20 +1524,28 @@ class NinjaBuildsService:
                             "energy_shield": insp.energy_shield,
                             "mana": insp.mana,
                             "spirit": insp.spirit,
+                            "fetched_at": utc_now_iso(),
+                            "pob_hash": compute_pob_hash(live_code),
                             "pob_code": live_code,
                             "source": "poeninja_live_pob",
                             "live_refreshed": True,
                         }
                     )
+                    if self.corpus_path is None:
+                        self.build_store.upsert_build(
+                            cand,
+                            league_slug=normalize_league_slug(primary_snap.league_name),
+                            mode=str(cand.get("mode") or primary_snap.mode),
+                        )
                 except httpx.HTTPStatusError as exc:
                     notes.append(
                         f"Live refresh skipped for {cand['account']}/{cand['character']} "
-                        f"(HTTP {exc.response.status_code}); retained corpus snapshot."
+                        f"(HTTP {exc.response.status_code}); retained cached snapshot."
                     )
                 except (httpx.HTTPError, ValueError) as exc:
                     notes.append(
                         f"Live refresh skipped for {cand['account']}/{cand['character']} "
-                        f"({type(exc).__name__}); retained corpus snapshot."
+                        f"({type(exc).__name__}); retained cached snapshot."
                     )
 
         entries = [self._record_to_entry(r, include_pob_code=include_pob_code) for r in top_records]
@@ -1409,6 +1553,9 @@ class NinjaBuildsService:
         return NinjaBuildSearchReport(
             patch=POE2_PATCH,
             league=primary_snap.league_name,
+            mode=primary_snap.mode,
+            index_updated_at=index_updated_at,
+            index_sources=index_sources,
             snapshot=primary_snap,
             corpus_total_builds=len(corpus),
             matched_builds=denom,
@@ -1446,10 +1593,14 @@ class NinjaBuildsService:
             p.snapshot_name or re.sub(r"[^a-z0-9]+", "-", p.league_name.lower()).strip("-"),
         )
 
-    def _find_corpus_fallback(self, account: str, character: str) -> dict[str, Any] | None:
-        _, corpus = self._ensure_corpus_loaded()
+    def _find_corpus_fallback(
+        self, account: str, character: str, *, league_slug: str | None = None
+    ) -> dict[str, Any] | None:
         acct_low = _normalize_account_tag(account).lower()
         char_low = character.strip().lower()
+        if self.corpus_path is None:
+            return self.build_store.find_character(acct_low, char_low, league_slug=league_slug)
+        _, corpus = self._ensure_corpus_loaded()
         for rec in corpus:
             if (
                 str(rec.get("account") or "").lower() == acct_low
@@ -2030,6 +2181,74 @@ class NinjaBuildsService:
             used_slot = slot
             if audit:
                 dewatered_audit = svc.audit_build(slot=slot)
+
+        # Write-through into runtime BuildStore whenever a live character is fetched
+        if (
+            self.corpus_path is None
+            and resolved_acct
+            and resolved_char
+            and source_kind != "poeninja_archived_corpus"
+            and resolved_tm is None
+        ):
+            rec_league = resolved_league or league
+            rec_mode, _ = _league_family_specs(rec_league)
+            wt_record: dict[str, Any] = {
+                "account": resolved_acct,
+                "character": resolved_char,
+                "league": rec_league,
+                "mode": rec_mode,
+                "fetched_at": utc_now_iso(),
+                "audit_patch": POE2_PATCH,
+                "source": source_kind,
+                "live_refreshed": True,
+                "class_name": insp.class_name,
+                "ascendancy_name": insp.ascendancy_name,
+                "level": insp.level,
+                "main_skill": insp.main_skill,
+                "active_skills": insp.active_skills,
+                "support_gems": insp.support_gems,
+                "unique_items": insp.unique_items,
+                "weapon_types": insp.weapon_types,
+                "keystones": insp.keystones,
+                "ascendancy_notables": insp.ascendancy_notables,
+                "anoints": insp.anoints,
+                "total_dps": insp.total_dps,
+                "combined_dps": insp.combined_dps,
+                "full_dps": insp.full_dps,
+                "effective_dps": insp.effective_dps,
+                "total_ehp": insp.total_ehp,
+                "life": insp.life,
+                "energy_shield": insp.energy_shield,
+                "mana": insp.mana,
+                "spirit": insp.spirit,
+                "ninja_url": ninja_url or resolved_url,
+                "pob_hash": compute_pob_hash(pob_code),
+                "pob_code": pob_code,
+            }
+            mob_tags, chase_uniques = _derive_mobility_and_chase(wt_record)
+            wt_record["mobility_tags"] = mob_tags
+            wt_record["t0_chase_uniques"] = chase_uniques
+            if dewatered_audit is not None:
+                sus = dewatered_audit.sustainable_pinnacle_stats
+                wt_record.update(
+                    {
+                        "dewatered_dps": round(float(sus.effective_dps), 2),
+                        "dps_inflation_pct": round(float(dewatered_audit.dps_inflation_pct), 2),
+                        "dewatered_ehp": round(float(sus.total_ehp), 2),
+                        "phys_max_hit": round(float(sus.phys_max_hit), 1),
+                        "chaos_max_hit": round(float(sus.chaos_max_hit), 1),
+                        "chaos_immune": bool(sus.chaos_immune),
+                        "movement_speed_mod": round(float(sus.movement_speed_mod), 4),
+                        "movement_speed_while_using_skill": round(
+                            float(sus.movement_speed_while_using_skill), 4
+                        ),
+                    }
+                )
+            self.build_store.upsert_build(
+                wt_record,
+                league_slug=normalize_league_slug(rec_league),
+                mode=rec_mode,
+            )
 
         return NinjaCharacterImport(
             source_kind=source_kind,

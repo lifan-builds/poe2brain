@@ -13,9 +13,10 @@ from typing import Any
 import httpx
 import pytest
 
-from poe2brain.config import BUNDLED_DATA_DIR, POE2_PATCH
+from poe2brain.config import POE2_PATCH
 from poe2brain.http import Poe2HttpClient
 from poe2brain.ninja import (
+    BuildStore,
     NinjaBuildsService,
     decode_ndic_dictionary,
     decode_pob2_code_to_xml,
@@ -26,6 +27,10 @@ from poe2brain.ninja import (
 )
 
 LIVE_ENABLED = os.environ.get("POE2_LIVE_TESTS") == "1"
+SAMPLE_FIXTURE_PATH = (
+    Path(__file__).resolve().parent / "fixtures" / f"sample_builds_{POE2_PATCH}.json.gz"
+)
+SAMPLE_LICENSE_PATH = Path(__file__).resolve().parent / "fixtures" / "LICENSE.pobr"
 
 
 def _pb_tag(field_no: int, wire_type: int) -> bytes:
@@ -254,44 +259,135 @@ def test_ndic_and_search_result_protobuf_roundtrip() -> None:
     assert parsed.columns["energyShield"] == [3031, None, 9075]
 
 
-def test_bundled_forbidden_rites_corpus_integrity() -> None:
-    lic_path = BUNDLED_DATA_DIR / "ninja" / "LICENSE.pobr"
-    corpus_path = BUNDLED_DATA_DIR / "ninja" / f"forbidden_rites_{POE2_PATCH}_builds.json.gz"
-    assert lic_path.is_file()
-    assert "MIT License" in lic_path.read_text(encoding="utf-8")
-    assert corpus_path.is_file()
+def test_sample_fixture_integrity_and_no_bundled_static_corpus() -> None:
+    """Ensure the 3.6MB hardcoded corpus is gone from data/ and tests use the slim fixture."""
+    from poe2brain.config import BUNDLED_DATA_DIR
 
-    with gzip.open(corpus_path, "rt", encoding="utf-8") as handle:
+    old_corpus = BUNDLED_DATA_DIR / "ninja" / f"forbidden_rites_{POE2_PATCH}_builds.json.gz"
+    assert not old_corpus.exists()
+    assert SAMPLE_LICENSE_PATH.is_file()
+    assert "MIT License" in SAMPLE_LICENSE_PATH.read_text(encoding="utf-8")
+    assert SAMPLE_FIXTURE_PATH.is_file()
+
+    with gzip.open(SAMPLE_FIXTURE_PATH, "rt", encoding="utf-8") as handle:
         payload = json.load(handle)
 
     assert payload["patch"] == POE2_PATCH
-    assert payload["fixture_count"] == 353
-    assert payload["ascendancy_count"] == 23
-
-    top10_counts: dict[str, int] = {}
+    assert 20 <= payload["build_count"] <= 50
     for rec in payload["builds"]:
-        if rec["suite"] == "ninja-top10-2026-10-26":
-            asc = rec["ascendancy_name"]
-            top10_counts[asc] = top10_counts.get(asc, 0) + 1
         # Lineage supports must never leak into active_skills
         assert "Rakiata's Flow" not in rec["active_skills"]
         assert "Dialla's Desire" not in rec["active_skills"]
-        assert rec["weapon_types"], f"Empty weapon_types on {rec['fixture_id']}"
+        assert rec["weapon_types"], f"Empty weapon_types on {rec.get('character')}"
 
-    assert len(top10_counts) == 23
-    assert all(cnt == 10 for cnt in top10_counts.values())
+
+def test_build_store_remote_sync_etag_writethrough_and_day1_degradation(tmp_path: Path) -> None:
+    """Verify SQLite BuildStore ETag sync, 304 handling, write-through, and Day-1 empty league."""
+    import hashlib
+
+    slice_bytes = SAMPLE_FIXTURE_PATH.read_bytes()
+    slice_sha = hashlib.sha256(slice_bytes).hexdigest()
+    with gzip.open(SAMPLE_FIXTURE_PATH, "rt", encoding="utf-8") as fh:
+        sample_rows = json.load(fh)["builds"]
+    sample_code = sample_rows[0]["pob_code"]
+
+    manifest_calls = 0
+    slice_calls = 0
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        nonlocal manifest_calls, slice_calls
+        url = str(request.url)
+        if url.endswith("/manifest.json"):
+            manifest_calls += 1
+            if request.headers.get("If-None-Match") == '"v1-etag"':
+                return httpx.Response(304)
+            return httpx.Response(
+                200,
+                headers={"ETag": '"v1-etag"'},
+                json={
+                    "schema_version": 1,
+                    "patch": POE2_PATCH,
+                    "updated_at": "2026-11-26T16:00:00Z",
+                    "default_league": "Forbidden Rites",
+                    "default_league_slug": "forbiddenrites",
+                    "slices": [
+                        {
+                            "league": "Forbidden Rites",
+                            "league_slug": "forbiddenrites",
+                            "mode": "sc_trade",
+                            "asset": "builds_forbiddenrites_sc_trade.json.gz",
+                            "sha256": slice_sha,
+                            "build_count": len(sample_rows),
+                            "updated_at": "2026-11-26T16:00:00Z",
+                        }
+                    ],
+                },
+            )
+        if url.endswith("/builds_forbiddenrites_sc_trade.json.gz"):
+            slice_calls += 1
+            return httpx.Response(200, content=slice_bytes)
+        if "build-index-state" in url:
+            return httpx.Response(200, json={"leagueBuilds": []})
+        if "snapshot-versions" in url:
+            return httpx.Response(200, json=[])
+        if request.url.path == "/poe2/pob/raw/overview/code":
+            return httpx.Response(200, text=sample_code)
+        return httpx.Response(404)
+
+    http_client = _make_mock_http_client(_handler)
+    clock = [1000.0]
+
+    with NinjaBuildsService(
+        http_client=http_client,
+        cache_dir=tmp_path / "cache",
+        index_manifest_url="https://example.test/build-index/manifest.json",
+        index_sync_ttl_seconds=3600.0,
+        min_uncached_char_interval_seconds=0.0,
+        now_fn=lambda: clock[0],
+    ) as svc:
+        # 1. Initial search pulls remote manifest + slice into SQLite BuildStore
+        rep = svc.search_builds("Forbidden Rites", limit=5)
+        assert rep.corpus_total_builds == len(sample_rows)
+        assert rep.index_updated_at == "2026-11-26T16:00:00Z"
+        assert manifest_calls == 1 and slice_calls == 1
+
+        # 2. Second search within TTL uses local SQLite with zero manifest requests
+        rep2 = svc.search_builds("Forbidden Rites", limit=5)
+        assert rep2.corpus_total_builds == len(sample_rows)
+        assert manifest_calls == 1 and slice_calls == 1
+
+        # 3. After TTL expires, conditional GET returns 304 without re-downloading slice
+        clock[0] += 7200.0
+        sync_rep = svc.sync_build_index("Forbidden Rites", force_refresh=False)
+        assert sync_rep.status == "not_modified"
+        assert manifest_calls == 2 and slice_calls == 1
+
+        # 4. Day-1 new league with no builds degrades gracefully (never leaks Forbidden Rites rows!)
+        day1 = svc.search_builds("Brand New League", limit=5)
+        assert day1.corpus_total_builds == 0
+        assert day1.matched_builds == 0
+        assert any("No audited builds indexed yet" in n for n in day1.notes)
+
+        # 5. Live fetch_character writes through directly into BuildStore
+        before_cnt = svc.build_store.count_builds()
+        svc.fetch_character("FreshPlayer-7777", "DayOneHero", league="Brand New League")
+        assert svc.build_store.count_builds() == before_cnt + 1
+        found = svc.build_store.find_character("FreshPlayer-7777", "DayOneHero")
+        assert found is not None and found["source"] == "poeninja_live_pob"
+        assert isinstance(svc.build_store, BuildStore)
 
 
 def test_multi_facet_search_and_guardrails(tmp_path: Path) -> None:
-    corpus_path = BUNDLED_DATA_DIR / "ninja" / f"forbidden_rites_{POE2_PATCH}_builds.json.gz"
-    with gzip.open(corpus_path, "rt", encoding="utf-8") as handle:
-        sample_code = json.load(handle)["builds"][0]["pob_code"]
+    with gzip.open(SAMPLE_FIXTURE_PATH, "rt", encoding="utf-8") as handle:
+        sample_builds = json.load(handle)["builds"]
+        sample_code = sample_builds[0]["pob_code"]
 
     handler, _ = _mock_ninja_handler_factory(sample_code)
     http_client = _make_mock_http_client(handler)
 
     with NinjaBuildsService(
         http_client=http_client,
+        corpus_path=SAMPLE_FIXTURE_PATH,
         cache_dir=tmp_path / "cache",
         min_uncached_char_interval_seconds=0.0,
     ) as svc:
@@ -307,7 +403,7 @@ def test_multi_facet_search_and_guardrails(tmp_path: Path) -> None:
 
         # 2. Multi-facet search: shorthand ascendancy + skill + unique + keystone + weapon
         rep_all = svc.search_builds(limit=20)
-        assert rep_all.corpus_total_builds >= 340
+        assert rep_all.corpus_total_builds == len(sample_builds)
         assert rep_all.matched_builds == rep_all.corpus_total_builds
         assert len(rep_all.builds) == 20
         assert rep_all.top_ascendancies
@@ -325,7 +421,7 @@ def test_multi_facet_search_and_guardrails(tmp_path: Path) -> None:
 
         # Shorthand alias ("gemling" -> "Gemling Legionnaire")
         rep_gemling = svc.search_builds(ascendancy="gemling", limit=10)
-        assert rep_gemling.matched_builds >= 10
+        assert rep_gemling.matched_builds >= 3
         assert all(b.ascendancy_name == "Gemling Legionnaire" for b in rep_gemling.builds)
 
         # Weapon alias ("quarterstaff" matches Warstaff/Quarterstaff builds)
@@ -360,8 +456,7 @@ def test_multi_facet_search_and_guardrails(tmp_path: Path) -> None:
 
 
 def test_character_url_routing_pacing_and_fallbacks(tmp_path: Path) -> None:
-    corpus_path = BUNDLED_DATA_DIR / "ninja" / f"forbidden_rites_{POE2_PATCH}_builds.json.gz"
-    with gzip.open(corpus_path, "rt", encoding="utf-8") as handle:
+    with gzip.open(SAMPLE_FIXTURE_PATH, "rt", encoding="utf-8") as handle:
         builds = json.load(handle)["builds"]
     sample_code = builds[0]["pob_code"]
 
@@ -380,6 +475,7 @@ def test_character_url_routing_pacing_and_fallbacks(tmp_path: Path) -> None:
 
     with NinjaBuildsService(
         http_client=http_client,
+        corpus_path=SAMPLE_FIXTURE_PATH,
         cache_dir=tmp_path / "cache",
         min_uncached_char_interval_seconds=1.0,
         monotonic_fn=_fake_mono,

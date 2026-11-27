@@ -79,6 +79,8 @@ class NinjaBuildEntry(Poe2Model):
     account: str
     character: str
     league: str = DEFAULT_LEAGUE
+    mode: str = "sc_trade"
+    fetched_at: str | None = None
     rank_within_ascendancy: int | None = None
     class_name: str
     ascendancy_name: str | None = None
@@ -114,7 +116,7 @@ class NinjaBuildEntry(Poe2Model):
     t0_chase_uniques: list[str] = Field(default_factory=list)
     sleeper_score: float | None = None
     ninja_url: str
-    source: str = "poeninja_corpus"
+    source: str = "build_index"
     live_refreshed: bool = False
     pob_code: str | None = None
 
@@ -122,6 +124,9 @@ class NinjaBuildEntry(Poe2Model):
 class NinjaBuildSearchReport(Poe2Model):
     patch: str = POE2_PATCH
     league: str = DEFAULT_LEAGUE
+    mode: str = "sc_trade"
+    index_updated_at: str | None = None
+    index_sources: list[str] = Field(default_factory=list)
     snapshot: NinjaSnapshotInfo | None = None
     corpus_total_builds: int = 0
     matched_builds: int = 0
@@ -140,6 +145,19 @@ class NinjaBuildSearchReport(Poe2Model):
     life_distribution: NinjaStatSummary = Field(default_factory=NinjaStatSummary)
     es_distribution: NinjaStatSummary = Field(default_factory=NinjaStatSummary)
     builds: list[NinjaBuildEntry] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class BuildIndexSyncReport(Poe2Model):
+    status: Literal["updated", "not_modified", "cached_fresh", "unavailable", "disabled"]
+    manifest_url: str | None = None
+    store_path: str
+    league: str | None = None
+    mode: str | None = None
+    etag: str | None = None
+    index_updated_at: str | None = None
+    synced_builds: int = 0
+    total_store_builds: int = 0
     notes: list[str] = Field(default_factory=list)
 
 

@@ -31,6 +31,7 @@ from poe2brain.mcp_server import (
     execute_ninja_character,
     execute_ninja_search,
     execute_ninja_snapshots,
+    execute_ninja_sync,
     execute_pob_calc_breakdown,
     execute_pob_compare,
     execute_pob_hc_audit,
@@ -2797,6 +2798,34 @@ def craft_profit_cmd(
 # ---------------------------------------------------------------------------
 # Pillar 5: PoE Ninja Builds (`poe2 ninja ...`)
 # ---------------------------------------------------------------------------
+
+
+@ninja_app.command("sync")
+def ninja_sync_cmd(
+    league: Annotated[str, typer.Option("--league", help="PoE2 league name.")] = DEFAULT_LEAGUE,
+    force: Annotated[
+        bool,
+        typer.Option("--force/--no-force", help="Force re-check remote manifest ignoring TTL."),
+    ] = True,
+    json_output: JsonOpt = False,
+) -> None:
+    """Sync the local runtime SQLite BuildStore from the rolling build-index release."""
+
+    def _compute() -> dict[str, Any]:
+        return execute_ninja_sync(league=league, force_refresh=force)
+
+    def _render(data: dict[str, Any]) -> None:
+        console.print(
+            f"[bold cyan]BuildStore Sync[/bold cyan] ({data['status']}) — "
+            f"synced={data['synced_builds']}, total={data['total_store_builds']}"
+        )
+        console.print(f"  Store      : {data['store_path']}")
+        console.print(f"  Manifest   : {data.get('manifest_url') or '-'}")
+        console.print(f"  Updated At : {data.get('index_updated_at') or '-'}")
+        for note in data.get("notes") or []:
+            console.print(f"  [yellow]Note:[/yellow] {note}")
+
+    _run_cli(json_output, _compute, _render)
 
 
 @ninja_app.command("snapshots")

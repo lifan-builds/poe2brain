@@ -27,6 +27,9 @@ GGG_TRADE2_BASE_URL: str = "https://www.pathofexile.com/api/trade2"
 GGG_TRADE2_WEB_BASE_URL: str = "https://www.pathofexile.com/trade2/search/poe2"
 POE2SCOUT_API_BASE_URL: str = "https://api.poe2scout.com"
 POENINJA_POE2_BASE_URL: str = "https://poe.ninja/poe2/api"
+DEFAULT_BUILD_INDEX_MANIFEST_URL: str = (
+    f"{REPO_URL}/releases/download/build-index/manifest.json"
+)
 
 LUAJIT_COMMIT: str = "2460b3ff93a1c955de3d62cfc825de7d68dc272e"
 LUAUTF8_VERSION: str = "0.1.6"
@@ -118,6 +121,21 @@ def get_pob2_paths(pob2_dir: Path | None = None) -> Pob2RuntimePaths:
 
 def get_http_cache_dir() -> Path:
     return get_cache_dir() / "http"
+
+
+def get_build_store_path(cache_dir: Path | None = None) -> Path:
+    override = os.environ.get("POE2BRAIN_BUILD_STORE_PATH")
+    if override and cache_dir is None:
+        return Path(override).expanduser().resolve()
+    root = cache_dir if cache_dir is not None else get_cache_dir()
+    return root / "builds.sqlite"
+
+
+def get_build_index_manifest_url() -> str:
+    override = os.environ.get("POE2BRAIN_BUILD_INDEX_URL")
+    if override and override.strip():
+        return override.strip()
+    return DEFAULT_BUILD_INDEX_MANIFEST_URL
 
 
 def get_gamedata_db_path() -> Path:

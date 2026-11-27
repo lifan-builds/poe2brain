@@ -26,7 +26,7 @@ from poe2brain.trade.economy import EconomyService
 from poe2brain.trade.item_parser import parse_clipboard_item
 
 CORPUS_PATH = (
-    Path(__file__).resolve().parents[1] / "data/ninja/forbidden_rites_0.5.5_builds.json.gz"
+    Path(__file__).resolve().parent / "fixtures/sample_builds_0.5.5.json.gz"
 )
 
 

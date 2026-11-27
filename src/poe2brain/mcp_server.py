@@ -2191,6 +2191,18 @@ def poe2_scan_craft_profit(
 # ---------------------------------------------------------------------------
 
 
+def execute_ninja_sync(
+    *,
+    league: str = DEFAULT_LEAGUE,
+    force_refresh: bool = True,
+) -> dict[str, Any]:
+    return (
+        get_ninja_service()
+        .sync_build_index(league=league, force_refresh=force_refresh)
+        .model_dump(mode="json")
+    )
+
+
 def execute_ninja_snapshots(
     *,
     league: str = DEFAULT_LEAGUE,

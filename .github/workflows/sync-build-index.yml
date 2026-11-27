@@ -1,0 +1,112 @@
+name: Sync Build Index (Rolling Release)
+
+on:
+  schedule:
+    # Daily incremental refresh & headless PoB2 dewatering at 06:17 UTC
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+    inputs:
+      league:
+        description: "PoE2 league name (defaults to config DEFAULT_LEAGUE)"
+        required: false
+        default: "Forbidden Rites"
+      max_live_fetches:
+        description: "Max polite live poe.ninja PoB fetches per run"
+        required: false
+        default: "150"
+      force_reaudit:
+        description: "Force headless PoB2 re-audit across all builds"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-build-index
+  cancel-in-progress: false
+
+jobs:
+  sync-index:
+    name: Build & Publish Audited PoE2 Build Index
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --python 3.12
+
+      - name: Cache headless LuaJIT + PathOfBuilding-PoE2 runtime
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/poe2brain/pob2
+          key: pob2-linux-${{ hashFiles('scripts/bootstrap_pob2.sh', 'src/poe2brain/config.py') }}
+
+      - name: Bootstrap headless PathOfBuilding-PoE2 runtime
+        run: uv run poe2 bootstrap pob2 --json
+
+      - name: Run incremental build index sync & PoB2 dewatering
+        env:
+          GGG_OAUTH_CLIENT_ID: ${{ secrets.GGG_OAUTH_CLIENT_ID }}
+          GGG_OAUTH_CLIENT_SECRET: ${{ secrets.GGG_OAUTH_CLIENT_SECRET }}
+        run: |
+          ARGS=(
+            --out-dir dist/build-index
+            --max-live-fetches "${{ inputs.max_live_fetches || '150' }}"
+            --community-feed "https://poe2brain.clifan.com/api/ninja/submissions"
+          )
+          if [ -n "${{ inputs.league }}" ]; then
+            ARGS+=(--league "${{ inputs.league }}")
+          fi
+          if [ "${{ inputs.force_reaudit }}" = "true" ]; then
+            ARGS+=(--force-reaudit)
+          fi
+          uv run python scripts/sync_build_index.py "${ARGS[@]}"
+
+      - name: Publish rolling build-index GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="build-index"
+          UPDATED_AT="$(python3 -c 'import json; print(json.load(open("dist/build-index/manifest.json"))["updated_at"])')"
+          SUMMARY="$(python3 -c '
+          import json
+          m = json.load(open("dist/build-index/manifest.json"))
+          lines = [
+            f"Rolling automated PoE2 `{m[\"patch\"]}` audited build index (updated `{m[\"updated_at\"]}`).",
+            "",
+            "| League | Mode | Builds | Live Refreshed | PoB2 Audited | Sources |",
+            "|---|---|---:|---:|---:|---|",
+          ]
+          for s in m["slices"]:
+            lines.append(
+              f"| {s[\"league\"]} | `{s[\"mode\"]}` | {s[\"build_count\"]} | "
+              f"{s[\"live_refreshed_count\"]} | {s[\"pob2_audited_count\"]} | "
+              f"`{\", \".join(s[\"sources\"])}` |"
+            )
+          print("\n".join(lines))
+          ')"
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" dist/build-index/* --clobber
+            gh release edit "${TAG}" \
+              --title "PoE2 Build Index (Rolling · ${UPDATED_AT})" \
+              --notes "${SUMMARY}"
+          else
+            gh release create "${TAG}" dist/build-index/* \
+              --title "PoE2 Build Index (Rolling · ${UPDATED_AT})" \
+              --notes "${SUMMARY}" \
+              --prerelease=false
+          fi
