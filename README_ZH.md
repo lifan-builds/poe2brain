@@ -1,12 +1,9 @@
 <div align="center">
 
-<a href="https://poe2brain.clifan.com/">
-  <img src="docs/assets/hero-banner.jpg" alt="poe2brain — 流放之路 2 (0.5.5) AI 智能引擎" width="100%" />
-</a>
+<img src="docs/assets/hero-banner.svg" alt="poe2brain — 流放之路 2 (0.5.5) AI 智能引擎" width="100%" />
 
 <br/>
 
-[![在线体验](https://img.shields.io/badge/免安装在线体验-poe2brain.clifan.com-f0c774?style=flat-square&logo=cloudflare&logoColor=08090d)](https://poe2brain.clifan.com/)
 [![CI (Windows + macOS)](https://img.shields.io/github/actions/workflow/status/lifan-builds/poe2brain/ci.yml?branch=main&style=flat-square&label=CI%20Windows%20%2B%20macOS)](https://github.com/lifan-builds/poe2brain/actions/workflows/ci.yml)
 [![版本](https://img.shields.io/badge/流放之路2-0.5.5%20禁忌秘仪-d4a24c?style=flat-square)](https://github.com/lifan-builds/poe2brain)
 [![工具数](https://img.shields.io/badge/MCP%20%2B%20CLI-44%20个全功能工具-38bdf8?style=flat-square)](#完整工具与命令速查)
@@ -19,7 +16,6 @@
 </h3>
 
 <p>
-  <a href="https://poe2brain.clifan.com/"><strong>免安装在线实战台 ↗</strong></a> ·
   <a href="README.md">English</a> ·
   <a href="README_ZH.md"><strong>简体中文</strong></a> ·
   <a href="docs/zh/QUICKSTART_WINDOWS.md"><strong>Windows 零编译保姆教程</strong></a> ·
@@ -29,17 +25,9 @@
 
 </div>
 
-> **5 秒免安装在线体验：** 直接打开 **[poe2brain.clifan.com](https://poe2brain.clifan.com/)** —— 不用配 Python/命令行，浏览器里就能直接体验 PoB2 一键去水审计、0.5.5 真值在线问答、每日自动更新的去水黑马 BD 榜、50 字防翻车引路石正则和 0.5.5 智能过滤器工坊！
->
 > **灵感致谢：** 特别感谢 UP 主 **[流放降临-某雷](https://space.bilibili.com/2132384)** 与他的流放 1 开源项目 [`exilemoulei/pob4agents`](https://github.com/exilemoulei/pob4agents) 把「PoE 接 AI 助手」这条路趟了出来！`poe2brain` 是受其启发、专为 **《流放之路 2》（`Patch 0.5.5`）** 从零独立编写的姊妹引擎；玩一代的兄弟强烈推荐去支持雷哥的 [`pob4agents`](https://github.com/exilemoulei/pob4agents)！
 
 ---
-
-<p align="center">
-  <a href="https://poe2brain.clifan.com/">
-    <img src="docs/assets/web-showcase.jpg" alt="poe2brain.clifan.com 流放之路 2 暗黑金色在线实战台预览" width="96%" />
-  </a>
-</p>
 
 ## 为什么做 `poe2brain`？（告别 AI 拿流放 1 规则胡说八道）
 
@@ -119,6 +107,8 @@ flowchart TB
 > > *「请帮我克隆 `https://github.com/lifan-builds/poe2brain`，按照里面的 `docs/zh/QUICKSTART_WINDOWS.md` 帮我装好 `uv`、执行 `uv sync`、`uv run poe2 bootstrap pob2`，验证 `uv run poe2 version --json` 通过后帮我接好 MCP。」*
 >
 > 完整 Windows 保姆级避坑文档（含 **`Failed to spawn: poe2` 排查**、PowerShell 中文乱码、本地 PoB2 自动识别）：[docs/zh/QUICKSTART_WINDOWS.md](docs/zh/QUICKSTART_WINDOWS.md)
+>
+> **可选网页试用：** 另有轻量网页版 [poe2brain.clifan.com](https://poe2brain.clifan.com/)（部署在海外节点，国内网络可能无法直连；完整无头 PoB2、本地存档与 MCP 接入推荐使用下方本地安装）。
 
 ### 第 1 步：安装 `uv`（极速 Python 环境管理器）
 
