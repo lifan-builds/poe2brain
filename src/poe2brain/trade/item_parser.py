@@ -1225,3 +1225,73 @@ def parsed_item_to_pob2_text(item: ParsedItem) -> str:
     if item.mirrored:
         lines.append("Mirrored")
     return "\n".join(lines) + "\n"
+
+
+_ITEM_CLASS_HEADER_RE = re.compile(
+    r"^(?:Item Class|物\s*品\s*(?:類\s*別|类\s*别|種\s*類|种\s*类))\s*[:：]\s*\S", re.I
+)
+_RARITY_HEADER_RE = re.compile(
+    r"^(?:Rarity\s*:\s*(?:Normal|Magic|Rare|Unique|Currency|Gem|Divination Card)\b"
+    r"|稀\s*有\s*度\s*[:：]\s*\S)",
+    re.I,
+)
+_DUMP_DIVIDER_ONLY_RE = re.compile(r"^[=#*~_]{3,}$")
+
+
+def split_multi_item_clipboard_dump(items: Sequence[str] | str) -> list[str]:
+    """Split a multi-item paste string or sequence into clean per-item Ctrl+C strings."""
+    raw_blocks = [items] if isinstance(items, str) else [str(x) for x in items]
+    split_items: list[str] = []
+
+    for block in raw_blocks:
+        if not block or not block.strip():
+            continue
+        lines = block.splitlines()
+        has_headers = any(
+            _ITEM_CLASS_HEADER_RE.match(ln.strip()) or _RARITY_HEADER_RE.match(ln.strip())
+            for ln in lines
+        )
+        if not has_headers:
+            for sub in re.split(r"\n\s*\n+", block.strip()):
+                if sub.strip():
+                    split_items.append(sub.strip())
+            continue
+
+        chunks: list[list[str]] = []
+        current: list[str] = []
+        last_non_empty = ""
+
+        for ln in lines:
+            stripped = ln.strip()
+            if _DUMP_DIVIDER_ONLY_RE.match(stripped):
+                continue
+            if _ITEM_CLASS_HEADER_RE.match(stripped):
+                if any(x.strip() for x in current):
+                    chunks.append(current)
+                    current = []
+                current.append(ln)
+                last_non_empty = stripped
+            elif _RARITY_HEADER_RE.match(stripped):
+                if any(x.strip() for x in current) and not _ITEM_CLASS_HEADER_RE.match(
+                    last_non_empty
+                ):
+                    chunks.append(current)
+                    current = []
+                current.append(ln)
+                last_non_empty = stripped
+            else:
+                current.append(ln)
+                if stripped:
+                    last_non_empty = stripped
+
+        if any(x.strip() for x in current):
+            chunks.append(current)
+
+        for chunk in chunks:
+            joined = "\n".join(chunk).strip()
+            if joined:
+                split_items.append(joined)
+
+    if not split_items:
+        raise ValueError("Provide at least one PoE2 Ctrl+C item to triage.")
+    return split_items

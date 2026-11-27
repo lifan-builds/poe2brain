@@ -22,109 +22,57 @@ _QUOTED_EXCL_RE = re.compile(r'!"([^"\n]+)"')
 _QUOTED_POS_RE = re.compile(r'"([^"\n]+)"')
 
 
-def _eval_poe2_juicing_regex(answer: str, check: dict[str, Any]) -> tuple[bool, str]:
+def _eval_poe2_stash_regex(
+    answer: str, check: dict[str, Any], *, negated: bool
+) -> tuple[bool, str]:
     max_chars = int(check.get("max_chars", 50))
     must_match = check.get("must_match_mods", [])
     must_not_match = check.get("must_not_match_mods", [])
 
     candidates: list[str] = []
-    for m in _BACKTICK_RE.finditer(answer):
-        s = m.group(1).strip()
-        if s.startswith('"') and s.endswith('"') and len(s) >= 3:
-            candidates.append(s)
-        elif "|" in s and not s.startswith("!"):
-            candidates.append(f'"{s}"')
-    for m in _QUOTED_POS_RE.finditer(answer):
-        s = m.group(0).strip()
-        if "|" in s and not answer[max(0, m.start() - 1) : m.start()] == "!":
-            candidates.append(s)
+    if negated:
+        for m in _BACKTICK_RE.finditer(answer):
+            s = m.group(1).strip()
+            if s.startswith("!") and '"' in s:
+                candidates.append(s)
+        for m in _QUOTED_EXCL_RE.finditer(answer):
+            candidates.append(m.group(0).strip())
+    else:
+        for m in _BACKTICK_RE.finditer(answer):
+            s = m.group(1).strip()
+            if s.startswith('"') and s.endswith('"') and len(s) >= 3:
+                candidates.append(s)
+            elif "|" in s and not s.startswith("!"):
+                candidates.append(f'"{s}"')
+        for m in _QUOTED_POS_RE.finditer(answer):
+            s = m.group(0).strip()
+            if "|" in s and answer[max(0, m.start() - 1) : m.start()] != "!":
+                candidates.append(s)
 
     seen: set[str] = set()
     uniq = [c for c in candidates if not (c in seen or seen.add(c))]
+    kind_lbl = 'negated stash regex (!"...")' if negated else "positive stash regex"
     if not uniq:
-        return False, "No positive PoE2 stash juicing regex found in answer"
+        return False, f"No PoE2 {kind_lbl} found in answer"
 
     best_err = ""
     for cand in uniq:
         if len(cand) > max_chars:
             best_err = f"Candidate `{cand}` has length {len(cand)} > {max_chars}"
             continue
-        inner = cand[1:-1]
+        if negated:
+            m = _QUOTED_EXCL_RE.fullmatch(cand)
+            if not m:
+                best_err = f'Candidate `{cand}` is not in strict PoE2 `!"..."` syntax'
+                continue
+            inner = m.group(1)
+        else:
+            inner = cand[1:-1]
         try:
             compiled = re.compile(inner, re.IGNORECASE)
         except re.error as exc:
             best_err = f"Invalid regex `{inner}`: {exc}"
             continue
-        missed = [mod for mod in must_match if not compiled.search(mod)]
-        false_pos = [mod for mod in must_not_match if compiled.search(mod)]
-        if not missed and not false_pos:
-            return True, f"Valid {len(cand)}-char PoE2 juicing regex `{cand}`"
-        best_err = (
-            f"Candidate `{cand}` (len={len(cand)}) missed={len(missed)} false_pos={len(false_pos)}"
-        )
-    return False, best_err or "No valid PoE2 juicing regex matched all targets"
-
-
-def _normalize_text(text: str) -> str:
-    """Normalize markdown emphasis, Unicode dashes/minus signs, and smart quotes."""
-    s = text.replace("\u2212", "-").replace("\u2013", "-").replace("\u2014", "-")
-    s = s.replace("\u2018", "'").replace("\u2019", "'")
-    s = s.replace("\u201c", '"').replace("\u201d", '"')
-    s = s.replace("**", "").replace("__", "")
-    # Keep single backticks for regex extraction checks via raw text; strip bold/italic markers
-    return s
-
-
-def _extract_numbers(text: str) -> list[float]:
-    vals: list[float] = []
-    for raw in _NUMBER_RE.findall(text):
-        cleaned = raw.replace(",", "")
-        try:
-            vals.append(float(cleaned))
-        except ValueError:
-            continue
-    return vals
-
-
-def _eval_poe2_waystone_regex(answer: str, check: dict[str, Any]) -> tuple[bool, str]:
-    max_chars = int(check.get("max_chars", 50))
-    must_match = check.get("must_match_mods", [])
-    must_not_match = check.get("must_not_match_mods", [])
-
-    candidates: list[str] = []
-    for m in _BACKTICK_RE.finditer(answer):
-        s = m.group(1).strip()
-        if s.startswith("!") and '"' in s:
-            candidates.append(s)
-    for m in _QUOTED_EXCL_RE.finditer(answer):
-        candidates.append(m.group(0).strip())
-
-    seen: set[str] = set()
-    uniq: list[str] = []
-    for c in candidates:
-        if c not in seen:
-            seen.add(c)
-            uniq.append(c)
-
-    if not uniq:
-        return False, 'No PoE2 negated stash regex (!"...") found in answer'
-
-    best_err = ""
-    for cand in uniq:
-        if len(cand) > max_chars:
-            best_err = f"Candidate `{cand}` has length {len(cand)} > {max_chars}"
-            continue
-        m = _QUOTED_EXCL_RE.fullmatch(cand)
-        if not m:
-            best_err = f'Candidate `{cand}` is not in strict PoE2 `!"..."` syntax'
-            continue
-        inner = m.group(1)
-        try:
-            compiled = re.compile(inner, re.IGNORECASE)
-        except re.error as exc:
-            best_err = f"Invalid regex `{inner}`: {exc}"
-            continue
-
         missed = [mod for mod in must_match if not compiled.search(mod)]
         false_pos = [mod for mod in must_not_match if compiled.search(mod)]
         if not missed and not false_pos:
@@ -132,8 +80,25 @@ def _eval_poe2_waystone_regex(answer: str, check: dict[str, Any]) -> tuple[bool,
         best_err = (
             f"Candidate `{cand}` (len={len(cand)}) missed={len(missed)} false_pos={len(false_pos)}"
         )
+    return False, best_err or f"No valid PoE2 {kind_lbl} matched all targets"
 
-    return False, best_err or "No valid PoE2 regex matched all targets"
+
+def _normalize_text(text: str) -> str:
+    """Normalize markdown emphasis, Unicode dashes/minus signs, and smart quotes."""
+    s = text.replace("\u2212", "-").replace("\u2013", "-").replace("\u2014", "-")
+    s = s.replace("\u2018", "'").replace("\u2019", "'")
+    s = s.replace("\u201c", '"').replace("\u201d", '"')
+    return s.replace("**", "").replace("__", "")
+
+
+def _extract_numbers(text: str) -> list[float]:
+    vals: list[float] = []
+    for raw in _NUMBER_RE.findall(text):
+        try:
+            vals.append(float(raw.replace(",", "")))
+        except ValueError:
+            continue
+    return vals
 
 
 def _eval_check(raw_answer: str, norm_answer: str, check: dict[str, Any]) -> dict[str, Any]:
@@ -192,12 +157,10 @@ def _eval_check(raw_answer: str, norm_answer: str, check: dict[str, Any]) -> dic
             "detail": f"target {target} not within tolerance (closest diff={best_diff})",
         }
 
-    if ctype == "poe2_waystone_regex":
-        ok, detail = _eval_poe2_waystone_regex(raw_answer, check)
-        return {"id": cid, "label": label, "passed": ok, "detail": detail}
-
-    if ctype == "poe2_juicing_regex":
-        ok, detail = _eval_poe2_juicing_regex(raw_answer, check)
+    if ctype in ("poe2_waystone_regex", "poe2_juicing_regex"):
+        ok, detail = _eval_poe2_stash_regex(
+            raw_answer, check, negated=(ctype == "poe2_waystone_regex")
+        )
         return {"id": cid, "label": label, "passed": ok, "detail": detail}
 
     raise ValueError(f"Unknown check type: {ctype}")

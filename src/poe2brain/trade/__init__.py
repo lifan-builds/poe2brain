@@ -42,6 +42,7 @@ from poe2brain.trade.item_parser import (
     parsed_item_to_pob2_text,
     resolve_slot_or_category,
     resolve_trade_category,
+    split_multi_item_clipboard_dump,
     strip_wiki_markup,
     trade2_fetch_to_pob2_text,
 )
@@ -113,6 +114,7 @@ __all__ = [
     "resolve_natural_stat",
     "resolve_slot_or_category",
     "resolve_trade_category",
+    "split_multi_item_clipboard_dump",
     "strip_wiki_markup",
     "summarize_price_check",
     "trade2_fetch_to_pob2_text",

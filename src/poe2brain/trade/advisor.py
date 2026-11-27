@@ -666,7 +666,7 @@ class TradeAdvisor:
           (Chance Shards), or 3-to-1 Reforging Bench rather than burning Gold listing fees.
         """
         from poe2brain.crafting.planner import _bone_family_for_base
-        from poe2brain.mcp_server import split_multi_item_clipboard_dump
+        from poe2brain.trade.item_parser import split_multi_item_clipboard_dump
 
         if isinstance(items_raw_list, str):
             items_raw_list = split_multi_item_clipboard_dump(items_raw_list)

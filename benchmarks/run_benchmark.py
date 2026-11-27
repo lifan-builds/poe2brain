@@ -101,7 +101,7 @@ def _run_codex_single(
             if out_file.exists()
             else proc.stdout.strip()
         )
-        stderr_tail = proc.stderr[-800:] if proc.stderr else ""
+        stderr_tail = (proc.stderr[-800:] if proc.stderr else "") if proc.returncode != 0 else ""
         detected_model = model or ""
         for line in (proc.stderr or "").splitlines():
             if line.strip().startswith("model:"):

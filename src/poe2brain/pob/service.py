@@ -6,7 +6,8 @@ import atexit
 import json
 import re
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote as url_quote
@@ -842,6 +843,27 @@ def _synthesize_topoff_pob_item_text(
     return "\n".join(out_lines), applied, round(total_cost_ex, 2)
 
 
+def _rewrite_item_runes(raw_text: str, keep_locked: Sequence[str], new_runes: Sequence[str]) -> str:
+    """Rewrite overwriteable `Rune:` lines on PoB2 item text while preserving locked runes."""
+    final_runes = [*keep_locked, *new_runes]
+    out_lines: list[str] = []
+    inserted = False
+    for ln in raw_text.splitlines():
+        stripped = ln.strip()
+        if stripped.startswith("Rune:"):
+            if not inserted:
+                out_lines.extend(f"Rune: {rn}" for rn in final_runes)
+                inserted = True
+            continue
+        if stripped.startswith("{enchant}{rune}"):
+            continue
+        out_lines.append(ln)
+        if not inserted and stripped.startswith("Sockets:"):
+            out_lines.extend(f"Rune: {rn}" for rn in final_runes)
+            inserted = True
+    return "\n".join(out_lines)
+
+
 def _edit_pob_item_text(
     raw_text: str,
     *,
@@ -1299,6 +1321,30 @@ class BuildService:
 
     def delete_slot(self, slot: str) -> dict[str, Any]:
         return dict(self.bridge.call("delete_slot", {"slot": slot}))
+
+    @contextmanager
+    def _scratch_slot(
+        self,
+        source_slot: str,
+        *,
+        prefix: str = "tmp",
+        dewater: bool = False,
+        restore_slot: str | None = None,
+    ) -> Iterator[str]:
+        """Clone `source_slot` into an isolated scratch slot and always clean it up on exit."""
+        scratch = f"__{prefix}_{uuid.uuid4().hex[:8]}"
+        self.clone_slot(source_slot, scratch, activate=False)
+        try:
+            if dewater:
+                self.audit_build(slot=scratch, apply_dewater=True)
+            yield scratch
+        finally:
+            try:
+                self.bridge.call("delete_slot", {"slot": scratch})
+            except Exception:
+                pass
+            if restore_slot is not None:
+                self.bridge.call("switch_slot", {"slot": restore_slot, "createIfMissing": False})
 
     def undo(self, slot: str = "main") -> BuildStats:
         self.bridge.call("undo", {"slot": slot})
@@ -2244,30 +2290,27 @@ class BuildService:
         )
         respec_unit = estimate_poe2_gold_respec(sust.level).gold_per_passive_point
 
-        def_slot = slot
-        temp_hc_slot: str | None = None
-        if not apply_dewater and top_defensive_nodes > 0:
-            temp_hc_slot = f"__hc_dewater_{uuid.uuid4().hex[:8]}"
-            self.clone_slot(slot, temp_hc_slot, activate=False)
-            self.audit_build(slot=temp_hc_slot, apply_dewater=True)
-            def_slot = temp_hc_slot
-
-        try:
-            def_passives_raw = (
-                self.rank_passive_upgrades(
+        if top_defensive_nodes <= 0:
+            def_passives_raw: list[Any] = []
+        elif apply_dewater:
+            def_passives_raw = self.rank_passive_upgrades(
+                slot=slot,
+                mode="perPoint",
+                stat="TotalEHP",
+                max_path_dist=6,
+                top_n=top_defensive_nodes,
+            )
+        else:
+            with self._scratch_slot(
+                slot, prefix="hc_dewater", dewater=True, restore_slot=slot
+            ) as def_slot:
+                def_passives_raw = self.rank_passive_upgrades(
                     slot=def_slot,
                     mode="perPoint",
                     stat="TotalEHP",
                     max_path_dist=6,
                     top_n=top_defensive_nodes,
                 )
-                if top_defensive_nodes > 0
-                else []
-            )
-        finally:
-            if temp_hc_slot is not None:
-                self.bridge.call("delete_slot", {"slot": temp_hc_slot})
-                self.bridge.call("switch_slot", {"slot": slot, "createIfMissing": False})
         def_options: list[DefensivePassiveRespecOption] = []
         for p in def_passives_raw:
             dist = p.path_dist or 1
@@ -3136,16 +3179,8 @@ class BuildService:
         """Rank every compatible PoE2 0.5.5 Support Gem (Tier I-III + Lineage) for `group_index`,
         returning DPS/EHP deltas alongside Mana sustain, Spirit reservation, and Lineage conflicts.
         """
-        target_slot = slot
-        temp_slot: str | None = None
-        if dewater:
-            temp_slot = f"__supp_dewater_{uuid.uuid4().hex[:8]}"
-            self.clone_slot(slot, temp_slot, activate=False)
-            self.audit_build(slot=temp_slot, apply_dewater=True)
-            target_slot = temp_slot
-
         params: dict[str, Any] = {
-            "slot": target_slot,
+            "slot": slot,
             "includeLineage": include_lineage,
             "excludeLineageConflicts": exclude_lineage_conflicts,
             "bestSwap": best_swap,
@@ -3161,16 +3196,15 @@ class BuildService:
         if max_tier is not None:
             params["maxTier"] = int(max_tier)
 
-        try:
-            res = self.bridge.call(
-                "list_valid_supports",
-                params,
-                timeout=max(self.bridge.request_timeout, 120.0),
-            )
-        finally:
-            if temp_slot is not None:
-                self.bridge.call("delete_slot", {"slot": temp_slot})
-                self.bridge.call("switch_slot", {"slot": slot, "createIfMissing": False})
+        timeout_s = max(self.bridge.request_timeout, 120.0)
+        if dewater:
+            with self._scratch_slot(
+                slot, prefix="supp_dewater", dewater=True, restore_slot=slot
+            ) as dewater_slot:
+                params["slot"] = dewater_slot
+                res = self.bridge.call("list_valid_supports", params, timeout=timeout_s)
+        else:
+            res = self.bridge.call("list_valid_supports", params, timeout=timeout_s)
 
         cands: list[SupportGemCandidate] = []
         for row in res.get("supports") or []:
@@ -3334,10 +3368,7 @@ class BuildService:
         - Optional 3-preset scenario matrix (`as_configured`, `sustainable_pinnacle`, `mapping`)
         Never mutates `slot` unless `apply=True`.
         """
-        work_slot = "__poe2brain_whatif__"
-        probe_slot = "__poe2brain_whatif_probe__"
-        self.clone_slot(slot, work_slot, activate=False)
-        try:
+        with self._scratch_slot(slot, prefix="whatif") as work_slot:
             baseline_stats = self.get_stats(slot=work_slot)
             base_dps = baseline_stats.effective_dps
             base_ehp = baseline_stats.total_ehp
@@ -3351,8 +3382,7 @@ class BuildService:
                 kind: Literal["equipment_slot", "main_skill_group", "edited_item", "passive_tree"],
                 mutate_fn: Any,
             ) -> None:
-                self.clone_slot(slot, probe_slot, activate=False)
-                try:
+                with self._scratch_slot(slot, prefix="whatif_probe") as probe_slot:
                     mutate_fn(probe_slot)
                     p_stats = self.get_stats(slot=probe_slot)
                     d_dps = p_stats.effective_dps - base_dps
@@ -3371,8 +3401,6 @@ class BuildService:
                             mana_sustainable_after=p_stats.mana_sustainable,
                         )
                     )
-                finally:
-                    self.bridge.call("delete_slot", {"slot": probe_slot})
 
             # 1. Borrow equipment slots and/or main skill from a reference slot (`ref`)
             if borrow_from_slot:
@@ -3570,19 +3598,13 @@ class BuildService:
                     "conditionKilledRecently": True,
                     "conditionCritRecently": True,
                 }
-                self.clone_slot(slot, probe_slot, activate=False)
-                try:
+                with self._scratch_slot(slot, prefix="whatif_map") as probe_slot:
                     self.bridge.call("set_config", {"slot": probe_slot, "values": map_cfg})
                     b_map = self.get_stats(slot=probe_slot)
-                finally:
-                    self.bridge.call("delete_slot", {"slot": probe_slot})
 
-                self.clone_slot(work_slot, probe_slot, activate=False)
-                try:
+                with self._scratch_slot(work_slot, prefix="whatif_map") as probe_slot:
                     self.bridge.call("set_config", {"slot": probe_slot, "values": map_cfg})
                     a_map = self.get_stats(slot=probe_slot)
-                finally:
-                    self.bridge.call("delete_slot", {"slot": probe_slot})
 
                 map_d = a_map.effective_dps - b_map.effective_dps
                 map_p = (map_d / b_map.effective_dps * 100.0) if b_map.effective_dps > 0 else 0.0
@@ -3626,11 +3648,6 @@ class BuildService:
                 scenario_matrix=scenario_matrix,
                 warnings=warnings,
             )
-        finally:
-            try:
-                self.bridge.call("delete_slot", {"slot": work_slot})
-            except Exception:
-                pass
 
     # ------------------------------------------------------------------
     # 12. Megalomaniac Build-Specific Notable & Trade2 Finder
@@ -4079,8 +4096,8 @@ class BuildService:
                     )
                 )
 
-        # Verify exact NET DPS/EHP/Resist outcome inside PoB2 by actually replacing
-        # overwriteable Rune lines on equipped gear (preserving locked Socket-bound runes).
+        # Verify exact NET DPS/EHP/Resist outcome inside PoB2 by replacing overwriteable
+        # Rune lines on equipped gear (preserving locked Socket-bound runes).
         dps_delta = 0.0
         ehp_delta = 0.0
         res_after = {
@@ -4094,65 +4111,29 @@ class BuildService:
             new_runes_by_slot.setdefault(rec.equipment_slot, []).extend(
                 [rec.augment_name] * rec.sockets_allocated
             )
-
-        def _rewrite_item_runes(raw_text: str, keep_locked: list[str], new_runes: list[str]) -> str:
-            final_runes = [*keep_locked, *new_runes]
-            lines = raw_text.splitlines()
-            out_lines: list[str] = []
-            inserted = False
-            for ln in lines:
-                stripped = ln.strip()
-                if stripped.startswith("Rune:"):
-                    if not inserted:
-                        for rn in final_runes:
-                            out_lines.append(f"Rune: {rn}")
-                        inserted = True
-                    continue
-                if stripped.startswith("{enchant}{rune}"):
-                    continue
-                out_lines.append(ln)
-                if not inserted and stripped.startswith("Sockets:"):
-                    for rn in final_runes:
-                        out_lines.append(f"Rune: {rn}")
-                    inserted = True
-            return "\n".join(out_lines)
-
-        modified_equip: dict[str, str] = {}
-        for s_nm, r_names in new_runes_by_slot.items():
-            raw_it = raw_by_slot.get(s_nm)
-            if raw_it:
-                modified_equip[s_nm] = _rewrite_item_runes(
-                    raw_it, locked_by_slot.get(s_nm, []), r_names
+        modified_equip = {
+            s_nm: _rewrite_item_runes(raw_by_slot[s_nm], locked_by_slot.get(s_nm, []), r_names)
+            for s_nm, r_names in new_runes_by_slot.items()
+            if s_nm in raw_by_slot
+        }
+        fallback_cfg = (
+            {
+                "customMods": "\n".join(
+                    "18% increased Global Defences"
+                    if "increased Armour, Evasion and Energy Shield" in ln
+                    else ln
+                    for ln in custom_mod_lines
                 )
-
-        if modified_equip:
+            }
+            if not modified_equip and custom_mod_lines
+            else None
+        )
+        if modified_equip or fallback_cfg:
             try:
                 wf = self.what_if(
                     slot=slot,
-                    equip_items=modified_equip,
-                    apply=False,
-                )
-                dps_delta = wf.effective_dps_delta
-                ehp_delta = wf.total_ehp_delta
-                res_after = {
-                    "fire": round(wf.after_stats.fire_resist, 1),
-                    "cold": round(wf.after_stats.cold_resist, 1),
-                    "lightning": round(wf.after_stats.lightning_resist, 1),
-                    "chaos": round(wf.after_stats.chaos_resist, 1),
-                }
-            except Exception as exc:
-                notes.append(f"PoB2 delta verification skipped: {exc}")
-        elif custom_mod_lines:
-            pob_mod_lines = [
-                "18% increased Global Defences"
-                if "increased Armour, Evasion and Energy Shield" in ln
-                else ln
-                for ln in custom_mod_lines
-            ]
-            try:
-                wf = self.what_if(
-                    slot=slot,
-                    set_config={"customMods": "\n".join(pob_mod_lines)},
+                    equip_items=modified_equip or None,
+                    set_config=fallback_cfg,
                     apply=False,
                 )
                 dps_delta = wf.effective_dps_delta

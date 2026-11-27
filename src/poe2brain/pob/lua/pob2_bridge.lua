@@ -1462,25 +1462,6 @@ methods.clone_slot = function(params)
 	}
 end
 
-methods.delete_slot = function(params)
-	local targetName = normalizeSlotName(params, "slot")
-	local existed = slots[targetName] ~= nil
-	slots[targetName] = nil
-	if activeSlot == targetName then
-		if slots["main"] then
-			ensureSlot("main", false)
-		else
-			local fallback = next(slots)
-			if fallback then
-				ensureSlot(fallback, false)
-			else
-				activeSlot = nil
-			end
-		end
-	end
-	return { ok = true, deleted = existed, slot = targetName, activeSlot = activeSlot }
-end
-
 methods.copy_main_skill_from_slot = function(params)
 	if not params or not params.source then
 		error("params.source is required", 0)
@@ -1650,7 +1631,6 @@ methods.reset_slot = function(params)
 		stats = extractStatsTable(),
 	}
 end
-methods.new_build = methods.reset_slot
 
 methods.delete_slot = function(params)
 	if not params or not params.slot then
@@ -2060,17 +2040,6 @@ methods.load_ggg_build = function(params)
 end
 
 -- ---- Capability 3: Stats, Summary & Build Editing Helpers ----
-
-methods.get_stats = function(params)
-	local slotName = normalizeSlotName(params, "slot")
-	local entry = ensureSlot(slotName, false)
-	return {
-		slot = slotName,
-		rev = entry.rev,
-		character = extractCharacterInfo(),
-		stats = extractStatsTable(nil, params and params.fields),
-	}
-end
 
 methods.get_build_summary = function(params)
 	local slotName = normalizeSlotName(params, "slot")
@@ -2902,8 +2871,6 @@ methods.audit_build = function(params)
 		restoredVerified = restoredVerified,
 	}
 end
-methods.dewater_build = methods.audit_build
-
 -- ---- Capability 5: Single & Batch Non-Destructive Candidate Item Upgrade Diffs ----
 
 local function evalSingleCandidateItem(calcFunc, baseOut, entry, index)
