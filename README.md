@@ -29,7 +29,7 @@
 
 </div>
 
-> **Try It in 5 Seconds (Zero Install):** Open **[poe2brain.clifan.com](https://poe2brain.clifan.com/)** to run live PoB2 dewatering audits, ask Patch `0.5.5` questions with grounded tool receipts, explore the daily-refreshed audited sleeper build index, compile `<=50`-char Waystone stash regexes, and preview 2AM CVD-safe loot filters right in your browser.
+> **Try It in 5 Seconds (Zero Install):** Open **[poe2brain.clifan.com](https://poe2brain.clifan.com/)** to run live PoB2 dewatering audits, ask Patch `0.5.5` questions with grounded tool receipts, explore the daily-refreshed audited sleeper build index, compile `<=50`-char Waystone stash regexes, and preview Patch `0.5.5` PoB2-aware loot filters right in your browser.
 >
 > **中文玩家请直接点这里：** [**免安装在线体验 (`poe2brain.clifan.com`)**](https://poe2brain.clifan.com/) ｜ [**简体中文完整说明 (`README_ZH.md`)**](README_ZH.md) ｜ [**Windows 零编译保姆安装**](docs/zh/QUICKSTART_WINDOWS.md) ｜ [**AI 客户端接入与提示词**](docs/zh/AGENT_SETUP.md)
 >
@@ -60,7 +60,7 @@ General-purpose LLMs constantly hallucinate **Path of Exile 1** mechanics onto *
 | **Finding Hidden Builds** | Scrapes stale guides or top-1 meta mirror builds | **Daily-synced PoB2-audited build index** (GitHub Actions rolling release + SQLite cache): `--preset sleeper` ranks real DPS × move speed × rarity in `<1s` |
 | **Trade Price-Fixers & Traps** | Blends fake 1-Exalt whisper spam with real buyouts | Splits **Instant Buyout (`securable`, Gold fee)** vs **Whisper**, deduplicates fixers, and normalizes `+20%` Quality + Runes |
 | **Crafting Cost Guessing** | Eyeballs odds or recommends removed `0.4` Omens / `0.5` Recombinators | **Exact conditional mod-pool MDP + Monte Carlo** (`p50`/`p80`/`p95`) with mid-craft collateral brick protection |
-| **Loot Filter Client Crashes** | Hand-written `.filter` rules crash PoE2 on load | **7-trap PoE2 `0.5.5` compiler & Filter Doctor**, CVD-safe themes, 2 AM tinnitus-safe `.wav`/`.mp3` soundpacks |
+| **Loot Filter Clutter & Crashes** | Hand-written `.filter` rules crash PoE2 or miss `ilvl 82` / Exceptional bases | **7-trap `0.5.5` compiler, NeverSink restyler & Filter Doctor**: live economy tiers, PoB2 + Exceptional (`21%+`/`3-socket`) crafting bases, EN/ZH voice callouts |
 | **Account Safety & Windows Setup** | Asks for `POESESSID` cookies or breaks compiling C/Lua on Windows | **Zero `POESESSID`** (Local PoB2 sync + official GGG OAuth 2.1 PKCE); **zero C compiler needed on Windows** |
 
 ---
@@ -107,9 +107,9 @@ uv run poe2 craft profit --budget mid
 # PoB2-aware <=50-char Waystone & Precursor Tablet stash regexes (with 0..6 mod revive schedule)
 uv run poe2 wiki regex --slot main
 
-# One-prompt CVD-safe, 2 AM tinnitus-safe, PoB2-tailored loot filter with custom .wav/.mp3 audio
+# PoB2-tailored 0.5.5 loot filter (live economy, ilvl 82/Exceptional bases, EN/ZH voice callouts)
 uv run poe2 filter generate --slot main --strictness strict \
-  --look "obsidian gold deuteranopia 2am chime" --out my_build.filter
+  --look "obsidian gold voice callout" --out my_build.filter --install
 ```
 
 ---
@@ -129,7 +129,7 @@ flowchart TB
     CORE --> P3["3. Economy & Trade2<br/>Exalted=1.0 · Securable vs Whisper<br/>Arbitrage · Quad-Tab Triage"]
     CORE --> P4["4. Crafting Solver<br/>Conditional Pool · MDP + MC<br/>Collateral Rescue · Profit Scan"]
     CORE --> P5["5. poe.ninja Builds<br/>Daily-Synced Build Index · Presets<br/>!Negation · Timeline Stepping Stone"]
-    CORE --> P6["6. Loot Filter Studio<br/>7-Trap Validator · Filter Doctor<br/>CVD Themes · 2AM Audio Synth"]
+    CORE --> P6["6. Loot Filter Studio<br/>7-Trap Validator · NeverSink Restyler<br/>PoB2/ilvl82 Bases · Voice Callouts"]
 ```
 
 <details>
@@ -140,7 +140,7 @@ flowchart TB
 3. **Live Economy, Arbitrage & Official Trade2 (`poe2brain.trade`)** — 3-tier pricing router normalized to **`Exalted Orb = 1.0`** combining `api.poe2scout.com` + `poe.ninja` exchange overviews with unauthenticated `pathofexile.com/api/trade2` (`GGGRateLimiter` + `1.0s` buffer), `ArbitrageScanner` (`--budget`/`--gold`, `profit_ex_per_10k_gold`, compounding ladders, trap filters), `Exiled-Exchange-2`-backed EN/ZH `Ctrl+C` / `Ctrl+Alt+C` item parsing, **Instant Buyout (`securable` Gold fee) vs Whisper** splitting, and multi-item quad-tab triage.
 4. **Exact Crafting Odds, Policy & Profit Scanner (`poe2brain.crafting`)** — Conditional `ModPoolEngine` (`display_tier = 1` best, tiered orb `min_mod_level` floors, family mutual exclusion, dynamic elemental tag-blocking, 3-draw without-replacement Well of Souls unveil, `Omen of Whittling`, cross-pool `Crystallisation`, blocking removed `0.4` Homogenising Omens & `0.5` Recombinators) + sunk-cost-disciplined `CraftingPlanner` (`4-mod Fracturing Orb`, `p50`/`p80`/`p95` Monte Carlo, buy-vs-craft) + `CraftProfitScanner` with automatic `competition_level` & `niche_score`.
 5. **PoE Ninja Builds Discovery & Live Character Import (`poe2brain.ninja`)** — Live `poe.ninja` `build-index-state` & `snapshot-versions` telemetry across SC/HC/SSF/HCSSF, pure-stdlib `SearchResult` protobuf + `NDIC\x02` decoder, `<2ms` `<PathOfBuilding2>` XML inspector, multi-facet search with **5 intent presets**, **`!Term` negation**, and a **runtime SQLite `BuildStore`** (`~/.cache/poe2brain/builds.sqlite`) synced via ETag from the daily GitHub Actions rolling `build-index` release (plus write-through caching on live imports and time-machine budget stepping-stone discovery).
-6. **Agentic Loot Filter, Visual Theme & Custom Sound Studio (`poe2brain.filters`)** — Self-validating PoE2 `0.5.5` `.filter` compiler & `FilterValidator` enforcing all 7 client-crash traps, **8 WCAG-verified visual presets**, Viénot/Machado CVD-verified palettes, inline `--look` theme/CVD/2AM/sound intent parsing, pure-stdlib `44.1 kHz` `16-bit` stereo `.wav`/`.mp3` polyphonic synth + `voice_callout` studio, `NeverSink` `0.10.4a` auto-healing & restyling, Filter Doctor (`poe2 filter heal`), and interactive HTML drop previews.
+6. **PoB2-Aware Loot Filter, NeverSink Restyler & Voice Callout Studio (`poe2brain.filters`)** — Self-validating PoE2 `0.5.5` `.filter` compiler & `FilterValidator` enforcing all 7 client-crash traps, live economy tiering, PoB2 build-priority + Exceptional (`21%+` quality / `3+` sockets) + `ilvl 81/82` jewellery & weapon crafting bases, clean endgame Uncut Gem / Flask / Charm clutter pruning, **8 WCAG-verified visual presets** (plus optional CVD-safe & night-mode modifiers), pure-stdlib `44.1 kHz` `16-bit` stereo `.wav`/`.mp3` synth + bilingual EN/ZH `voice_callout` packs, `NeverSink` `0.10.4a` auto-healing & restyling, Filter Doctor (`poe2 filter heal`), and interactive HTML drop previews.
 
 </details>
 

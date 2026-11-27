@@ -159,6 +159,7 @@ class SoundSynthesisParams(Poe2Model):
     lowpass_hz: float | None = Field(default=None, ge=400.0, le=18000.0)
     peak_ceiling: float = Field(default=0.89, ge=0.15, le=0.98)
     voice_name: str | None = None
+    voice_language: Literal["en", "zh"] = "en"
     prefer_local_ai_tts: bool = True
     export_mp3: bool = True
     custom_callouts: dict[str, str] = Field(default_factory=dict)

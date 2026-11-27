@@ -2508,6 +2508,7 @@ def _maybe_synthesize_sound_pack(
     warm_night_mode: bool = False,
     lowpass_hz: float | None = None,
     custom_callouts: Mapping[str, str] | Sequence[str] | str | None = None,
+    voice_language: str = "en",
     sound_dir: str | Path | None = None,
     out_path: str | Path | None = None,
     preview_html: str | Path | None = None,
@@ -2552,6 +2553,7 @@ def _maybe_synthesize_sound_pack(
         scale=norm_scale,  # type: ignore[arg-type]
         warm_night_mode=bool(warm_night_mode),
         lowpass_hz=lowpass_hz,
+        voice_language="zh" if voice_language == "zh" else "en",
         custom_callouts=callout_map,
     )
 
@@ -2676,6 +2678,7 @@ def execute_filter_generate(
         warm_night_mode=eff_warm_night,
         lowpass_hz=lowpass_hz,
         custom_callouts=custom_callouts,
+        voice_language=look_intent.get("voice_language", "en"),
         sound_dir=sound_dir,
         out_path=out_path,
         preview_html=preview_html,
@@ -2810,6 +2813,7 @@ def execute_filter_restyle(
         warm_night_mode=eff_warm_night,
         lowpass_hz=lowpass_hz,
         custom_callouts=custom_callouts,
+        voice_language=look_intent.get("voice_language", "en"),
         sound_dir=sound_dir,
         out_path=out_path,
         preview_html=preview_html,

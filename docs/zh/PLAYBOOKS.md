@@ -117,20 +117,22 @@ uv run poe2 wiki regex --slot main
 
 ---
 
-## 工作流 6：一句大白话生成防崩过滤器 & 修复老过滤器
+## 工作流 6：一句大白话生成 0.5.5 语音过滤器 & 修复 NeverSink / 老过滤器
 
 ```bash
-# 1. 一句自然语言同时指定视觉风格 + 色盲友好 + 凌晨 2 点防耳鸣低通滤波 + 音效风格
+# 1. 按当前 PoB2 构筑 + 0.5.5 实时物价生成严格过滤器（自动抓 82 物等/超凡底材 + 中文大货语音播报 + 一键安装）
 uv run poe2 filter generate \
   --slot main \
   --strictness strict \
-  --look "obsidian gold deuteranopia 2am chime" \
+  --look "暗黑金色 中文语音播报" \
   --out my_build.filter \
-  --preview-html preview.html
+  --preview-html preview.html \
+  --install
 
 # 2. 双人开黑共享过滤器（自动合并两人的武器、防具基底与未满抗性）
 uv run poe2 filter generate --slots p1,p2 --strictness semi_strict --out duo.filter
 
-# 3. 修复网上下的 PoE1 / 0.1 报错老过滤器（自动清除失效词条与前缀，校验至 0 报错）
+# 3. 兼容并魔改 NeverSink / 修复 PoE1 或 0.1 报错老过滤器（清除失效词条与前缀，校验至 0 报错）
+uv run poe2 filter restyle strict --slot main --look "赛博霓虹 电子音效" --out ns_custom.filter
 uv run poe2 filter heal old_broken.filter --out healed_055.filter
 ```

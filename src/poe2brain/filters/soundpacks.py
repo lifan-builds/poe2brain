@@ -81,6 +81,20 @@ DEFAULT_TIER_CALLOUTS: dict[str, str] = {
     "chancing": "Chance Base",
 }
 
+DEFAULT_TIER_CALLOUTS_ZH: dict[str, str] = {
+    "s_plus": "神圣石，出大货！",
+    "s": "高价值掉落！",
+    "a": "优质通货",
+    "b": "实用通货",
+    "build_upgrade": "核心装备底材！",
+    "waystone_high": "高阶引路石",
+    "chancing": "机会石底材",
+}
+
+
+def _has_cjk(text: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in text)
+
 SOUND_PACK_TIERS: tuple[str, ...] = (
     "s_plus",
     "s",
@@ -706,10 +720,13 @@ def _try_render_tts_wav(
     if say_bin and afconvert_bin:
         tmp_aiff = out_wav.with_suffix(".say_tmp.aiff")
         try:
+            default_mac_voice = (
+                "Tingting" if (params.voice_language == "zh" or _has_cjk(phrase)) else "Samantha"
+            )
             mac_voice = (
                 params.voice_name
                 if params.voice_name and params.voice_name not in ("alloy", "onyx", "nova")
-                else "Samantha"
+                else default_mac_voice
             )
             cmd = [say_bin, "-v", mac_voice, "-r", "215", "-o", str(tmp_aiff), phrase]
             res = subprocess.run(cmd, capture_output=True, timeout=8.0)
@@ -835,8 +852,13 @@ class SoundPackGenerator:
         pack_dir.mkdir(parents=True, exist_ok=True)
         ffmpeg_bin = shutil.which("ffmpeg")
 
+        default_callouts = (
+            DEFAULT_TIER_CALLOUTS_ZH
+            if cfg.voice_language == "zh" or any(_has_cjk(v) for v in explicit_callouts.values())
+            else DEFAULT_TIER_CALLOUTS
+        )
         callouts = (
-            {**DEFAULT_TIER_CALLOUTS, **explicit_callouts}
+            {**default_callouts, **explicit_callouts}
             if style_enum == SoundPackStyle.VOICE_CALLOUT
             else dict(explicit_callouts)
         )

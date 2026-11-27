@@ -471,3 +471,63 @@ def test_chinese_vibe_filter_look_prompt_and_intent() -> None:
     assert theme.tiers["s"].border_color.to_hex() == "#00f5ff"
     s_bg = theme.tiers["s"].background_color
     assert (s_bg.r, s_bg.g, s_bg.b) == (6, 7, 11)
+
+    zh_voice = parse_look_intent("暗黑金色 中文语音播报")
+    assert zh_voice["sound_style"] == "voice_callout"
+    assert zh_voice["voice_language"] == "zh"
+
+
+def test_endgame_filter_exceptional_bases_gems_jewellery_and_strictness_pruning(
+    tmp_path: Path,
+) -> None:
+    fg = FilterGenerator()
+
+    strict_res = fg.generate(
+        filter_name="strict_055",
+        strictness=StrictnessTier.STRICT,
+        theme="darkmode_obsidian",
+        use_live_economy=False,
+    )
+    assert strict_res.validation.valid
+    assert strict_res.validation.error_count == 0
+    # Exceptional over-quality (21%+) & over-socket (3+), Lv19 uncut gems, ilvl 81+ jewellery/meta
+    assert "Quality >= 21" in strict_res.filter_text
+    assert "Sockets >= 3" in strict_res.filter_text
+    assert "ItemLevel == 19" in strict_res.filter_text
+    assert "jewellery_ilvl81" in strict_res.filter_text
+    assert "meta_weapons_ilvl82" in strict_res.filter_text
+    # Routine salvage still present on Strict, endgame junk flasks/charms/jewellery hidden
+    assert "$type->salvage $tier->multi_sockets" in strict_res.filter_text
+    assert "flasks_charms_endgame" in strict_res.filter_text
+    assert "jewellery_normal_magic_endgame" in strict_res.filter_text
+    assert "$type->gems $tier->uncut_low" in strict_res.filter_text
+
+    uber_res = fg.generate(
+        filter_name="uber_055",
+        strictness=StrictnessTier.UBER_STRICT,
+        theme="solaris_gold",
+        use_live_economy=False,
+    )
+    assert uber_res.validation.valid
+    assert uber_res.validation.error_count == 0
+    # Exceptional bases stay highlighted even on Uber Strict, routine salvage is pruned
+    assert "Quality >= 21" in uber_res.filter_text
+    assert "Sockets >= 3" in uber_res.filter_text
+    assert "$type->salvage $tier->multi_sockets" not in uber_res.filter_text
+    assert "uncut_support_low" in uber_res.filter_text
+
+    # Chinese voice callout pack uses Mandarin callout strings cleanly
+    zh_pack = SoundPackGenerator().generate_pack(
+        tmp_path,
+        style=SoundPackStyle.VOICE_CALLOUT,
+        pack_id="zh_callout_test",
+        params=SoundSynthesisParams(
+            prefer_local_ai_tts=False,
+            voice_language="zh",
+            export_mp3=False,
+        ),
+        tiers=("s_plus", "build_upgrade"),
+    )
+    assert zh_pack.clips["s_plus"].callout_text == "神圣石，出大货！"
+    assert zh_pack.clips["build_upgrade"].callout_text == "核心装备底材！"
+    assert (Path(zh_pack.pack_dir) / "s_plus.wav").is_file()

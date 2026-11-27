@@ -29,7 +29,7 @@
 
 </div>
 
-> **5 秒免安装在线体验：** 直接打开 **[poe2brain.clifan.com](https://poe2brain.clifan.com/)** —— 不用配 Python/命令行，浏览器里就能直接体验 PoB2 一键去水审计、0.5.5 真值在线问答、每日自动更新的去水黑马 BD 榜、50 字防翻车引路石正则和 2AM 护耳过滤器工坊！
+> **5 秒免安装在线体验：** 直接打开 **[poe2brain.clifan.com](https://poe2brain.clifan.com/)** —— 不用配 Python/命令行，浏览器里就能直接体验 PoB2 一键去水审计、0.5.5 真值在线问答、每日自动更新的去水黑马 BD 榜、50 字防翻车引路石正则和 0.5.5 智能过滤器工坊！
 >
 > **灵感致谢：** 特别感谢 UP 主 **[流放降临-某雷](https://space.bilibili.com/2132384)** 与他的流放 1 开源项目 [`exilemoulei/pob4agents`](https://github.com/exilemoulei/pob4agents) 把「PoE 接 AI 助手」这条路趟了出来！`poe2brain` 是受其启发、专为 **《流放之路 2》（`Patch 0.5.5`）** 从零独立编写的姊妹引擎；玩一代的兄弟强烈推荐去支持雷哥的 [`pob4agents`](https://github.com/exilemoulei/pob4agents)！
 
@@ -54,7 +54,7 @@
 | **想找冷门高伤高速黑马 BD** | 榜一全是天价镜子装或烂大街 Meta | **每日自动去水更新的实时 BD 索引**（GitHub Actions 滚动发布 + 本地 SQLite 缓存）：一句 `--preset sleeper` 1 秒算出真实 DPS × 移速 × 稀有度黑马榜 |
 | **市集被密语压价号钓鱼** | 最低价全是 1 崇高不卖人的脚本号 | 自动拆分 **金币一口价 (`securable`，离线秒买)** vs **密语 (`whisper`)**，自动补满 20% 品质与符文再跑分 |
 | **做装靠感觉容易血本无归** | 不懂 0.5.5 阶梯通货等级下限与词池互斥 | **精确条件词池 MDP + 蒙特卡洛 (`p50`/`p80`/`p95`)**，直接算出「自己做 vs 市集买」谁更赚 |
-| **手改过滤器进游戏直接报错** | `MapTier` / `Expert` 基底 / 空格写错导致加载崩溃 | **7 类崩溃陷阱自校验编译器 + 老过滤器医生 (`filter heal`)**，一句话生成护耳暗黑/色盲友好过滤器 |
+| **过滤器漏底材或进游戏直接报错** | `MapTier` / `Expert` 基底写错崩溃，或漏掉 82 物等/超凡工艺底材 | **7 类崩溃自校验编译器 + NeverSink 自动修复**：实时物价分层、绑定 PoB2 抓 82 物等/超凡底材、中英文语音播报 |
 | **担心封号 / Windows 装不上** | 要抠 `POESESSID` Cookie，或在 Windows 折腾 C 编译器 | **零 `POESESSID`、零读内存、零自动交易**（支持本地 PoB2 导入与官方 GGG OAuth 2.1）；**Windows 零编译开箱即用** |
 
 ---
@@ -86,7 +86,7 @@ uv run poe2 ninja search --preset sleeper --limit 5
 - **给自己的号体检：** *「导入我本地 PoB2 里最新保存的 BD，跑一次去水审计告诉我最大瓶颈是什么，再在 50 崇高以内搜市集金币一口价能买到的最大武器提升。」*
 - **四倍仓一键分拣：** *「我把刚才刷图打的一堆装备 `Ctrl+C` 贴给你，按 5 崇高为界帮我分成立即秒卖、半成品值得做、赌鉴定揭秘、直接分解四堆。」*
 - **做装前先算账：** *「我想做一把 82 级法杖要 T1 法伤 + 法术技能等级，帮我算期望成本和 p80 脸黑成本，对比市集直接买划算还是自己做划算。」*
-- **防翻车刷图 + 护耳过滤器：** *「根据我当前槽位 BD 生成一条 50 字符以内的防翻车异界引路石正则，再帮我生成一个暗黑金色、色盲友好、凌晨 2 点不刺耳的严格过滤器。」*
+- **防翻车刷图 + 智能语音过滤器：** *「根据我当前槽位 BD 生成一条 50 字符以内的防翻车异界引路石正则，再帮我生成一套暗黑金色、抓 82 物等/超凡底材、带中文大货语音播报的严格过滤器。」*
 
 > 更多中文对话模板请见：[docs/zh/AGENT_SETUP.md](docs/zh/AGENT_SETUP.md)
 
@@ -107,7 +107,7 @@ flowchart TB
     CORE --> P3["3. 实时经济 & 市集捡漏<br/>崇高本位 · 一口价 vs 密语<br/>金币复利套利 · 四倍仓分拣"]
     CORE --> P4["4. 精确做装求解器<br/>条件词池 · 蒙特卡洛成本<br/>防砸词保护 · 赚钱做装榜"]
     CORE --> P5["5. poe.ninja 抄作业<br/>每日滚动去水索引 · 意图预设<br/>!反向排除 · 时光机过渡点"]
-    CORE --> P6["6. 防崩过滤器 & 音效工坊<br/>7 类报错校验 · 老过滤器修复<br/>色盲主题 · 2AM 护耳音频"]
+    CORE --> P6["6. 0.5.5 智能过滤器工坊<br/>实时物价 · PoB2/82物等/超凡底材<br/>中英文语音播报 · 7 类报错校验"]
 ```
 
 ---
@@ -216,10 +216,10 @@ uv run poe2 trade upgrades --equip-slot "Weapon 1" --max-exalted 50 --securable-
 uv run poe2 econ arbitrage --budget 5d --gold 50000
 uv run poe2 craft profit --budget mid
 
-# 6. 生成 <=50 字符防翻车引路石正则 & 一句话护耳色盲友好过滤器
+# 6. 生成 <=50 字符防翻车引路石正则 & 绑定 PoB2 + 中文语音播报的 0.5.5 严格过滤器
 uv run poe2 wiki regex --slot main
 uv run poe2 filter generate --slot main --strictness strict \
-  --look "obsidian gold deuteranopia 2am chime" --out my_build.filter
+  --look "暗黑金色 中文语音播报" --out my_build.filter --install
 ```
 
 ---
@@ -238,7 +238,7 @@ uv run poe2 filter generate --slot main --strictness strict \
 | **市集估价 (4)** | `poe2_parse_item`, `poe2_price_check`, `poe2_triage_dump`, `poe2_find_upgrades` | `poe2 trade parse/check/triage/upgrades` | 中英文 `Ctrl+C` 解析、一口价 vs 密语估价、四倍仓分拣、PoB2 真实提升捡漏 |
 | **做装求解 (3)** | `poe2_craft_odds`, `poe2_craft_plan`, `poe2_scan_craft_profit` | `poe2 craft odds/plan/profit` | 精确条件词池概率、防砸词保护、期望与 p80 脸黑成本、高利润低竞争做装榜 |
 | **poe.ninja (3)** | `poe2_ninja_snapshots`, `poe2_ninja_search`, `poe2_ninja_character` | `poe2 ninja snapshots/search/character` | 全服快照、`--preset` 黑马/开荒/速刷检索、`!反向过滤`、时光机低预算过渡点探测 |
-| **过滤器工坊 (5)** | `poe2_filter_presets`, `poe2_filter_generate`, `poe2_filter_restyle`, `poe2_filter_validate`, `poe2_filter_heal` | `poe2 filter presets/generate/restyle/validate/heal` | 7 类报错校验、老过滤器自动修复、色盲主题、双人组队合并、2AM 护耳/语音播报音效 |
+| **过滤器工坊 (5)** | `poe2_filter_presets`, `poe2_filter_generate`, `poe2_filter_restyle`, `poe2_filter_validate`, `poe2_filter_heal` | `poe2 filter presets/generate/restyle/validate/heal` | 实时物价分层、PoB2/82物等/超凡底材、中英文语音播报、NeverSink 自动修复、7 类报错校验（含可选色盲/夜间模式） |
 
 </details>
 
@@ -251,7 +251,7 @@ uv run poe2 filter generate --slot main --strictness strict \
 | **本地 PoB2 算伤 / 去水审计 / 切武器检查 / 符文选配** | ✅ | ✅ | 纯本地离线计算，直接读电脑里的 PoB2 存档 |
 | **0.5.5 中英文机制真值库 & 引路石/圣物/碑牌正则** | ✅ | ✅ | 内置中文检索，≤50 字符搜索正则直接粘进仓库 |
 | **国服中文剪贴板解析（含带空格 `稀 有 度:`）** | ✅ | ✅ | 支持直接 `Ctrl+C` 复制国服装备做解析与词缀评估 |
-| **防崩过滤器生成 & 老过滤器修复 & 护耳音效** | ✅ | ✅ | 本地生成/校验 `.filter`，进游戏零报错 |
+| **0.5.5 智能过滤器、语音播报 & 老过滤器修复** | ✅ | ✅ | 本地生成/校验 `.filter`（抓 82 物等/超凡底材），进游戏零报错 |
 | **精确做装词池概率 & 防砸词规划 (`craft odds/plan`)** | ✅ | ✅ | 离线概率与步骤计算；自定义通货汇率即可算国服成本 |
 | **实时市集一口价捡漏 & `poe.ninja` 榜单** | ✅ | ⏳ 评估中 | 目前接入国际服公开只读接口；国服实时物价后续视零 Cookie 合规接口可行性持续跟进 |
 

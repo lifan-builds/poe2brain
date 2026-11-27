@@ -44,6 +44,9 @@ class StrictnessPolicy:
     hide_endgame_normal_magic_gear: bool
     hide_endgame_untiered_rares: bool
     hide_campaign_clutter: bool
+    show_routine_salvage: bool = True
+    hide_endgame_trash_flasks_jewellery: bool = False
+    generic_unique_tier: str = "b"
 
 
 STRICTNESS_POLICIES: dict[StrictnessTier, StrictnessPolicy] = {
@@ -57,6 +60,9 @@ STRICTNESS_POLICIES: dict[StrictnessTier, StrictnessPolicy] = {
         hide_endgame_normal_magic_gear=False,
         hide_endgame_untiered_rares=False,
         hide_campaign_clutter=False,
+        show_routine_salvage=True,
+        hide_endgame_trash_flasks_jewellery=False,
+        generic_unique_tier="a",
     ),
     StrictnessTier.REGULAR: StrictnessPolicy(
         min_currency_ex=0.15,
@@ -68,6 +74,9 @@ STRICTNESS_POLICIES: dict[StrictnessTier, StrictnessPolicy] = {
         hide_endgame_normal_magic_gear=True,
         hide_endgame_untiered_rares=False,
         hide_campaign_clutter=False,
+        show_routine_salvage=True,
+        hide_endgame_trash_flasks_jewellery=False,
+        generic_unique_tier="a",
     ),
     StrictnessTier.SEMI_STRICT: StrictnessPolicy(
         min_currency_ex=0.45,
@@ -79,6 +88,9 @@ STRICTNESS_POLICIES: dict[StrictnessTier, StrictnessPolicy] = {
         hide_endgame_normal_magic_gear=True,
         hide_endgame_untiered_rares=False,
         hide_campaign_clutter=False,
+        show_routine_salvage=True,
+        hide_endgame_trash_flasks_jewellery=False,
+        generic_unique_tier="b",
     ),
     StrictnessTier.STRICT: StrictnessPolicy(
         min_currency_ex=1.25,
@@ -90,6 +102,9 @@ STRICTNESS_POLICIES: dict[StrictnessTier, StrictnessPolicy] = {
         hide_endgame_normal_magic_gear=True,
         hide_endgame_untiered_rares=True,
         hide_campaign_clutter=False,
+        show_routine_salvage=True,
+        hide_endgame_trash_flasks_jewellery=True,
+        generic_unique_tier="b",
     ),
     StrictnessTier.VERY_STRICT: StrictnessPolicy(
         min_currency_ex=3.5,
@@ -101,6 +116,9 @@ STRICTNESS_POLICIES: dict[StrictnessTier, StrictnessPolicy] = {
         hide_endgame_normal_magic_gear=True,
         hide_endgame_untiered_rares=True,
         hide_campaign_clutter=True,
+        show_routine_salvage=False,
+        hide_endgame_trash_flasks_jewellery=True,
+        generic_unique_tier="d",
     ),
     StrictnessTier.UBER_STRICT: StrictnessPolicy(
         min_currency_ex=10.0,
@@ -112,6 +130,9 @@ STRICTNESS_POLICIES: dict[StrictnessTier, StrictnessPolicy] = {
         hide_endgame_normal_magic_gear=True,
         hide_endgame_untiered_rares=True,
         hide_campaign_clutter=True,
+        show_routine_salvage=False,
+        hide_endgame_trash_flasks_jewellery=True,
+        generic_unique_tier="d",
     ),
 }
 
@@ -178,6 +199,33 @@ CHANCING_BASES_055: tuple[str, ...] = (
     "Gold Ring",
     "Emerald Ring",
     "Solar Amulet",
+)
+
+ENDGAME_JEWELLERY_BASES_055: tuple[str, ...] = (
+    "Breach Ring",
+    "Amethyst Ring",
+    "Prismatic Ring",
+    "Stellar Amulet",
+    "Solar Amulet",
+    "Heavy Belt",
+    "Utility Belt",
+)
+
+META_CRAFTING_BASES_055: tuple[str, ...] = (
+    "Gemini Bow",
+    "Warmonger Bow",
+    "Attuned Wand",
+    "Siphoning Wand",
+    "Galvanic Wand",
+    "Slicing Quarterstaff",
+    "Crackling Quarterstaff",
+    "Omen Sceptre",
+    "Rattling Sceptre",
+)
+
+ULTIMATE_FLASKS_055: tuple[str, ...] = (
+    "Ultimate Life Flask",
+    "Ultimate Mana Flask",
 )
 
 WEAPON_FILTER_CLASSES: frozenset[str] = frozenset(
@@ -1284,10 +1332,8 @@ class FilterGenerator:
                 "uniques",
                 "any_unique",
                 ["Rarity Unique"],
-                resolved_theme.tiers[
-                    "a" if strict_tier in (StrictnessTier.SOFT, StrictnessTier.REGULAR) else "b"
-                ],
-                sound_pack=sound_pack,
+                resolved_theme.tiers[policy.generic_unique_tier],
+                sound_pack=sound_pack if policy.generic_unique_tier != "d" else None,
                 require_custom_sounds=require_custom_sounds,
             )
         )
@@ -1333,7 +1379,7 @@ class FilterGenerator:
                 )
             )
 
-        # 5. Uncut Skill / Spirit / Support Gems & Level 20+ Gems
+        # 5. Uncut Skill/Spirit (Lv20 jackpot, Lv19 high) & Support Gems (separated)
         sections.append(
             _render_show_block(
                 "gems",
@@ -1345,24 +1391,82 @@ class FilterGenerator:
                 resolved_theme.tiers["s"],
                 sound_pack=sound_pack,
                 require_custom_sounds=require_custom_sounds,
-                section_comment="Uncut & High-Level Gems",
+                section_comment="Uncut Skill/Spirit Gems (Lv20 S-Tier, Lv19 A-Tier) & Support Gems",
             )
         )
         sections.append(
             _render_show_block(
                 "gems",
-                "uncut_progression",
+                "level_19_uncut",
                 [
-                    'Class == "Uncut Skill Gems" "Uncut Spirit Gems" "Uncut Support Gems"',
-                    f"ItemLevel >= {policy.min_uncut_gem_level}",
+                    'Class == "Uncut Skill Gems" "Uncut Spirit Gems"',
+                    "ItemLevel == 19",
                 ],
-                resolved_theme.tiers["b"],
+                resolved_theme.tiers["a"],
                 sound_pack=sound_pack,
                 require_custom_sounds=require_custom_sounds,
             )
         )
+        if policy.min_uncut_gem_level < 19:
+            sections.append(
+                _render_show_block(
+                    "gems",
+                    "uncut_progression",
+                    [
+                        'Class == "Uncut Skill Gems" "Uncut Spirit Gems"',
+                        f"ItemLevel >= {policy.min_uncut_gem_level}",
+                        "ItemLevel <= 18",
+                    ],
+                    resolved_theme.tiers["b"],
+                    sound_pack=sound_pack,
+                    require_custom_sounds=require_custom_sounds,
+                )
+            )
+        if strict_tier in (StrictnessTier.VERY_STRICT, StrictnessTier.UBER_STRICT):
+            sections.append(
+                _render_show_block(
+                    "gems",
+                    "uncut_support_top",
+                    ['Class == "Uncut Support Gems"', "ItemLevel >= 4"],
+                    resolved_theme.tiers["c"],
+                )
+            )
+            sections.append(
+                "\n".join(
+                    [
+                        "Hide # $type->gems $tier->uncut_support_low",
+                        '\tClass == "Uncut Support Gems"',
+                        "\tAreaLevel >= 72",
+                        "\tItemLevel < 4",
+                        "\tSetFontSize 18",
+                        "\tDisableDropSound True",
+                    ]
+                )
+            )
+        else:
+            sections.append(
+                _render_show_block(
+                    "gems",
+                    "uncut_support",
+                    ['Class == "Uncut Support Gems"'],
+                    resolved_theme.tiers["c"],
+                )
+            )
+        if policy.min_uncut_gem_level > 1:
+            sections.append(
+                "\n".join(
+                    [
+                        "Hide # $type->gems $tier->uncut_low",
+                        '\tClass == "Uncut Skill Gems" "Uncut Spirit Gems"',
+                        "\tAreaLevel >= 70",
+                        f"\tItemLevel < {policy.min_uncut_gem_level}",
+                        "\tSetFontSize 18",
+                        "\tDisableDropSound True",
+                    ]
+                )
+            )
 
-        # 6. Jewels, Relics, Expedition Logbooks, Chancing Bases & High Unidentified Tiers
+        # 6. Jewels, Relics, Logbooks, Chancing, Exceptional & ilvl 81/82 Crafting Bases
         sections.append(
             _render_show_block(
                 "jewels_relics",
@@ -1388,7 +1492,30 @@ class FilterGenerator:
                 )
             )
 
-        # Exceptional Fractured / Multi-Socket / Tiered Unidentified Gear
+        # Exceptional Over-Quality / Over-Socket, Fractured & High UnidentifiedItemTier Gear
+        sections.append(
+            _render_show_block(
+                "exceptional_gear",
+                "over_quality_21",
+                ["Quality >= 21", "Rarity Normal Magic Rare"],
+                resolved_theme.tiers["a"],
+                sound_pack=sound_pack,
+                require_custom_sounds=require_custom_sounds,
+                section_comment=(
+                    "Exceptional Over-Quality (21%+), Over-Socket (3+), Fractured & Tiered Gear"
+                ),
+            )
+        )
+        sections.append(
+            _render_show_block(
+                "exceptional_gear",
+                "over_sockets_3",
+                ["Sockets >= 3", "Rarity Normal Magic Rare"],
+                resolved_theme.tiers["a"],
+                sound_pack=sound_pack,
+                require_custom_sounds=require_custom_sounds,
+            )
+        )
         sections.append(
             _render_show_block(
                 "exceptional_gear",
@@ -1397,7 +1524,6 @@ class FilterGenerator:
                 resolved_theme.tiers["a"],
                 sound_pack=sound_pack,
                 require_custom_sounds=require_custom_sounds,
-                section_comment="Fractured, Multi-Socket & High UnidentifiedItemTier Gear",
             )
         )
         sections.append(
@@ -1425,26 +1551,83 @@ class FilterGenerator:
                     require_custom_sounds=require_custom_sounds,
                 )
             )
-        sections.append(
-            _render_show_block(
-                "salvage",
-                "multi_sockets",
-                ["Sockets >= 2", "Rarity Normal Magic Rare"],
-                resolved_theme.tiers["c"],
-                sound_pack=sound_pack,
-                require_custom_sounds=require_custom_sounds,
+
+        # High-ilvl Endgame Jewellery & Meta Weapon Crafting Bases (ilvl 81/82+)
+        live_jewellery = [
+            b for b in ENDGAME_JEWELLERY_BASES_055 if b in self.index.live_poe2_basetypes
+        ]
+        if live_jewellery:
+            jewel_ilvl = 82 if strict_tier == StrictnessTier.UBER_STRICT else 81
+            sections.append(
+                _render_show_block(
+                    "crafting_bases",
+                    "jewellery_ilvl81",
+                    [
+                        "Rarity Normal Magic Rare",
+                        f"BaseType == {_quote_list(live_jewellery)}",
+                        f"ItemLevel >= {jewel_ilvl}",
+                    ],
+                    resolved_theme.tiers["b"],
+                    sound_pack=sound_pack,
+                    require_custom_sounds=require_custom_sounds,
+                    section_comment=(
+                        f"High-ilvl Endgame Jewellery & Meta Crafting Bases (ilvl {jewel_ilvl}+)"
+                    ),
+                )
             )
-        )
-        sections.append(
-            _render_show_block(
-                "salvage",
-                "high_quality",
-                ["Quality >= 15", "Rarity Normal Magic Rare"],
-                resolved_theme.tiers["c"],
-                sound_pack=sound_pack,
-                require_custom_sounds=require_custom_sounds,
+        live_meta_weapons = [
+            b for b in META_CRAFTING_BASES_055 if b in self.index.live_poe2_basetypes
+        ]
+        if live_meta_weapons and strict_tier != StrictnessTier.UBER_STRICT:
+            sections.append(
+                _render_show_block(
+                    "crafting_bases",
+                    "meta_weapons_ilvl82",
+                    [
+                        "Rarity Normal Magic Rare",
+                        f"BaseType == {_quote_list(live_meta_weapons)}",
+                        "ItemLevel >= 82",
+                    ],
+                    resolved_theme.tiers["b"],
+                )
             )
-        )
+
+        # Quality Ultimate Flasks & Routine Salvage (hidden on Very Strict / Uber Strict)
+        live_ult_flasks = [b for b in ULTIMATE_FLASKS_055 if b in self.index.live_poe2_basetypes]
+        if live_ult_flasks and policy.show_routine_salvage:
+            sections.append(
+                _render_show_block(
+                    "flasks",
+                    "ultimate_quality",
+                    [
+                        f"BaseType == {_quote_list(live_ult_flasks)}",
+                        "Quality >= 15",
+                    ],
+                    resolved_theme.tiers["c"],
+                    section_comment="Quality Ultimate Flasks & Routine Salvage (Strict and below)",
+                )
+            )
+        if policy.show_routine_salvage:
+            sections.append(
+                _render_show_block(
+                    "salvage",
+                    "multi_sockets",
+                    ["Sockets >= 2", "Rarity Normal Magic Rare"],
+                    resolved_theme.tiers["c"],
+                    sound_pack=sound_pack,
+                    require_custom_sounds=require_custom_sounds,
+                )
+            )
+            sections.append(
+                _render_show_block(
+                    "salvage",
+                    "high_quality",
+                    ["Quality >= 15", "Rarity Normal Magic Rare"],
+                    resolved_theme.tiers["c"],
+                    sound_pack=sound_pack,
+                    require_custom_sounds=require_custom_sounds,
+                )
+            )
 
         # 7. Gold Stacks
         sections.append(
@@ -1530,6 +1713,31 @@ class FilterGenerator:
                         "\tAreaLevel >= 65",
                         "\tRarity Normal Magic",
                         f"\tClass == {_quote_list(gear_classes)}",
+                        "\tSetFontSize 18",
+                        "\tDisableDropSound True",
+                    ]
+                )
+            )
+        if policy.hide_endgame_trash_flasks_jewellery:
+            sections.append(
+                "\n".join(
+                    [
+                        "# Hide non-priority endgame Flasks, Charms & low Normal/Magic Jewellery",
+                        "Hide # $type->hidelayer $tier->flasks_charms_endgame",
+                        "\tAreaLevel >= 68",
+                        '\tClass == "Life Flasks" "Mana Flasks" "Charms"',
+                        "\tSetFontSize 18",
+                        "\tDisableDropSound True",
+                    ]
+                )
+            )
+            sections.append(
+                "\n".join(
+                    [
+                        "Hide # $type->hidelayer $tier->jewellery_normal_magic_endgame",
+                        "\tAreaLevel >= 68",
+                        "\tRarity Normal Magic",
+                        '\tClass == "Rings" "Amulets" "Belts"',
                         "\tSetFontSize 18",
                         "\tDisableDropSound True",
                     ]

@@ -1912,11 +1912,16 @@ def compose_theme(
 
 
 def parse_look_intent(look: str | None) -> dict[str, Any]:
-    """Extract optional accessibility (`cvd_safe`) and audio (`warm_night_mode`, `sound_style`)
-    directives embedded inside a natural-language `--look` prompt.
+    """Extract optional accessibility (`cvd_safe`) and audio (`warm_night_mode`, `sound_style`,
+    `voice_language`) directives embedded inside a natural-language `--look` prompt.
     """
     if not look or not look.strip():
-        return {"cvd_safe": None, "warm_night_mode": False, "sound_style": None}
+        return {
+            "cvd_safe": None,
+            "warm_night_mode": False,
+            "sound_style": None,
+            "voice_language": "en",
+        }
 
     low = look.strip().lower()
 
@@ -1959,7 +1964,20 @@ def parse_look_intent(look: str | None) -> dict[str, Any]:
     )
 
     sound_style: str | None = None
-    if any(k in low for k in ("voice", "callout", "spoken", "tts", "语音", "播报", "人声")):
+    if any(
+        k in low
+        for k in (
+            "voice",
+            "callout",
+            "spoken",
+            "tts",
+            "语音",
+            "播报",
+            "人声",
+            "好运来",
+            "大货播报",
+        )
+    ):
         sound_style = "voice_callout"
     elif any(k in low for k in ("gong", "ritual gong", "bronze bell", "铜锣", "古锣", "祭坛")):
         sound_style = "ritual_gong"
@@ -1998,8 +2016,17 @@ def parse_look_intent(look: str | None) -> dict[str, Any]:
     elif any(k in low for k in ("chime", "celestial", "bell", "风铃", "清脆", "星铃", "水晶")):
         sound_style = "celestial_chime"
 
+    has_cjk = any("\u4e00" <= ch <= "\u9fff" for ch in look)
+    voice_language = (
+        "zh"
+        if any(k in low for k in ("中文语音", "中文播报", "国语", "汉语", "好运来", "大货播报"))
+        or (sound_style == "voice_callout" and has_cjk)
+        else "en"
+    )
+
     return {
         "cvd_safe": cvd_safe,
         "warm_night_mode": warm_night_mode,
         "sound_style": sound_style,
+        "voice_language": voice_language,
     }
