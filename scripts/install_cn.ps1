@@ -8,6 +8,7 @@
 
 param(
     [string]$InstallDir = "C:\dev\poe2brain",
+    [string]$CnGitRepoUrl = "https://gitcode.com/gcw_rYL140He/poe2brain.git",
     [string]$GitRepoUrl = "https://github.com/lifan-builds/poe2brain.git",
     [string]$GitHubMirror = "https://ghfast.top/",
     [string]$PyPiMirror = "https://mirrors.aliyun.com/pypi/simple/",
@@ -132,7 +133,7 @@ if (Test-Path (Join-Path (Get-Location) "pyproject.toml")) {
     $fetched = $false
     if (Get-Command git -ErrorAction SilentlyContinue) {
         $mirrorGit = "$($GitHubMirror.TrimEnd('/'))/$GitRepoUrl"
-        foreach ($repo in @($mirrorGit, $GitRepoUrl)) {
+        foreach ($repo in @($CnGitRepoUrl, $mirrorGit, $GitRepoUrl)) {
             Write-Host "尝试 git clone：$repo" -ForegroundColor Gray
             & git clone --depth 1 $repo $InstallDir
             if ($LASTEXITCODE -eq 0 -and (Test-Path (Join-Path $InstallDir "pyproject.toml"))) {
