@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import httpx
 import pytest
 
 from poe2brain.http import GGGRateLimiter, Poe2HttpClient
+from poe2brain.models.trade import CurrencyQuote
 from poe2brain.trade.arbitrage import (
     ArbitrageMechanism,
     ArbitrageScanner,
@@ -17,8 +19,13 @@ from poe2brain.trade.arbitrage import (
     estimate_alva_gold_per_unit,
     estimate_leg_gold,
 )
-from poe2brain.trade.economy import EconomyService
-from poe2brain.trade.trade2_client import Trade2Client
+from poe2brain.trade.economy import (
+    EconomyService,
+    ReferenceRates,
+    _LeagueSnapshot,
+    _MergedMarketEntry,
+)
+from poe2brain.trade.trade2_client import ExchangeOffer, Trade2Client, TradeExchangeResponse
 
 
 def _build_mock_economy_and_trade2(
@@ -900,6 +907,7 @@ def test_conversions_and_set_assembly_against_bundled_sqlite(tmp_path: Path) -> 
                 "Forbidden Rites",
                 include_live_exchange=False,
                 include_encounter_gated=False,
+                min_volume_divine=1.2,
                 limit=30,
             )
 
@@ -920,10 +928,9 @@ def test_conversions_and_set_assembly_against_bundled_sqlite(tmp_path: Path) -> 
             "reforge_emotion:concentrated-liquid-suffering->concentrated-liquid-isolation"
             in ids_all
         )
-        assert (
-            "reforge_emotion_chain:concentrated-liquid-fear->concentrated-liquid-isolation"
-            in ids_all
-        )
+        chain_id = "reforge_emotion_chain:concentrated-liquid-fear->concentrated-liquid-isolation"
+        assert chain_id not in ids_all
+        assert chain_id in ids_hideout
         assert not any("potent-liquid-melancholy" in oid for oid in ids_all)
 
         # 3. Empirical drop-weighted Refined Catalyst EV present (`is_deterministic=False`)
@@ -965,3 +972,126 @@ def test_conversions_and_set_assembly_against_bundled_sqlite(tmp_path: Path) -> 
     finally:
         t2.close()
         econ.close()
+
+
+@pytest.fixture
+def book_scanner() -> ArbitrageScanner:
+    economy = Mock(spec=EconomyService)
+    economy._ensure_snapshot.return_value = _LeagueSnapshot(
+        fetched_at=0,
+        rates=ReferenceRates(divine_exalted=450, chaos_exalted=36, chaos_per_divine=12.5),
+        entries_by_id={},
+        alias_to_id={},
+    )
+    return ArbitrageScanner(economy=economy, trade2=Mock(spec=Trade2Client))
+
+
+@pytest.mark.parametrize("rate", [0.0, -1.0, float("inf"), float("nan")])
+def test_scan_rejects_invalid_divine_rate(book_scanner, rate):
+    book_scanner.economy._ensure_snapshot.return_value.rates.divine_exalted = rate
+    with pytest.raises(ValueError, match="divine_exalted must be finite and positive"):
+        book_scanner.scan_all()
+
+
+def _crossed_book(scanner, quote, ask_have, ask_want):
+    bid = ExchangeOffer(
+        listing_id="bid",
+        account_name="buyer",
+        online=True,
+        stock=1000,
+        have_currency="chaos",
+        have_amount=1,
+        want_currency=quote,
+        want_amount=40,
+        have_per_want=1 / 40,
+    )
+    ask = ExchangeOffer(
+        listing_id="ask",
+        account_name="seller",
+        online=True,
+        stock=1000,
+        have_currency=quote,
+        have_amount=ask_have,
+        want_currency="chaos",
+        want_amount=ask_want,
+        have_per_want=30,
+    )
+    scanner.trade2.exchange.side_effect = [
+        TradeExchangeResponse(id=offer.listing_id, offers=[offer]) for offer in (bid, ask)
+    ]
+    return scanner.scan_live_order_books_and_triangles(pairs=[("chaos", quote)])
+
+
+@pytest.mark.parametrize(
+    ("have", "want"),
+    [(0, 1), (-1, 1), (float("nan"), 1), (1, float("inf")), (1e308, 1e-308), (5e-324, 1)],
+)
+def test_invalid_ask_leaves_valid_bid_visible(book_scanner, have, want):
+    quotes, opportunities, _ = _crossed_book(book_scanner, "exalted", have, want)
+    assert quotes[0].best_bid_quote_per_base == 40
+    assert quotes[0].best_ask_quote_per_base is None
+    assert opportunities == []
+
+
+@pytest.mark.parametrize("rate", [None, 0.0, -1.0, float("inf"), float("nan"), 1.0])
+def test_crossed_book_requires_quote_valuation(book_scanner, rate):
+    if rate is not None:
+        book_scanner.economy._ensure_snapshot.return_value.rates.rates_in_exalted["token"] = rate
+    quotes, opportunities, _ = _crossed_book(book_scanner, "token", 30, 1)
+    assert quotes[0].crossed_taker_profit_pct == pytest.approx(33.33)
+    if rate == 1.0:
+        crossed = next(o for o in opportunities if o.id == "book_cross:chaos_token")
+        assert crossed.gross_profit_exalted == 10
+    else:
+        assert "unpriced_currency:token" in quotes[0].flags
+        assert opportunities == []
+
+
+@pytest.mark.parametrize(
+    ("floor", "source_volume", "output_volume", "expected"),
+    [
+        (2.0, 2.0, 2.0, True),
+        (2.0, 1.999, 2.0, False),
+        (2.0, 2.0, 1.999, False),
+        (2.0, float("nan"), 2.0, False),
+        (2.0, 2.0, float("inf"), False),
+        (0.0, None, 2.0, False),
+        (0.0, 0.0, 2.0, True),
+    ],
+)
+def test_snapshot_reforge_requires_observed_volume_on_both_legs(
+    book_scanner, floor, source_volume, output_volume, expected
+):
+    snap = book_scanner.economy._ensure_snapshot.return_value
+    for slug, price, volume in (
+        ("lesser-iron-rune", 1, source_volume),
+        ("iron-rune", 10, output_volume),
+    ):
+        quote = CurrencyQuote(id=slug, name=slug, exalted=price)
+        snap.entries_by_id[slug] = _MergedMarketEntry(
+            id=slug,
+            name=slug,
+            category="runes",
+            league=quote.league,
+            item_id=None,
+            base_type=None,
+            scout_exalted=None,
+            ninja_exalted=price,
+            volume_divine=volume,
+            max_volume_currency="exalted",
+            change_7d_pct=None,
+            quote=quote,
+        )
+    opportunities, _ = book_scanner.scan_deterministic_conversions(
+        snap=snap, min_volume_divine=floor, include_encounter_gated=False
+    )
+    assert any(o.id == "reforge_rune:lesser-iron-rune" for o in opportunities) == expected
+
+
+def test_crossed_book_skips_overflowing_exalted_valuation(book_scanner):
+    rates = book_scanner.economy._ensure_snapshot.return_value.rates
+    rates.chaos_exalted = 1e308
+    rates.rates_in_exalted["token"] = 5e306
+    quotes, opportunities, _ = _crossed_book(book_scanner, "token", 30, 1)
+    assert quotes[0].crossed_taker_profit_pct == pytest.approx(33.33)
+    assert opportunities == []

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import pytest
+
 from poe2brain.knowledge.service import KnowledgeService
 from poe2brain.models.builds import BuildStats
 from poe2brain.models.ninja import NinjaSkillGroupSummary
@@ -91,6 +93,57 @@ class _StubCategoryEconomy:
             ],
             "entry_tickets": entries_out,
         }
+
+
+@pytest.mark.parametrize("iir", [-1, 0, 39, 40, 80, 99, 100, 125, 150, 151])
+def test_iir_sweet_spot_label_matches_its_numeric_interval(iir: int) -> None:
+    report = recommend_farming_strategies(
+        _StubCategoryEconomy([]),  # type: ignore[arg-type]
+        build_stats=BuildStats(item_rarity_pct=iir),
+    )
+    in_band = 100 <= iir <= 150
+    assert (report["build_profile"]["iir_band"] == "sweet_spot_100_150") == in_band
+    breach = next(row for row in report["strategies"] if row["id"] == "breach_speed")
+    iir_reasons = [reason for reason in breach["fit_reasons"] if "Player IIR" in reason]
+    assert bool(iir_reasons) == in_band
+    assert all("100–150%" in reason for reason in iir_reasons)
+
+
+@pytest.mark.parametrize(
+    ("ticket_price", "budget", "below_runway"),
+    [(None, 50, False), (None, 20, True), (0.0, 50, False), (80.0, 50, True)],
+)
+def test_required_entry_ticket_price_and_runway(
+    ticket_price: float | None, budget: int, below_runway: bool
+) -> None:
+    tickets = []
+    if ticket_price is not None:
+        tickets.append(
+            {
+                "id": "expedition-logbook",
+                "name": "Expedition Logbook",
+                "category": "map",
+                "exalted": ticket_price,
+                "volume_divine": 0.0,
+            }
+        )
+    econ = _StubCategoryEconomy(tickets)
+    report = recommend_farming_strategies(econ, budget_exalted=budget)  # type: ignore[arg-type]
+    expedition = next(row for row in report["strategies"] if row["id"] == "expedition_olroth")
+    fortress = next(row for row in report["strategies"] if row["id"] == "fortress_atlas_rush")
+    assert expedition["estimated_input_cost_exalted"] == ticket_price
+    assert expedition["estimated_input_cost_divine"] == (
+        ticket_price / 400.0 if ticket_price is not None else None
+    )
+    warnings = expedition["build_warnings"]
+    assert any("entry ticket" in w for w in warnings) == (ticket_price is None)
+    assert any("below recommended runway" in w for w in warnings) == below_runway
+    assert fortress["estimated_input_cost_exalted"] == fortress["estimated_input_cost_divine"] == 0
+    assert all("entry ticket" not in w for w in fortress["build_warnings"])
+    if ticket_price is None and not below_runway:
+        baseline = recommend_farming_strategies(econ)  # type: ignore[arg-type]
+        unbudgeted = next(row for row in baseline["strategies"] if row["id"] == expedition["id"])
+        assert expedition["score"] == unbudgeted["score"]
 
 
 def test_data_driven_farming_strategy_day1_vs_endgame_and_build_fit() -> None:

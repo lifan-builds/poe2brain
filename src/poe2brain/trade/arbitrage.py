@@ -8,7 +8,7 @@ from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 from pydantic import Field
 
@@ -196,6 +196,27 @@ class CompoundingLadderReport(Poe2Model):
     strategy_notes: list[str] = Field(default_factory=list)
 
 
+def _positive_rate(value: float | None) -> TypeGuard[float]:
+    return value is not None and math.isfinite(value) and value > 0
+
+
+def _spread_pct(value: float, reference: float) -> float | None:
+    ratio = value / reference
+    pct = (ratio - 1.0) * 100.0
+    return round(pct, 2) if _positive_rate(ratio) and math.isfinite(pct) else None
+
+
+def _divine_exalted(snap: _LeagueSnapshot) -> float:
+    rate = snap.rates.divine_exalted
+    if not _positive_rate(rate):
+        raise ValueError("divine_exalted must be finite and positive")
+    return rate
+
+
+def _meets_volume_floor(floor: float, *volumes: float | None) -> bool:
+    return all(v is not None and math.isfinite(v) and v >= floor for v in volumes)
+
+
 def estimate_alva_gold_per_unit(slug: str, unit_exalted: float) -> int:
     """Estimate Alva's Currency Exchange Gold tax per unit traded in PoE2 0.5.5.
 
@@ -331,25 +352,23 @@ class ArbitrageScanner:
     ) -> ArbitrageScanReport:
         snap = self.economy._ensure_snapshot(league, force_refresh=force_refresh)
         rates = snap.rates
-        div_ex = rates.divine_exalted
+        div_ex = _divine_exalted(snap)
         max_cost_ex = max_investment_divine * div_ex if max_investment_divine is not None else None
 
         div_entry = snap.entries_by_id.get("divine")
         scout_div_ex = (
             div_entry.scout_exalted
-            if (div_entry is not None and div_entry.scout_exalted and div_entry.scout_exalted > 0)
+            if (div_entry is not None and _positive_rate(div_entry.scout_exalted))
             else rates.divine_exalted
         )
         ninja_div_ex = (
             div_entry.ninja_exalted
-            if (div_entry is not None and div_entry.ninja_exalted and div_entry.ninja_exalted > 0)
-            else (rates.ninja_divine_exalted or rates.divine_exalted)
+            if (div_entry is not None and _positive_rate(div_entry.ninja_exalted))
+            else (
+                rates.ninja_divine_exalted if _positive_rate(rates.ninja_divine_exalted) else div_ex
+            )
         )
-        lag_pct = (
-            round(((scout_div_ex / ninja_div_ex) - 1.0) * 100.0, 2)
-            if (scout_div_ex > 0 and ninja_div_ex > 0)
-            else None
-        )
+        lag_pct = _spread_pct(scout_div_ex, ninja_div_ex)
 
         opportunities: list[ArbitrageOpportunity] = []
         order_books: list[OrderBookQuote] = []
@@ -504,8 +523,7 @@ class ArbitrageScanner:
         snap: _LeagueSnapshot | None = None,
     ) -> tuple[list[OrderBookQuote], list[ArbitrageOpportunity], list[ArbitrageTrapWarning]]:
         resolved_snap = snap or self.economy._ensure_snapshot(league)
-        rates = resolved_snap.rates
-        div_ex = rates.divine_exalted
+        div_ex = _divine_exalted(resolved_snap)
 
         quotes: list[OrderBookQuote] = []
         opportunities: list[ArbitrageOpportunity] = []
@@ -514,8 +532,18 @@ class ArbitrageScanner:
         # Directed rate map: (from_curr, to_curr) -> (to_received_per_1_from_spent, stock, account)
         directed_rates: dict[tuple[str, str], tuple[float, int, str]] = {}
 
+        unit_exalted = {}
+        for currency in {currency for pair in pairs for currency in pair}:
+            unit = self._unit_exalted(currency, resolved_snap)
+            if _positive_rate(unit):
+                unit_exalted[currency] = unit
+
         for base_c, quote_c in pairs:
-            alva_ref = self._reference_pair_rate(base_c, quote_c, resolved_snap)
+            base_unit_ex = unit_exalted.get(base_c)
+            quote_unit_ex = unit_exalted.get(quote_c)
+            alva_ref = base_unit_ex / quote_unit_ex if base_unit_ex and quote_unit_ex else None
+            if not _positive_rate(alva_ref):
+                alva_ref = None
 
             # Sell 1 `base_c` for `quote_c` (`have=base_c, want=quote_c`) -> Bid for base_c
             sell_resp = self.trade2.exchange(
@@ -532,7 +560,7 @@ class ArbitrageScanner:
                 status_option="online",
             )
 
-            flags: list[str] = []
+            flags = [f"unpriced_currency:{c}" for c in (base_c, quote_c) if c not in unit_exalted]
             bid_offer, bid_flags = _select_clean_offer(
                 sell_resp.offers,
                 side="sell_base",
@@ -552,8 +580,8 @@ class ArbitrageScanner:
             best_bid: float | None = None
             bid_stock = 0
             bid_acct: str | None = None
-            if bid_offer is not None and bid_offer.have_amount > 0:
-                best_bid = round(bid_offer.want_amount / bid_offer.have_amount, 6)
+            if bid_offer is not None:
+                best_bid = bid_offer.want_amount / bid_offer.have_amount
                 bid_stock = bid_offer.stock
                 bid_acct = bid_offer.account_name
                 directed_rates[(base_c, quote_c)] = (best_bid, bid_stock, bid_acct)
@@ -561,12 +589,12 @@ class ArbitrageScanner:
             best_ask: float | None = None
             ask_stock = 0
             ask_acct: str | None = None
-            if ask_offer is not None and ask_offer.want_amount > 0:
-                best_ask = round(ask_offer.have_amount / ask_offer.want_amount, 6)
+            if ask_offer is not None:
+                best_ask = ask_offer.have_amount / ask_offer.want_amount
                 ask_stock = ask_offer.stock
                 ask_acct = ask_offer.account_name
                 directed_rates[(quote_c, base_c)] = (
-                    round(ask_offer.want_amount / ask_offer.have_amount, 6),
+                    ask_offer.want_amount / ask_offer.have_amount,
                     ask_stock,
                     ask_acct,
                 )
@@ -579,9 +607,9 @@ class ArbitrageScanner:
 
             crossed_pct: float | None = None
             maker_pct: float | None = None
-            if best_bid is not None and best_ask is not None and best_ask > 0 and best_bid > 0:
-                crossed_pct = round(((best_bid / best_ask) - 1.0) * 100.0, 2)
-                maker_pct = round(((best_ask / best_bid) - 1.0) * 100.0, 2)
+            if best_bid is not None and best_ask is not None:
+                crossed_pct = _spread_pct(best_bid, best_ask)
+                maker_pct = _spread_pct(best_ask, best_bid)
 
                 if alva_ref and best_bid < 0.5 * alva_ref:
                     flags.append("shark_bid_trap")
@@ -601,9 +629,7 @@ class ArbitrageScanner:
                     )
 
                 # Executable crossed order book (`best_bid > best_ask`)
-                if crossed_pct > 1.5:
-                    base_unit_ex = self._unit_exalted(base_c, resolved_snap) or 1.0
-                    quote_unit_ex = self._unit_exalted(quote_c, resolved_snap) or 1.0
+                if crossed_pct is not None and crossed_pct > 1.5 and alva_ref:
                     cost_ex = best_ask * quote_unit_ex
                     out_ex = best_bid * quote_unit_ex
                     prof_ex = out_ex - cost_ex
@@ -611,7 +637,7 @@ class ArbitrageScanner:
                         quote_c, best_ask, quote_unit_ex
                     ) + estimate_leg_gold(base_c, 1.0, base_unit_ex)
                     units = int(math.ceil(best_ask)) + 1
-                    if prof_ex > 0:
+                    if _positive_rate(cost_ex) and _positive_rate(prof_ex):
                         opportunities.append(
                             ArbitrageOpportunity(
                                 id=f"book_cross:{base_c}_{quote_c}",
@@ -659,13 +685,11 @@ class ArbitrageScanner:
 
             # Check Stash-to-Alva discount (`best_ask < alva_ref * 0.94`)
             if alva_ref and best_ask is not None and best_ask < alva_ref * 0.94:
-                quote_unit_ex = self._unit_exalted(quote_c, resolved_snap) or 1.0
-                base_unit_ex = self._unit_exalted(base_c, resolved_snap) or 1.0
                 cost_ex = best_ask * quote_unit_ex
-                out_ex = alva_ref * quote_unit_ex
+                out_ex = base_unit_ex
                 prof_ex = out_ex - cost_ex
                 gold_est = estimate_leg_gold(base_c, 1.0, base_unit_ex)
-                if prof_ex > 1.0:
+                if _positive_rate(cost_ex) and prof_ex > 1.0:
                     opportunities.append(
                         ArbitrageOpportunity(
                             id=f"stash_to_alva:{base_c}_{quote_c}",
@@ -723,8 +747,8 @@ class ArbitrageScanner:
 
         # Evaluate 3-leg Triangular Cycles anchored on the highest-denomination currency (`1x div`)
         currencies = sorted(
-            {c for pair in pairs for c in pair},
-            key=lambda curr: self._unit_exalted(curr, resolved_snap) or 0.0,
+            unit_exalted,
+            key=unit_exalted.__getitem__,
             reverse=True,
         )
         if len(currencies) >= 3:
@@ -737,10 +761,12 @@ class ArbitrageScanner:
                 if not (leg1 and leg2 and leg3):
                     continue
                 mult = leg1[0] * leg2[0] * leg3[0]
-                roi_pct = round((mult - 1.0) * 100.0, 2)
-                a_unit_ex = self._unit_exalted(a, resolved_snap) or 1.0
-                b_unit_ex = self._unit_exalted(b, resolved_snap) or 1.0
-                c_unit_ex = self._unit_exalted(c, resolved_snap) or 1.0
+                roi_pct = _spread_pct(mult, 1.0)
+                if roi_pct is None:
+                    continue
+                a_unit_ex = unit_exalted[a]
+                b_unit_ex = unit_exalted[b]
+                c_unit_ex = unit_exalted[c]
                 amt_b = leg1[0]
                 amt_c = amt_b * leg2[0]
                 amt_a_out = amt_c * leg3[0]
@@ -804,7 +830,7 @@ class ArbitrageScanner:
         high-Gold-burn `Divine <-> Exalted` trap.
         """
         resolved_snap = snap or self.economy._ensure_snapshot(league)
-        div_ex = resolved_snap.rates.divine_exalted
+        div_ex = _divine_exalted(resolved_snap)
         chaos_per_div = resolved_snap.rates.chaos_per_divine
 
         opportunities: list[ArbitrageOpportunity] = []
@@ -836,10 +862,9 @@ class ArbitrageScanner:
         candidates: list[_MergedMarketEntry] = []
         micro_candidates: list[_MergedMarketEntry] = []
         for entry in resolved_snap.entries_by_id.values():
-            vol = entry.volume_divine or 0.0
             if (
                 entry.quote is None
-                or vol < min_volume_divine
+                or not _meets_volume_floor(min_volume_divine, entry.volume_divine)
                 or entry.max_volume_currency not in ("divine", "chaos", "exalted")
                 or entry.id in ("divine", "chaos", "exalted")
             ):
@@ -864,7 +889,11 @@ class ArbitrageScanner:
                 else (raw_mvc if raw_mvc in ("divine", "chaos") else "chaos")
             )
             denom_unit_ex = div_ex if denom == "divine" else resolved_snap.rates.chaos_exalted
+            if not _positive_rate(denom_unit_ex):
+                continue
             denom_qty = val_ex / denom_unit_ex
+            if not _positive_rate(denom_qty):
+                continue
             # Posting fractional integer ratio bid (e.g. -3%) and ask (+3%) on Alva limit book
             buy_ex = val_ex * (1.0 - assumed_maker_capture_pct / 200.0)
             sell_ex = val_ex * (1.0 + assumed_maker_capture_pct / 200.0)
@@ -926,18 +955,18 @@ class ArbitrageScanner:
         snap: _LeagueSnapshot | None = None,
     ) -> tuple[list[ArbitrageOpportunity], list[ArbitrageTrapWarning]]:
         resolved_snap = snap or self.economy._ensure_snapshot(league)
-        div_ex = resolved_snap.rates.divine_exalted
+        div_ex = _divine_exalted(resolved_snap)
         chaos_ex = resolved_snap.rates.chaos_exalted
 
         div_entry = resolved_snap.entries_by_id.get("divine")
         scout_div_ex = (
             div_entry.scout_exalted
-            if (div_entry is not None and div_entry.scout_exalted and div_entry.scout_exalted > 0)
+            if (div_entry is not None and _positive_rate(div_entry.scout_exalted))
             else div_ex
         )
         ninja_div_ex = (
             div_entry.ninja_exalted
-            if (div_entry is not None and div_entry.ninja_exalted and div_entry.ninja_exalted > 0)
+            if (div_entry is not None and _positive_rate(div_entry.ninja_exalted))
             else div_ex
         )
 
@@ -961,24 +990,28 @@ class ArbitrageScanner:
                 continue
             vol = entry.volume_divine or 0.0
             if (
-                vol < min_volume_divine
-                or entry.scout_exalted is None
-                or entry.ninja_exalted is None
-                or entry.scout_exalted <= 0
-                or entry.ninja_exalted <= 0
+                not _meets_volume_floor(min_volume_divine, entry.volume_divine)
+                or not _positive_rate(entry.scout_exalted)
+                or not _positive_rate(entry.ninja_exalted)
             ):
                 continue
 
             raw_low = min(entry.scout_exalted, entry.ninja_exalted)
             raw_high = max(entry.scout_exalted, entry.ninja_exalted)
             raw_spread_pct = ((raw_high / raw_low) - 1.0) * 100.0
+            if not math.isfinite(raw_spread_pct):
+                continue
 
             # Normalize BOTH sources into their own contemporaneous Divine numeraire!
             scout_in_div = entry.scout_exalted / scout_div_ex
             ninja_in_div = entry.ninja_exalted / ninja_div_ex
+            if not _positive_rate(scout_in_div) or not _positive_rate(ninja_in_div):
+                continue
             div_low = min(scout_in_div, ninja_in_div)
             div_high = max(scout_in_div, ninja_in_div)
             true_div_spread_pct = ((div_high / div_low) - 1.0) * 100.0
+            if not math.isfinite(true_div_spread_pct):
+                continue
 
             if raw_spread_pct >= 12.0 and true_div_spread_pct < 4.0:
                 traps.append(
@@ -1038,7 +1071,7 @@ class ArbitrageScanner:
                     )
                     if ph:
                         latest_rel = float(ph[0].get("relative_price") or 0.0)
-                        if latest_rel > 0:
+                        if _positive_rate(latest_rel):
                             scout_div = latest_rel
                             div_low = min(scout_div, ninja_div)
                             div_high = max(scout_div, ninja_div)
@@ -1050,7 +1083,7 @@ class ArbitrageScanner:
                 except Exception:
                     pass
 
-            if true_spread_pct < min_spread_pct:
+            if not math.isfinite(true_spread_pct) or true_spread_pct < min_spread_pct:
                 continue
 
             line = ninja_line_by_id.get(entry.id, {})
@@ -1071,7 +1104,11 @@ class ArbitrageScanner:
             richer_leg = f"{mvc.title()} book" if scout_div < ninja_div else "Exalted/Chaos book"
 
             # Estimate Gold on buying in Exalted/Chaos and selling in Divine (or vice-versa)
-            alt_denom = "chaos" if executable_low_ex >= chaos_ex * 2 else "exalted"
+            alt_denom = (
+                "chaos"
+                if _positive_rate(chaos_ex) and executable_low_ex >= chaos_ex * 2
+                else "exalted"
+            )
             alt_unit_ex = chaos_ex if alt_denom == "chaos" else 1.0
             alt_units = executable_low_ex / alt_unit_ex
             gold_est = (
@@ -1149,7 +1186,7 @@ class ArbitrageScanner:
         snap: _LeagueSnapshot | None = None,
     ) -> tuple[list[ArbitrageOpportunity], list[ArbitrageTrapWarning]]:
         resolved_snap = snap or self.economy._ensure_snapshot(league)
-        div_ex = resolved_snap.rates.divine_exalted
+        div_ex = _divine_exalted(resolved_snap)
 
         opportunities: list[ArbitrageOpportunity] = []
         traps: list[ArbitrageTrapWarning] = []
@@ -1179,12 +1216,18 @@ class ArbitrageScanner:
             and mw_entry.quote
             and ext_entry
             and ext_entry.quote
-            and (mw_entry.volume_divine or 0.0) >= min_volume_divine
-            and (ext_entry.volume_divine or 0.0) >= min_volume_divine
+            and art_entry
+            and art_entry.quote
+            and _meets_volume_floor(
+                min_volume_divine,
+                mw_entry.volume_divine,
+                ext_entry.volume_divine,
+                art_entry.volume_divine,
+            )
         ):
             mw_ex = mw_entry.quote.exalted
             ext_ex = ext_entry.quote.exalted
-            art_ex = art_entry.quote.exalted if (art_entry and art_entry.quote) else 10.7
+            art_ex = art_entry.quote.exalted
 
             for rb in TIERED_RUNE_BASES:
                 g_entry = resolved_snap.entries_by_id.get(f"greater-{rb}-rune")
@@ -1195,8 +1238,11 @@ class ArbitrageScanner:
                 p_vol = p_entry.volume_divine or 0.0
                 g_units = (g_vol * div_ex) / max(0.1, g_entry.quote.exalted)
                 p_units = (p_vol * div_ex) / max(0.1, p_entry.quote.exalted)
-                if p_vol < max(2.0, min_volume_divine) or (
-                    g_vol < min_volume_divine and g_units < 8.0
+                if (
+                    not _meets_volume_floor(
+                        min_volume_divine, g_entry.volume_divine, p_entry.volume_divine
+                    )
+                    or p_vol < 2.0
                 ):
                     continue
 
@@ -1224,6 +1270,7 @@ class ArbitrageScanner:
                 )
                 raw_min_vol = min(
                     g_vol,
+                    art_entry.volume_divine or 0.0,
                     mw_entry.volume_divine or 0.0,
                     ext_entry.volume_divine or 0.0,
                     p_vol,
@@ -1308,7 +1355,9 @@ class ArbitrageScanner:
                     continue
                 src_vol = src_e.volume_divine or 0.0
                 dst_vol = dst_e.volume_divine or 0.0
-                if src_vol < min_volume_divine or dst_vol < min_volume_divine:
+                if not _meets_volume_floor(
+                    min_volume_divine, src_e.volume_divine, dst_e.volume_divine
+                ):
                     continue
                 cost_ex = 3.0 * src_e.quote.exalted
                 out_ex = dst_e.quote.exalted
@@ -1378,9 +1427,8 @@ class ArbitrageScanner:
                     continue
                 src_vol = src_e.volume_divine or 0.0
                 dst_vol = dst_e.volume_divine or 0.0
-                src_units = (src_vol * div_ex) / max(0.1, src_e.quote.exalted)
-                if (src_vol < min(0.5, min_volume_divine) and src_units < 6.0) or (
-                    dst_vol < min_volume_divine
+                if not _meets_volume_floor(
+                    min_volume_divine, src_e.volume_divine, dst_e.volume_divine
                 ):
                     continue
                 cost_ex = 3.0 * src_e.quote.exalted
@@ -1443,8 +1491,8 @@ class ArbitrageScanner:
                     and e8.quote
                     and e10
                     and e10.quote
-                    and (e8.volume_divine or 0.0) >= 0.5
-                    and (e10.volume_divine or 0.0) >= min_volume_divine
+                    and _meets_volume_floor(max(0.5, min_volume_divine), e8.volume_divine)
+                    and _meets_volume_floor(min_volume_divine, e10.volume_divine)
                 ):
                     cost_9 = 9.0 * e8.quote.exalted
                     out_10 = e10.quote.exalted
@@ -1500,13 +1548,19 @@ class ArbitrageScanner:
         # 4. Empirical Drop-Weighted Catalyst & Refined Catalyst 3-to-1 Reforging EV
         for prefix, min_cat_vol, min_pool_vol in (
             ("refined-", max(5.0, min_volume_divine), 1.0),
-            ("", max(0.5, min(1.0, min_volume_divine)), 0.15),
+            ("", max(0.5, min_volume_divine), 0.15),
         ):
             pool: dict[str, tuple[_MergedMarketEntry, float]] = {}
             for key, weight in EMPIRICAL_CATALYST_REFORGE_WEIGHTS.items():
                 slug = f"{prefix}{key}-catalyst"
                 entry = resolved_snap.entries_by_id.get(slug)
-                if entry and entry.quote and (entry.volume_divine or 0.0) >= min_pool_vol:
+                if (
+                    entry
+                    and entry.quote
+                    and _meets_volume_floor(
+                        max(min_volume_divine, min_pool_vol), entry.volume_divine
+                    )
+                ):
                     pool[key] = (entry, weight)
             if len(pool) < 8:
                 continue
@@ -1515,8 +1569,7 @@ class ArbitrageScanner:
             for key_in, (entry_in, _w_in) in ordered_inputs[:3]:
                 assert entry_in.quote is not None
                 in_vol = entry_in.volume_divine or 0.0
-                in_units = (in_vol * div_ex) / max(0.1, entry_in.quote.exalted)
-                if in_vol < min_cat_vol and (prefix != "" or in_units < 25.0):
+                if in_vol < min_cat_vol:
                     continue
                 other_total_w = sum(w for k, (_, w) in pool.items() if k != key_in)
                 if other_total_w <= 0:
@@ -1563,7 +1616,9 @@ class ArbitrageScanner:
                             units_traded_per_cycle=4,
                             gold_per_cycle_est=gold_est,
                             profit_ex_per_10k_gold=compute_profit_per_10k_gold(prof_ex, gold_est),
-                            min_leg_volume_divine=round(in_vol, 2),
+                            min_leg_volume_divine=round(
+                                min(e.volume_divine for e, _ in pool.values()), 2
+                            ),
                             primary_denomination=entry_in.max_volume_currency or "chaos",
                             steps=[
                                 (
@@ -1609,7 +1664,7 @@ class ArbitrageScanner:
         snap: _LeagueSnapshot | None = None,
     ) -> tuple[list[ArbitrageOpportunity], list[ArbitrageTrapWarning]]:
         resolved_snap = snap or self.economy._ensure_snapshot(league)
-        div_ex = resolved_snap.rates.divine_exalted
+        div_ex = _divine_exalted(resolved_snap)
 
         opportunities: list[ArbitrageOpportunity] = []
         traps: list[ArbitrageTrapWarning] = []
@@ -1625,12 +1680,9 @@ class ArbitrageScanner:
             and cradle.quote
             and core
             and core.quote
-            and min(
-                spark.volume_divine or 0.0,
-                cradle.volume_divine or 0.0,
-                core.volume_divine or 0.0,
+            and _meets_volume_floor(
+                min_volume_divine, spark.volume_divine, cradle.volume_divine, core.volume_divine
             )
-            >= min_volume_divine
         ):
             cost_ex = spark.quote.exalted + cradle.quote.exalted
             out_ex = core.quote.exalted
@@ -1777,7 +1829,7 @@ class ArbitrageScanner:
 
             src_vol = src_e.volume_divine or 0.0
             dst_vol = dst_e.volume_divine or 0.0
-            if src_vol < min(1.0, min_volume_divine) or dst_vol < min_volume_divine:
+            if not _meets_volume_floor(min_volume_divine, src_e.volume_divine, dst_e.volume_divine):
                 continue
 
             cost_ex = stack_size * src_e.quote.exalted
@@ -1865,15 +1917,14 @@ class ArbitrageScanner:
             raise ValueError("target_divine must be > 0")
 
         snap = self.economy._ensure_snapshot(league, force_refresh=force_refresh)
-        div_ex = snap.rates.divine_exalted
+        div_ex = _divine_exalted(snap)
         chaos_ex = snap.rates.chaos_exalted
         target_ex = target_divine * div_ex
 
         # Gather full spectrum of hideout-executable opportunities from micro (<0.5 Div) to high
-        eff_vol = min(min_volume_divine, 0.5)
         full_scan = self.scan_all(
             league=league,
-            min_volume_divine=eff_vol,
+            min_volume_divine=min_volume_divine,
             min_roi_pct=4.0,
             include_live_exchange=include_live_exchange,
             include_encounter_gated=False,
@@ -1882,7 +1933,7 @@ class ArbitrageScanner:
         )
         micro_mm, _ = self.scan_alva_spread_making(
             league=league,
-            min_volume_divine=max(5.0, eff_vol),
+            min_volume_divine=max(5.0, min_volume_divine),
             include_low_capital=True,
             snap=snap,
         )
@@ -2123,18 +2174,9 @@ class ArbitrageScanner:
             return snap.rates.chaos_exalted
         cid = snap.alias_to_id.get(normalize_market_slug(norm)) or norm
         entry = snap.entries_by_id.get(cid)
-        if entry and entry.quote and entry.quote.exalted > 0:
+        if entry and entry.quote:
             return entry.quote.exalted
         return snap.rates.rates_in_exalted.get(norm)
-
-    def _reference_pair_rate(
-        self, base_currency: str, quote_currency: str, snap: _LeagueSnapshot
-    ) -> float | None:
-        base_ex = self._unit_exalted(base_currency, snap)
-        quote_ex = self._unit_exalted(quote_currency, snap)
-        if base_ex and quote_ex and quote_ex > 0:
-            return base_ex / quote_ex
-        return None
 
     def _resolve_entry_slug(self, item_name: str, snap: _LeagueSnapshot) -> str | None:
         norm = normalize_market_slug(item_name)
@@ -2203,13 +2245,17 @@ class ArbitrageScanner:
                         if spec not in runeshapes_by_reward_idx[ridx]:
                             runeshapes_by_reward_idx[ridx].append(spec)
 
-        div_ex = snap.rates.divine_exalted
+        div_ex = _divine_exalted(snap)
         ver_entry = snap.entries_by_id.get("verisium")
         liq_ver_entry = snap.entries_by_id.get("liquid-verisium")
-        ver_unit_ex = ver_entry.quote.exalted if (ver_entry and ver_entry.quote) else 0.045
-        liq_ver_ex = (
-            liq_ver_entry.quote.exalted if (liq_ver_entry and liq_ver_entry.quote) else 36.7
-        )
+        if not (ver_entry and ver_entry.quote and liq_ver_entry and liq_ver_entry.quote):
+            return []
+        if not _meets_volume_floor(
+            min_volume_divine, ver_entry.volume_divine, liq_ver_entry.volume_divine
+        ):
+            return []
+        ver_unit_ex = ver_entry.quote.exalted
+        liq_ver_ex = liq_ver_entry.quote.exalted
 
         best_by_slug: dict[str, ArbitrageOpportunity] = {}
         for ridx, specs in runeshapes_by_reward_idx.items():
@@ -2236,7 +2282,10 @@ class ArbitrageScanner:
                 continue
             vol = out_e.volume_divine or 0.0
             est_out_units = (vol * div_ex) / max(0.1, out_e.quote.exalted)
-            if vol < max(2.0, min_volume_divine) or est_out_units < 5.0:
+            if (
+                not _meets_volume_floor(max(2.0, min_volume_divine), out_e.volume_divine)
+                or est_out_units < 5.0
+            ):
                 continue
 
             out_ex = count * out_e.quote.exalted
@@ -2269,7 +2318,9 @@ class ArbitrageScanner:
                 units_traded_per_cycle=2 + count,
                 gold_per_cycle_est=gold_est,
                 profit_ex_per_10k_gold=compute_profit_per_10k_gold(prof_ex, gold_est),
-                min_leg_volume_divine=round(vol, 2),
+                min_leg_volume_divine=round(
+                    min(vol, ver_entry.volume_divine, liq_ver_entry.volume_divine), 2
+                ),
                 primary_denomination=out_e.max_volume_currency or "divine",
                 steps=[
                     (
@@ -2313,32 +2364,27 @@ def _select_clean_offer(
     valid: list[ExchangeOffer] = []
 
     for off in offers:
-        if not off.online or off.stock < min_stock or off.have_amount <= 0 or off.want_amount <= 0:
+        if (
+            not off.online
+            or off.stock < min_stock
+            or not _positive_rate(off.have_amount)
+            or not _positive_rate(off.want_amount)
+        ):
             continue
         acct_key = off.account_name.strip().lower()
         if acct_key in seen_accounts:
             continue
 
-        quote_per_base = (
-            (off.want_amount / off.have_amount)
-            if side == "sell_base"
-            else (off.have_amount / off.want_amount)
-        )
+        directed_rate = off.want_amount / off.have_amount
+        quote_per_base = directed_rate if side == "sell_base" else off.have_amount / off.want_amount
+        if not _positive_rate(directed_rate) or not _positive_rate(quote_per_base):
+            continue
 
-        # Reject gross stash-tab misclick tags (> 8x off Alva mid)
-        if alva_quote_per_base and alva_quote_per_base > 0:
-            if side == "sell_base" and (
-                quote_per_base < 0.08 * alva_quote_per_base
-                or quote_per_base > 8.0 * alva_quote_per_base
-            ):
-                flags.append("misclick_outlier_filtered")
-                continue
-            if side == "buy_base" and (
-                quote_per_base > 8.0 * alva_quote_per_base
-                or quote_per_base < 0.08 * alva_quote_per_base
-            ):
-                flags.append("misclick_outlier_filtered")
-                continue
+        if alva_quote_per_base and not (
+            0.08 * alva_quote_per_base <= quote_per_base <= 8.0 * alva_quote_per_base
+        ):
+            flags.append("misclick_outlier_filtered")
+            continue
 
         seen_accounts.add(acct_key)
         valid.append(off)

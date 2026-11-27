@@ -496,7 +496,7 @@ def recommend_farming_strategies(
         iir_pct = float(getattr(build_stats, "item_rarity_pct", 0.0) or 0.0)
         if iir_pct < 0.0:
             iir_band = "negative_white_base_mode"
-        elif iir_pct < 40.0:
+        elif iir_pct < 100.0:
             iir_band = "low_iir_below_sweet_spot"
         elif iir_pct <= 150.0:
             iir_band = "sweet_spot_100_150"
@@ -547,7 +547,6 @@ def recommend_farming_strategies(
         mkt = summaries[spec.id]
         top_items = mkt["top_liquid_items"]
         entry_tickets = mkt["entry_tickets"]
-        # Estimate typical single-map/run entry cost from the cheapest liquid discovered ticket
         tablet_tickets = [
             t
             for t in entry_tickets
@@ -558,7 +557,7 @@ def recommend_farming_strategies(
         elif entry_tickets:
             input_cost_ex = min(float(t["exalted"]) for t in entry_tickets)
         else:
-            input_cost_ex = 0.0
+            input_cost_ex = None if spec.entry_tokens else 0.0
 
         # Data-driven market score (0..100) from live liquidity + p90 drop depth + 7d momentum
         vol_norm = math.log1p(max(0.0, float(mkt["total_volume_divine"]))) / max_log_vol
@@ -586,15 +585,19 @@ def recommend_farming_strategies(
                 f"Better suited for {'/'.join(spec.stages)} than {stage}."
             )
 
+        if input_cost_ex is None:
+            build_warnings.append("Required entry ticket price is unavailable.")
         if budget_exalted is not None:
-            effective_floor = max(spec.min_budget_ex, input_cost_ex * 2.0)
+            effective_floor = spec.min_budget_ex
+            if input_cost_ex is not None:
+                effective_floor = max(effective_floor, input_cost_ex * 2.0)
             if budget_exalted < effective_floor:
                 context_score -= 28.0
                 build_warnings.append(
                     f"Budget ({budget_exalted:.0f} Ex) is below recommended runway "
                     f"(~{effective_floor:.0f} Ex) for sustained inputs."
                 )
-            else:
+            elif input_cost_ex is not None:
                 context_score += 6.0
 
         if focus == "steady":
@@ -691,10 +694,10 @@ def recommend_farming_strategies(
                         f"Negative IIR ({iir:+.0f}%) suppresses currency/unique upgrades "
                         f"in {spec.id}."
                     )
-                elif 80.0 <= iir <= 150.0:
+                elif iir_band == "sweet_spot_100_150":
                     bf += 8.0
                     fit_reasons.append(
-                        f"Player IIR ({iir:.0f}%) sits right in the 100–125% sweet spot."
+                        f"Player IIR ({iir:.0f}%) falls within the 100–150% farming band."
                     )
                 elif iir < 40.0:
                     build_warnings.append(
@@ -744,8 +747,12 @@ def recommend_farming_strategies(
                     "p90_liquid_divine": mkt["p90_liquid_divine"],
                 },
                 "input_items": entry_tickets,
-                "estimated_input_cost_exalted": round(input_cost_ex, 2),
-                "estimated_input_cost_divine": round(input_cost_ex / div_ex, 3),
+                "estimated_input_cost_exalted": (
+                    round(input_cost_ex, 2) if input_cost_ex is not None else None
+                ),
+                "estimated_input_cost_divine": (
+                    round(input_cost_ex / div_ex, 3) if input_cost_ex is not None else None
+                ),
                 "headline_payouts": top_items,
                 "top_payout_item": top_item["name"] if top_item else None,
                 "top_payout_divine": top_item["divine"] if top_item else None,
