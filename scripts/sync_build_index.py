@@ -371,8 +371,11 @@ def _enrich_records_with_pob2(
                         "movement_speed_while_using_skill": round(
                             float(sus.movement_speed_while_using_skill), 4
                         ),
+                        "item_rarity_pct": round(float(sus.item_rarity_pct), 1),
                         "audit_patch": POE2_PATCH,
                     }
+                    if sus.main_skill and float(sus.effective_dps) > 0:
+                        cached["main_skill"] = sus.main_skill
                     audited += 1
                 except Exception as exc:
                     print(

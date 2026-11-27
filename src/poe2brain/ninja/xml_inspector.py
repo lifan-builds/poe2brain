@@ -105,6 +105,8 @@ class _InspectorCatalog:
     base_lower_to_canon: dict[str, str] = field(default_factory=dict)
     gem_kind_by_id: dict[str, str] = field(default_factory=dict)
     gem_kind_by_name: dict[str, str] = field(default_factory=dict)
+    gem_kinds_by_name: dict[str, set[str]] = field(default_factory=dict)
+    gem_tags_by_name: dict[str, set[str]] = field(default_factory=dict)
     keystones_by_id: dict[int, str] = field(default_factory=dict)
     asc_notables_by_id: dict[int, tuple[str, dict[str, str]]] = field(default_factory=dict)
     asc_override_id_to_name: dict[int, str] = field(default_factory=dict)
@@ -146,11 +148,26 @@ def _load_catalog(
                     disp_cls = _normalize_item_class_display(str(i_cls))
                     cat.base_to_class[str(b_name)] = disp_cls
                     cat.base_lower_to_canon[str(b_name).lower()] = str(b_name)
-            for gid, gname, gkind in conn.execute("SELECT id, name, gem_kind FROM gems"):
-                if gid and gkind:
-                    cat.gem_kind_by_id[str(gid).lower()] = str(gkind).lower()
-                if gname and gkind:
-                    cat.gem_kind_by_name[str(gname).lower()] = str(gkind).lower()
+            for gid, gname, gkind, gtags_raw in conn.execute(
+                "SELECT id, name, gem_kind, tags_json FROM gems"
+            ):
+                kind_low = str(gkind).lower() if gkind else ""
+                if gid and kind_low:
+                    cat.gem_kind_by_id[str(gid).lower()] = kind_low
+                if gname and kind_low:
+                    name_low = str(gname).lower()
+                    cat.gem_kind_by_name[name_low] = kind_low
+                    cat.gem_kinds_by_name.setdefault(name_low, set()).add(kind_low)
+                    if gtags_raw:
+                        try:
+                            parsed_tags = json.loads(gtags_raw)
+                        except ValueError:
+                            parsed_tags = []
+                        if isinstance(parsed_tags, list):
+                            tag_set = cat.gem_tags_by_name.setdefault(name_low, set())
+                            for t in parsed_tags:
+                                if isinstance(t, str) and t:
+                                    tag_set.add(t.lower())
         finally:
             conn.close()
 
@@ -318,91 +335,71 @@ def _is_support_gem(gem_el: ET.Element, cat: _InspectorCatalog) -> bool:
     return False
 
 
-_UTILITY_NON_MAIN_SKILLS: frozenset[str] = frozenset(
+# Derived purely from SQLite `gems.gem_kind` and `gems.tags_json` taxonomy (no hardcoded skill list)
+_NON_PRIMARY_GEM_KINDS: frozenset[str] = frozenset({"spirit", "meta", "support", "lineage_support"})
+_NON_PRIMARY_GEM_TAGS: frozenset[str] = frozenset(
     {
-        "despair",
-        "elemental weakness",
-        "flammability",
-        "hypothermia",
-        "conductivity",
-        "enfeeble",
-        "temporal chains",
-        "vulnerability",
-        "blasphemy",
-        "arctic armour",
-        "defiance banner",
-        "war banner",
-        "dread banner",
-        "wind dancer",
-        "ghost dance",
-        "discipline",
-        "blink",
-        "profane ritual",
-        "time of need",
-        "convalescence",
-        "barkskin",
-        "alchemist's boon",
-        "charge regulation",
-        "overwhelming presence",
-        "grim feast",
-        "clarity",
-        "vitality",
-        "precision",
-        "herald of ash",
-        "herald of ice",
-        "herald of thunder",
-        "herald of blood",
-        "herald of plague",
-        "withering presence",
-        "combat frenzy",
-        "archmage",
-        "berserk",
-        "eternal rage",
-        "sacrifice",
-        "bow shot",
-        "mace strike",
-        "quarterstaff strike",
-        "crossbow shot",
-        "spear stab",
-        "life remnants",
-        "mana remnants",
-        "sigil of power",
-        "trinity",
-        "parry",
-        "runic tempering",
-        "spellslinger",
-        "elemental conflux",
-        "hollow form",
-        "into the breach",
+        "curse",
+        "aura",
+        "banner",
+        "buff",
+        "persistent",
+        "remnant",
+        "travel",
+        "meta",
+        "guard",
+        "mark",
+        "warcry",
+        "herald",
     }
 )
 
 
-def _is_utility_non_main_skill(skill_name: str | None) -> bool:
+def is_non_primary_skill(
+    skill_name: str | None,
+    *,
+    cat: _InspectorCatalog | None = None,
+) -> bool:
+    """Return True if SQLite `gems` metadata classifies `skill_name` as utility/buff/curse/meta."""
     if not skill_name:
         return True
     low = skill_name.strip().lower()
-    return low in _UTILITY_NON_MAIN_SKILLS or low.startswith("companion:")
+    if not low or low.startswith("companion:"):
+        return True
+    eff_cat = cat if cat is not None else _load_catalog()
+    kinds = eff_cat.gem_kinds_by_name.get(low)
+    tags = eff_cat.gem_tags_by_name.get(low)
+    if kinds and (kinds & _NON_PRIMARY_GEM_KINDS):
+        return True
+    if tags and (tags & _NON_PRIMARY_GEM_TAGS):
+        return True
+    # Unlisted built-in weapon basic attacks / innate utility actions (not present in `gems` table)
+    if kinds is None and tags is None:
+        return True
+    return False
 
 
 def _select_best_main_skill(
     selected_main: str | None,
     skill_groups: list[NinjaSkillGroupSummary],
     active_skills: list[str],
+    *,
+    cat: _InspectorCatalog | None = None,
 ) -> str | None:
-    if selected_main and not _is_utility_non_main_skill(selected_main):
+    eff_cat = cat if cat is not None else _load_catalog()
+    if selected_main and not is_non_primary_skill(selected_main, cat=eff_cat):
         return selected_main
-    # Prefer the enabled skill group with the most support gems whose active skill deals damage
+    # Prefer the enabled skill group with the most support gems whose active skill is primary
     best_cand: tuple[int, str] | None = None
     for grp in skill_groups:
-        if grp.active_skill and not _is_utility_non_main_skill(grp.active_skill):
+        if grp.active_skill and not is_non_primary_skill(grp.active_skill, cat=eff_cat):
             score = len(grp.support_gems)
             if best_cand is None or score > best_cand[0]:
                 best_cand = (score, grp.active_skill)
     if best_cand is not None:
         return best_cand[1]
     for sk in active_skills:
-        if not _is_utility_non_main_skill(sk):
+        if not is_non_primary_skill(sk, cat=eff_cat):
             return sk
     return selected_main or (active_skills[0] if active_skills else None)
 
@@ -665,7 +662,7 @@ def inspect_pob2_xml_or_code(
                 )
             )
 
-    main_skill = _select_best_main_skill(main_skill, skill_groups, active_skills)
+    main_skill = _select_best_main_skill(main_skill, skill_groups, active_skills, cat=cat)
 
     return InspectedPob2Build(
         tree_version=tree_version,

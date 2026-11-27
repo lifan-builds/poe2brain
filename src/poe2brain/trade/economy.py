@@ -29,6 +29,7 @@ POENINJA_EXCHANGE_TYPES: tuple[str, ...] = (
     "Currency",
     "Fragments",
     "Runes",
+    "Idols",
     "Essences",
     "Ritual",
     "SoulCores",
@@ -191,6 +192,7 @@ _NINJA_TYPE_TO_CATEGORY: dict[str, str] = {
     "Currency": "currency",
     "Fragments": "fragments",
     "Runes": "runes",
+    "Idols": "idol",
     "Essences": "essences",
     "Ritual": "ritual",
     "SoulCores": "ultimatum",
@@ -1389,6 +1391,123 @@ class EconomyService:
             "league": league,
             "divine_exalted": round(div_ex, 2),
             "encounters": encounters_out,
+        }
+
+    def get_category_market_summary(
+        self,
+        categories: Sequence[str],
+        league: str = DEFAULT_LEAGUE,
+        *,
+        token_filter: Sequence[str] | None = None,
+        entry_tokens: Sequence[str] | None = None,
+        min_volume_divine: float = 0.25,
+        top_n: int = 5,
+        force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        """Dynamically aggregate live priced items, liquidity, and 7d momentum by category."""
+        snap = self._ensure_snapshot(league, force_refresh=force_refresh)
+        div_ex = max(1.0, float(snap.rates.divine_exalted or 450.0))
+        cat_set = {c.strip().lower() for c in categories if c and c.strip()}
+        toks = tuple(t.strip().lower() for t in (token_filter or ()) if t and t.strip())
+        ent_toks = tuple(t.strip().lower() for t in (entry_tokens or ()) if t and t.strip())
+
+        matched_all: list[Any] = []
+        entry_rows: list[dict[str, Any]] = []
+        seen_entry_ids: set[str] = set()
+
+        for entry in snap.entries_by_id.values():
+            if entry.quote is None or entry.quote.exalted <= 0:
+                continue
+            name_low = entry.name.lower()
+            if "reliquary key" in name_low or entry.category == "vaultkeys":
+                continue
+
+            if ent_toks and any(et in name_low for et in ent_toks):
+                if entry.id not in seen_entry_ids:
+                    seen_entry_ids.add(entry.id)
+                    entry_rows.append(
+                        {
+                            "id": entry.id,
+                            "name": entry.name,
+                            "category": entry.category,
+                            "exalted": round(entry.quote.exalted, 2),
+                            "divine": round(entry.quote.exalted / div_ex, 3),
+                            "volume_divine": (
+                                round(entry.volume_divine, 2)
+                                if entry.volume_divine is not None
+                                else None
+                            ),
+                        }
+                    )
+
+            if entry.category not in cat_set:
+                continue
+            if toks and not any(tok in name_low for tok in toks):
+                continue
+            matched_all.append(entry)
+
+        # Prefer liquid items (avoid 0-volume / RMT dust outliers); fall back to all priced if
+        # a category comes from poe2scout uniques without poe.ninja exchange volume telemetry.
+        liquid = [
+            e
+            for e in matched_all
+            if (e.volume_divine is not None and e.volume_divine >= min_volume_divine)
+        ]
+        pool = liquid if liquid else matched_all
+
+        total_vol = sum(float(e.volume_divine or 0.0) for e in matched_all)
+        weighted_chg_num = 0.0
+        weighted_chg_den = 0.0
+        for e in matched_all:
+            if e.change_7d_pct is not None and abs(e.change_7d_pct) <= 300.0:
+                w = max(0.1, float(e.volume_divine or 0.1))
+                weighted_chg_num += float(e.change_7d_pct) * w
+                weighted_chg_den += w
+        avg_chg_7d = (
+            round(weighted_chg_num / weighted_chg_den, 2) if weighted_chg_den > 0 else None
+        )
+
+        # Cap extreme non-exchange unique outliers (e.g. The Last Flame / 1-listing relics)
+        # when computing median/p90 payout percentiles by sorting raw divine prices.
+        div_vals = sorted(e.quote.exalted / div_ex for e in pool if e.quote)
+        median_div = round(div_vals[len(div_vals) // 2], 3) if div_vals else 0.0
+        p90_idx = min(len(div_vals) - 1, int(len(div_vals) * 0.90)) if div_vals else 0
+        p90_div = round(div_vals[p90_idx], 3) if div_vals else 0.0
+
+        pool.sort(
+            key=lambda e: (
+                e.quote.exalted if e.quote else 0.0,
+                float(e.volume_divine or 0.0),
+            ),
+            reverse=True,
+        )
+        top_items = [
+            {
+                "id": e.id,
+                "name": e.name,
+                "category": e.category,
+                "exalted": round(e.quote.exalted, 2),
+                "divine": round(e.quote.exalted / div_ex, 3),
+                "volume_divine": (
+                    round(e.volume_divine, 2) if e.volume_divine is not None else None
+                ),
+                "change_7d_pct": e.change_7d_pct,
+            }
+            for e in pool[: max(1, top_n)]
+            if e.quote is not None
+        ]
+        entry_rows.sort(key=lambda r: (r["volume_divine"] or 0.0, r["exalted"]), reverse=True)
+
+        return {
+            "categories": sorted(cat_set),
+            "priced_count": len(matched_all),
+            "liquid_count": len(liquid),
+            "total_volume_divine": round(total_vol, 2),
+            "volume_weighted_change_7d_pct": avg_chg_7d,
+            "median_liquid_divine": median_div,
+            "p90_liquid_divine": p90_div,
+            "top_liquid_items": top_items,
+            "entry_tickets": entry_rows[:5],
         }
 
     def _resolve_scout_currency_item_id(self, item_id_or_query: int | str, *, league: str) -> int:

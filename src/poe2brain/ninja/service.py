@@ -54,9 +54,9 @@ from poe2brain.ninja.store import (
     utc_now_iso,
 )
 from poe2brain.ninja.xml_inspector import (
-    _is_utility_non_main_skill,
     decode_pob2_code_to_xml,
     inspect_pob2_xml_or_code,
+    is_non_primary_skill,
 )
 
 if TYPE_CHECKING:
@@ -1349,9 +1349,9 @@ class NinjaBuildsService:
                     continue
 
             raw_main = raw_rec.get("main_skill")
-            if raw_main and _is_utility_non_main_skill(str(raw_main)):
+            if raw_main and is_non_primary_skill(str(raw_main)):
                 for alt_sk in raw_rec.get("active_skills") or ():
-                    if not _is_utility_non_main_skill(str(alt_sk)):
+                    if not is_non_primary_skill(str(alt_sk)):
                         raw_main = str(alt_sk)
                         break
             ms_main = raw_main

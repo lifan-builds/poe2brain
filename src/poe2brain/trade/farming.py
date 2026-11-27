@@ -1,14 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Copyright (C) 2026 lifan-builds. poe2brain; Section 7 attribution terms in ATTRIBUTION.md.
-"""Patch 0.5.5 (Forbidden Rites) season-start & endgame Atlas farming strategy engine.
+"""Data-driven Patch 0.5.5 (Forbidden Rites) Atlas & league-start farming strategy engine.
 
-Synthesizes live market pricing (`EconomyService`), Atlas Masters (`Jado`, `Hilda`, `Doryani`),
-Map Device Precursor Tablets, Waystone revive budgets, Item Rarity (IIR) breakpoints, and
-optional headless PoB2 build telemetry (`BuildStats`) to rank optimal farming loops.
+Derives live market liquidity, top liquid drops, 7-day momentum, and entry ticket costs
+dynamically from `EconomyService` category snapshots (zero hardcoded item prices or cherry-picked
+drop lists) and scores build fit directly against headless PoB2 `BuildStats`.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -23,12 +24,16 @@ FarmingFocus = Literal["balanced", "steady", "jackpot", "speed"]
 
 
 @dataclass(frozen=True)
-class _FarmingStrategySpec:
+class _FarmingLoopSpec:
     id: str
     name: str
     zh_name: str
     category: Literal["progression", "mapping", "trial", "bossing", "base_farming"]
     stages: tuple[LeagueStage, ...]
+    # Live EconomyService category bindings (zero hardcoded drop/price tables)
+    market_categories: tuple[str, ...]
+    market_tokens: tuple[str, ...]
+    entry_tokens: tuple[str, ...]
     min_budget_ex: float
     min_dps: float
     ideal_dps: float
@@ -42,8 +47,6 @@ class _FarmingStrategySpec:
     tablet_setup: str
     waystone_tier_plan: str
     iir_guidance: str
-    input_items: tuple[tuple[str, int], ...]
-    payout_items: tuple[str, ...]
     creator_archetype: str
     execution_steps: tuple[str, ...]
     recommended_commands: tuple[str, ...]
@@ -53,13 +56,16 @@ class _FarmingStrategySpec:
     honour_sensitive: bool = False
 
 
-_FARMING_STRATEGIES: tuple[_FarmingStrategySpec, ...] = (
-    _FarmingStrategySpec(
+_FARMING_LOOPS: tuple[_FarmingLoopSpec, ...] = (
+    _FarmingLoopSpec(
         id="fortress_atlas_rush",
         name="Origins of Divinity Fortress Rush (Atlas Unlocks + Tablet Flipping)",
         zh_name="起源要塞速推（开异界天赋 + 卖多余碑牌/换界石）",
         category="progression",
         stages=("day1", "early"),
+        market_categories=("map", "fragments"),
+        market_tokens=(),
+        entry_tokens=(),
         min_budget_ex=0.0,
         min_dps=80_000.0,
         ideal_dps=350_000.0,
@@ -79,13 +85,6 @@ _FARMING_STRATEGIES: tuple[_FarmingStrategySpec, ...] = (
             "hunt Powerful Map Bosses for +1 Waystone drops"
         ),
         iir_guidance="0%–50% IIR is fine — never sacrifice clear speed or resists on Day 1",
-        input_items=(),
-        payout_items=(
-            "Ritual Tablet",
-            "Sacred Bloom",
-            "Expedition Logbook",
-            "Faded Crisis Fragment",
-        ),
         creator_archetype="Day-1 speed-progression standard (Fubgun / Zizaran / 某雷)",
         execution_steps=(
             "Skip slow full-clear mechanics in low tiers; blitz Fortress Towers, Gateways, "
@@ -94,20 +93,23 @@ _FARMING_STRATEGIES: tuple[_FarmingStrategySpec, ...] = (
             "straight to T15.",
             "Defeat the Quest Arbiter of Divinity early to auto-complete Fortress sections "
             "and unlock passive clusters fast.",
-            "Liquidate early-league excess Ritual/Expedition tablets, high-tier Waystones, "
-            "and Djinn Barya on trade while prices peak.",
+            "Liquidate early-league excess Tablets, high-tier Waystones, and Boss Fragments "
+            "while early demand peaks.",
         ),
         recommended_commands=(
             "poe2 wiki regex --slot main --min-waystone-drop 120",
             "poe2 econ scan --min-volume-divine 5",
         ),
     ),
-    _FarmingStrategySpec(
+    _FarmingLoopSpec(
         id="expedition_olroth",
         name="Expedition & Olroth's Saga Logbooks (Day 1–3 Consistency King)",
         zh_name="探险炸坟 + 奥洛斯日志（赛季初最稳现金流 + 自制装）",
         category="mapping",
         stages=("day1", "early", "mid", "endgame"),
+        market_categories=("expedition", "verisium"),
+        market_tokens=(),
+        entry_tokens=("logbook", "expedition tablet"),
         min_budget_ex=40.0,
         min_dps=300_000.0,
         ideal_dps=1_500_000.0,
@@ -134,8 +136,6 @@ _FARMING_STRATEGIES: tuple[_FarmingStrategySpec, ...] = (
             "75%–125% IIR helps rare/currency drops, while Logbook & Artifact chests "
             "scale off Area/Tablet mods"
         ),
-        input_items=(("Expedition Logbook", 1),),
-        payout_items=("Olroth's Resolve", "Svalinn", "Celestial Alloy"),
         creator_archetype=(
             "Early-league steady currency + self-craft loop (XTheFarmerX / BawLoch / 大白)"
         ),
@@ -144,20 +144,23 @@ _FARMING_STRATEGIES: tuple[_FarmingStrategySpec, ...] = (
             "Verisium/Artifact chests (avoid immune-to-your-damage Remnants!).",
             "Cash out Tujen for immediate liquid Exalted/Chaos/Divine currency and use Rog "
             "to craft high-margin early Rare gear.",
-            "Run Olroth's Saga Logbooks for Verisium Remnants, Lineage Gems, Olroth's Resolve, "
-            "and Svalinn — or bulk-sell Logbooks on Day 1–2.",
+            "Run Olroth's Saga Logbooks for Verisium Remnants, Lineage Gems, and boss "
+            "uniques — or bulk-sell Logbooks on Day 1–2.",
         ),
         recommended_commands=(
             "poe2 wiki regex --slot main --tablet-preset expedition",
             "poe2 econ bosses --encounter olroth",
         ),
     ),
-    _FarmingStrategySpec(
+    _FarmingLoopSpec(
         id="ritual_wildwood",
         name="Forbidden Rites Ritual + Sacred Blooms & Viridian Wildwood",
         zh_name="0.5.5 禁忌秘仪祭坛 + 圣花/翠绿荒林妖精（预兆大奖流）",
         category="mapping",
         stages=("early", "mid", "endgame"),
+        market_categories=("ritual",),
+        market_tokens=(),
+        entry_tokens=("ritual tablet", "sacred bloom", "audience with the king"),
         min_budget_ex=75.0,
         min_dps=600_000.0,
         ideal_dps=3_000_000.0,
@@ -184,13 +187,6 @@ _FARMING_STRATEGIES: tuple[_FarmingStrategySpec, ...] = (
             "100%–125% Player IIR multiplies with Wild Wisps + Area Rarity "
             "for massive currency/unique upgrades"
         ),
-        input_items=(("Ritual Tablet", 1), ("Sacred Bloom", 1)),
-        payout_items=(
-            "Omen of Whittling",
-            "Omen of Dextral Crystallisation",
-            "Omen of Sinistral Crystallisation",
-            "An Audience with the King",
-        ),
         creator_archetype="0.5.5 Forbidden Rites jackpot loop (poeguy007 / Operator Otter)",
         execution_steps=(
             "Apply Sacred Blooms to Atlas clusters and pair them with Ritual Tablets in the "
@@ -199,8 +195,7 @@ _FARMING_STRATEGIES: tuple[_FarmingStrategySpec, ...] = (
             "stacking Primal (Magic), Vivid (+Rare mods), and Wild (Rarity) Wisps.",
             "In Ritual maps, clear the Map Boss altar first so the boss cascades into "
             "subsequent Rituals for maximum Tribute.",
-            "Defer high-value crafting Omens (Whittling, Sinistral/Dextral Crystallisation, "
-            "Light) and Sacred Blooms; sell excess Audiences.",
+            "Defer top-value live Omens and Sacred Blooms surfaced by the live economy feed.",
         ),
         recommended_commands=(
             "poe2 wiki regex --slot main --tablet-preset ritual",
@@ -209,12 +204,15 @@ _FARMING_STRATEGIES: tuple[_FarmingStrategySpec, ...] = (
         requires_non_negative_iir=True,
         penalizes_es_bypass=True,
     ),
-    _FarmingStrategySpec(
+    _FarmingLoopSpec(
         id="breach_speed",
         name="Breach Speed-Mapping (Catalysts, Breach Rings & Xesht)",
         zh_name="裂隙极速清图（催化剂 + 裂隙戒指 + 裂隙石）",
         category="mapping",
         stages=("day1", "early", "mid", "endgame"),
+        market_categories=("breach", "fragments"),
+        market_tokens=("catalyst", "breach"),
+        entry_tokens=("breach tablet", "breachstone"),
         min_budget_ex=10.0,
         min_dps=500_000.0,
         ideal_dps=2_500_000.0,
@@ -237,21 +235,14 @@ _FARMING_STRATEGIES: tuple[_FarmingStrategySpec, ...] = (
             "100%–125% Player IIR is the exact sweet spot for Breach currency & unique "
             "conversion without slowing clear"
         ),
-        input_items=(("Breach Tablet", 1),),
-        payout_items=(
-            "Reaver Catalyst",
-            "Sibilant Catalyst",
-            "Breachstone",
-            "Controlled Metamorphosis",
-        ),
         creator_archetype="High-velocity zoom-mapper staple (Fubgun / Crouching Tuna / ksc小波)",
         execution_steps=(
-            "Slot cheap Breach Tablets in the Map Device on wide/open map layouts so "
+            "Slot Breach Tablets in the Map Device on wide/open map layouts so "
             "Breaches expand unimpeded.",
             "Prioritize movement speed (1.40x+) and screen-wide AoE/Herald chain clears "
             "to open every Clasped Hand and Rare pack.",
-            "Bulk-sell Reaver/Sibilant/Adaptive Catalysts and ilvl 82 Breach Rings to "
-            "hideout crafters; run or sell Breachstones depending on boss DPS.",
+            "Bulk-sell top-priced live Catalysts and ilvl 82 Breach Rings to hideout "
+            "crafters; run or sell Breachstones based on live boss EV.",
         ),
         recommended_commands=(
             "poe2 wiki regex --slot main --tablet-preset breach",
@@ -259,12 +250,15 @@ _FARMING_STRATEGIES: tuple[_FarmingStrategySpec, ...] = (
         ),
         requires_non_negative_iir=True,
     ),
-    _FarmingStrategySpec(
+    _FarmingLoopSpec(
         id="sekhema_trials",
         name="Trial of the Sekhemas (Honour Relic Farming + Ascendancy Carries)",
         zh_name="丝克玛试炼（荣誉抗性圣物速刷 + 升华带车/时光珠宝）",
         category="trial",
         stages=("day1", "early", "mid", "endgame"),
+        market_categories=("sanctum", "jewel"),
+        market_tokens=("desperate", "flame", "darkness", "time-lost", "changing", "peacemaker"),
+        entry_tokens=("barya", "desperate alliance"),
         min_budget_ex=30.0,
         min_dps=400_000.0,
         ideal_dps=2_000_000.0,
@@ -287,8 +281,6 @@ _FARMING_STRATEGIES: tuple[_FarmingStrategySpec, ...] = (
             "Player IIR does NOT replace Relic Quantity; swap IIR suffixes for "
             "Move Speed / ES / DPS inside Trials"
         ),
-        input_items=(),
-        payout_items=("Against the Darkness", "Temporalis"),
         creator_archetype="Day 1–7 guaranteed income + carries (poeguy007 / z3r0pointflux / 大白)",
         execution_steps=(
             "Cap 75% Honour Resistance first using cheap Amphora/Seal Relics; Honour "
@@ -296,7 +288,7 @@ _FARMING_STRATEGIES: tuple[_FarmingStrategySpec, ...] = (
             "On Day 1–3, monetize 3rd/4th Ascendancy carries at Zarokh alongside "
             "Time-Lost Jewels and Royal/Arcanist chests.",
             "Scale to >=120% increased Quantity of Relics dropped by Monsters so Zarokh "
-            "drops double Unique Relics (hunting Against the Darkness / The Last Flame).",
+            "drops double Unique Relics.",
         ),
         recommended_commands=(
             "poe2 wiki regex --relic-preset sekhema_safe",
@@ -304,12 +296,15 @@ _FARMING_STRATEGIES: tuple[_FarmingStrategySpec, ...] = (
         ),
         honour_sensitive=True,
     ),
-    _FarmingStrategySpec(
+    _FarmingLoopSpec(
         id="trial_of_chaos",
         name="Trial of Chaos (Guaranteed Soul Cores & Trialmaster Fates)",
         zh_name="混沌试炼（保底灵魂核心 + 命运碎片/庄严之饰）",
         category="trial",
         stages=("early", "mid", "endgame"),
+        market_categories=("ultimatum", "fragments"),
+        market_tokens=("soul core", "fate"),
+        entry_tokens=("ultimatum", "fate"),
         min_budget_ex=40.0,
         min_dps=750_000.0,
         ideal_dps=2_500_000.0,
@@ -329,31 +324,26 @@ _FARMING_STRATEGIES: tuple[_FarmingStrategySpec, ...] = (
             "Soul Core & Fate room rewards are unaffected by Player IIR — maximize DPS "
             "& tankiness for fast 10-room clears"
         ),
-        input_items=(),
-        payout_items=(
-            "Soul Core of Azcapa",
-            "Soul Core of Citaqualotl",
-            "Soul Core of Tacati",
-            "The Adorned",
-        ),
         creator_archetype="Steady liquid floor Day 2+ (non-MF tanky mappers / 大白)",
         execution_steps=(
             "Wait until Day 2+ when resists, Chaos Res, and Phys Max Hit (>=6,500) "
             "comfortably survive 10 stacked tribulations.",
-            "Prioritize fast-completion rooms and liquidate Soul Cores (Azcapa, "
-            "Citaqualotl, Tacati) on Alva for zero-friction Divine flow.",
-            "Collect Deadly / Victorious / Cowardly Fates to fight Trialmaster or "
-            "bulk-sell Fate sets.",
+            "Prioritize fast-completion rooms and liquidate top live Soul Cores on Alva "
+            "for zero-friction Divine flow.",
+            "Assemble Deadly / Victorious / Cowardly Fates to run Trialmaster or bulk-sell.",
         ),
         recommended_commands=("poe2 econ bosses --encounter chaos",),
         penalizes_es_bypass=True,
     ),
-    _FarmingStrategySpec(
+    _FarmingLoopSpec(
         id="delirium_simulacrum",
         name="Delirium Fog & Liquid Emotions (Waystone Instilling + Simulacrum)",
         zh_name="惊悸迷雾 + 浓缩情绪（地图附魔 + 梦魇拟像）",
         category="mapping",
         stages=("early", "mid", "endgame"),
+        market_categories=("delirium", "fragments"),
+        market_tokens=("liquid", "emotion", "simulacrum"),
+        entry_tokens=("delirium tablet", "simulacrum"),
         min_budget_ex=20.0,
         min_dps=700_000.0,
         ideal_dps=3_000_000.0,
@@ -369,8 +359,7 @@ _FARMING_STRATEGIES: tuple[_FarmingStrategySpec, ...] = (
             "Delirium Splinter & Emotion cluster",
         ),
         tablet_setup=(
-            "Delirium Tablets in Map Device (cheap 1 Ex input; stack Splinter & "
-            "Emotion drop multipliers)"
+            "Delirium Tablets in Map Device (stack Splinter & Emotion drop multipliers)"
         ),
         waystone_tier_plan=(
             "T15 4–6 mod Rare (Delirium Fog never spreads onto Atlas-point maps; "
@@ -380,32 +369,27 @@ _FARMING_STRATEGIES: tuple[_FarmingStrategySpec, ...] = (
             "75%–125% Player IIR; Liquid Emotions & Simulacrum Splinters scale "
             "primarily off monster density & reward depth"
         ),
-        input_items=(("Delirium Tablet", 1),),
-        payout_items=(
-            "Concentrated Liquid Isolation",
-            "Concentrated Liquid Suffering",
-            "Simulacrum",
-        ),
         creator_archetype="Low-input steady density farmer (TranePanos / StonerMJW)",
         execution_steps=(
-            "Buy cheap Delirium Tablets and run linear layouts to push Delirium reward "
-            "tiers quickly.",
+            "Run Delirium Tablets on linear layouts to push Delirium reward tiers quickly.",
             "Check 3-to-1 Reforging Bench Liquid Emotion upgrades (`poe2 econ arbitrage`) "
             "before selling raw emotions on Alva.",
-            "Sell Simulacrums in bulk early or farm Kosis/Omniphobia once your build "
-            "handles sustained wave damage.",
+            "Sell Simulacrums in bulk early or farm Kosis/Omniphobia once wave DPS is online.",
         ),
         recommended_commands=(
             "poe2 econ arbitrage --budget 5d --gold 50000",
             "poe2 econ bosses --encounter simulacrum",
         ),
     ),
-    _FarmingStrategySpec(
+    _FarmingLoopSpec(
         id="boss_rush_vaaltemple",
         name="Boss-Rushing, Citadel Fragments & Fate of the Vaal (Atziri Temple)",
         zh_name="极速冲王 + 堡垒碎片 + 瓦尔神庙（高单伤速刷门票）",
         category="bossing",
         stages=("early", "mid", "endgame"),
+        market_categories=("incursion", "vaal", "abyss", "fragments"),
+        market_tokens=(),
+        entry_tokens=("crisis fragment", "invitation"),
         min_budget_ex=25.0,
         min_dps=1_200_000.0,
         ideal_dps=5_000_000.0,
@@ -431,33 +415,28 @@ _FARMING_STRATEGIES: tuple[_FarmingStrategySpec, ...] = (
             "Player IIR does not scale guaranteed Citadel Fragments or Temple currencies "
             "— maximize Move Speed + Single-Target Burst"
         ),
-        input_items=(),
-        payout_items=(
-            "Faded Crisis Fragment",
-            "Architect's Orb",
-            "Vaal Cultivation Orb",
-            "Kulemak's Invitation",
-        ),
-        creator_archetype="Boss-rusher / fragment seller (fast-move high-ST builds)",
+        creator_archetype="Boss-rusher / fragment & Vaal Temple seller",
         execution_steps=(
             "Sprint straight to the Map Boss / Vaal Beacon on short layouts; ignore "
             "low-value straggler packs.",
-            "Stack Waystone Drop Chance on Citadel maps to multiply Crisis Fragment "
-            "drops and sell sets while Pinnacle demand is peaking.",
-            "Target Fate of the Vaal Temple runs for Architect's Orbs and "
-            "Vaal Cultivation Orbs.",
+            "Stack Waystone Drop Chance on Citadel maps to multiply Crisis Fragment drops "
+            "and liquidate sets while Pinnacle demand is peaking.",
+            "Target Fate of the Vaal Temple runs for top live Incursion/Vaal currencies.",
         ),
         recommended_commands=(
             "poe2 wiki regex --slot main --min-waystone-drop 140",
             "poe2 econ bosses --encounter arbiter",
         ),
     ),
-    _FarmingStrategySpec(
+    _FarmingLoopSpec(
         id="negative_rarity_bases",
         name="Negative-Rarity Exceptional & ilvl 82 Crafting-Base Farming",
         zh_name="负稀有度白装底材流（82物等 + 超凡21%品质/3孔工艺底材）",
         category="base_farming",
         stages=("mid", "endgame"),
+        market_categories=("verisium", "runes", "idol"),
+        market_tokens=(),
+        entry_tokens=("breach tablet",),
         min_budget_ex=150.0,
         min_dps=600_000.0,
         ideal_dps=2_500_000.0,
@@ -479,8 +458,6 @@ _FARMING_STRATEGIES: tuple[_FarmingStrategySpec, ...] = (
             "Requires NEGATIVE Player IIR (e.g. -50% to -100% via negative-rarity "
             "Ventor's Gamble) so drops stay Normal (white) bases!"
         ),
-        input_items=(("Breach Tablet", 1),),
-        payout_items=("Breachstone", "Reaver Catalyst"),
         creator_archetype="Specialized crafter-supply meta (Negative-IIR white-base farmers)",
         execution_steps=(
             "Equip negative Item Rarity gear (Ventor's Gamble / negative IIR rolls) "
@@ -510,7 +487,7 @@ def recommend_farming_strategies(
     slot_name: str | None = None,
     force_refresh: bool = False,
 ) -> dict[str, Any]:
-    """Rank Patch 0.5.5 league-start & Atlas farming loops using live prices & PoB2."""
+    """Rank Patch 0.5.5 league-start & Atlas farming loops dynamically from live economy & PoB2."""
     rates = econ.get_reference_rates(league, force_refresh=force_refresh)
     div_ex = max(1.0, float(rates.divine_exalted or 450.0))
 
@@ -542,50 +519,69 @@ def recommend_farming_strategies(
             "honour_pool_est": round(build_stats.life + build_stats.energy_shield, 1),
         }
 
+    # Pass 1: Dynamically query live EconomyService category telemetry for every loop
+    summaries: dict[str, dict[str, Any]] = {}
+    for spec in _FARMING_LOOPS:
+        summaries[spec.id] = econ.get_category_market_summary(
+            spec.market_categories,
+            league=league,
+            token_filter=spec.market_tokens or None,
+            entry_tokens=spec.entry_tokens or None,
+            min_volume_divine=0.25,
+            top_n=5,
+            force_refresh=False,
+        )
+
+    # Cross-loop normalization bounds computed purely from live snapshot data
+    max_log_vol = max(
+        (math.log1p(max(0.0, float(m["total_volume_divine"]))) for m in summaries.values()),
+        default=1.0,
+    ) or 1.0
+    max_log_p90 = max(
+        (math.log1p(max(0.0, float(m["p90_liquid_divine"]))) for m in summaries.values()),
+        default=1.0,
+    ) or 1.0
+
     ranked: list[dict[str, Any]] = []
-    for spec in _FARMING_STRATEGIES:
-        input_rows: list[dict[str, Any]] = []
-        input_cost_ex = 0.0
-        for item_name, qty in spec.input_items:
-            q = econ.get_price(item_name, league=league, force_refresh=False)
-            u_ex = round(q.exalted, 2) if (q and q.exalted > 0) else None
-            if u_ex is not None:
-                input_cost_ex += u_ex * qty
-            input_rows.append(
-                {
-                    "name": item_name,
-                    "quantity": qty,
-                    "unit_exalted": u_ex,
-                    "unit_divine": round(u_ex / div_ex, 3) if u_ex is not None else None,
-                }
-            )
+    for spec in _FARMING_LOOPS:
+        mkt = summaries[spec.id]
+        top_items = mkt["top_liquid_items"]
+        entry_tickets = mkt["entry_tickets"]
+        # Estimate typical single-map/run entry cost from the cheapest liquid discovered ticket
+        tablet_tickets = [
+            t
+            for t in entry_tickets
+            if "tablet" in t["name"].lower() or "bloom" in t["name"].lower()
+        ]
+        if tablet_tickets:
+            input_cost_ex = sum(float(t["exalted"]) for t in tablet_tickets[:2])
+        elif entry_tickets:
+            input_cost_ex = min(float(t["exalted"]) for t in entry_tickets)
+        else:
+            input_cost_ex = 0.0
 
-        payout_rows: list[dict[str, Any]] = []
-        top_payout_ex = 0.0
-        top_payout_name: str | None = None
-        for p_name in spec.payout_items:
-            q = econ.get_price(p_name, league=league, force_refresh=False)
-            p_ex = round(q.exalted, 2) if (q and q.exalted > 0) else None
-            if p_ex is not None and p_name != "Temporalis" and p_ex > top_payout_ex:
-                top_payout_ex = p_ex
-                top_payout_name = p_name
-            payout_rows.append(
-                {
-                    "name": p_name,
-                    "exalted": p_ex,
-                    "divine": round(p_ex / div_ex, 3) if p_ex is not None else None,
-                }
-            )
+        # Data-driven market score (0..100) from live liquidity + p90 drop depth + 7d momentum
+        vol_norm = math.log1p(max(0.0, float(mkt["total_volume_divine"]))) / max_log_vol
+        p90_norm = math.log1p(max(0.0, float(mkt["p90_liquid_divine"]))) / max_log_p90
+        chg_7d = mkt["volume_weighted_change_7d_pct"]
+        mom_norm = (
+            max(-1.0, min(1.0, float(chg_7d) / 25.0)) if chg_7d is not None else 0.0
+        )
+        market_score = round(
+            max(0.0, min(100.0, 50.0 * vol_norm + 40.0 * p90_norm + 10.0 * (0.5 + 0.5 * mom_norm))),
+            1,
+        )
 
-        score = 65.0
+        # Stage, budget, and focus alignment
+        context_score = 60.0
         build_warnings: list[str] = []
         fit_reasons: list[str] = []
 
         if stage in spec.stages:
-            score += 18.0 if spec.stages[0] == stage else 12.0
+            context_score += 20.0 if spec.stages[0] == stage else 12.0
             fit_reasons.append(f"Matches {stage} league stage.")
         else:
-            score -= 22.0
+            context_score -= 24.0
             build_warnings.append(
                 f"Better suited for {'/'.join(spec.stages)} than {stage}."
             )
@@ -593,32 +589,31 @@ def recommend_farming_strategies(
         if budget_exalted is not None:
             effective_floor = max(spec.min_budget_ex, input_cost_ex * 2.0)
             if budget_exalted < effective_floor:
-                score -= 28.0
+                context_score -= 28.0
                 build_warnings.append(
                     f"Budget ({budget_exalted:.0f} Ex) is below recommended runway "
                     f"(~{effective_floor:.0f} Ex) for sustained inputs."
                 )
             else:
-                score += 6.0
+                context_score += 6.0
 
         if focus == "steady":
-            score += (
-                12.0
+            context_score += (
+                14.0
                 if spec.variance == "low"
-                else (-10.0 if spec.variance == "high" else 0.0)
+                else (-12.0 if spec.variance == "high" else 0.0)
             )
         elif focus == "jackpot":
-            score += (
-                14.0
-                if spec.variance == "high"
-                else (6.0 if top_payout_ex >= div_ex * 5 else -4.0)
-            )
+            context_score += 14.0 if spec.variance == "high" else (6.0 * p90_norm - 4.0)
         elif focus == "speed":
-            score += round((spec.speed_weight - 0.5) * 28.0, 1)
+            context_score += round((spec.speed_weight - 0.5) * 30.0, 1)
 
-        if top_payout_ex > 0:
-            payout_div = top_payout_ex / div_ex
-            score += min(10.0, payout_div * 0.45)
+        if mkt["total_volume_divine"] > 0:
+            fit_reasons.append(
+                f"Live market depth: {mkt['total_volume_divine']:,.0f} Div vol across "
+                f"{mkt['priced_count']} tracked items"
+                + (f" ({chg_7d:+.1f}% 7d)." if chg_7d is not None else ".")
+            )
 
         build_fit_score: float | None = None
         if build_stats is not None:
@@ -652,8 +647,7 @@ def recommend_farming_strategies(
                 )
 
             if ms < spec.min_move_speed:
-                penalty = round(25.0 * spec.speed_weight, 1)
-                bf -= penalty
+                bf -= round(25.0 * spec.speed_weight, 1)
                 build_warnings.append(
                     f"Move speed ({ms:.2f}x < {spec.min_move_speed:.2f}x) "
                     "limits Div/hr on high-velocity clears."
@@ -714,20 +708,23 @@ def recommend_farming_strategies(
                     )
 
             build_fit_score = round(max(0.0, min(100.0, bf)), 1)
-            score = round(score * 0.55 + build_fit_score * 0.45, 1)
+            final_score = round(
+                0.35 * market_score + 0.30 * context_score + 0.35 * build_fit_score, 1
+            )
         else:
             if spec.requires_negative_iir and stage in ("day1", "early"):
-                score -= 25.0
-            score = round(score, 1)
+                context_score -= 25.0
+            final_score = round(0.45 * market_score + 0.55 * context_score, 1)
 
-        top_payout_div = round(top_payout_ex / div_ex, 2) if top_payout_ex > 0 else None
+        top_item = top_items[0] if top_items else None
         ranked.append(
             {
                 "id": spec.id,
                 "name": spec.name,
                 "zh_name": spec.zh_name,
                 "category": spec.category,
-                "score": score,
+                "score": final_score,
+                "market_score": market_score,
                 "build_fit_score": build_fit_score,
                 "recommended_stages": list(spec.stages),
                 "variance": spec.variance,
@@ -737,12 +734,21 @@ def recommend_farming_strategies(
                 "waystone_tier_plan": spec.waystone_tier_plan,
                 "iir_guidance": spec.iir_guidance,
                 "creator_archetype": spec.creator_archetype,
-                "input_items": input_rows,
+                "market_categories": list(spec.market_categories),
+                "market_summary": {
+                    "priced_count": mkt["priced_count"],
+                    "liquid_count": mkt["liquid_count"],
+                    "total_volume_divine": mkt["total_volume_divine"],
+                    "volume_weighted_change_7d_pct": chg_7d,
+                    "median_liquid_divine": mkt["median_liquid_divine"],
+                    "p90_liquid_divine": mkt["p90_liquid_divine"],
+                },
+                "input_items": entry_tickets,
                 "estimated_input_cost_exalted": round(input_cost_ex, 2),
                 "estimated_input_cost_divine": round(input_cost_ex / div_ex, 3),
-                "headline_payouts": payout_rows,
-                "top_payout_item": top_payout_name,
-                "top_payout_divine": top_payout_div,
+                "headline_payouts": top_items,
+                "top_payout_item": top_item["name"] if top_item else None,
+                "top_payout_divine": top_item["divine"] if top_item else None,
                 "fit_reasons": fit_reasons,
                 "build_warnings": build_warnings,
                 "execution_steps": list(spec.execution_steps),
@@ -750,7 +756,10 @@ def recommend_farming_strategies(
             }
         )
 
-    ranked.sort(key=lambda r: (r["score"], r["top_payout_divine"] or 0.0), reverse=True)
+    ranked.sort(
+        key=lambda r: (r["score"], r["market_score"], r["top_payout_divine"] or 0.0),
+        reverse=True,
+    )
     for idx, row in enumerate(ranked, start=1):
         row["rank"] = idx
 

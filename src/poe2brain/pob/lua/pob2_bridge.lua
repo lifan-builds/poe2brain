@@ -711,22 +711,28 @@ local function extractStatsTable(out, extraFields)
 		end
 	end
 	res.ElementalMaximumHitTaken = minElementalMaxHit(out)
-	-- Effective primary DPS convenience field (FullDPS if > 0 else CombinedDPS/TotalDPS)
+	-- Effective primary DPS convenience field (FullDPS if > 0 else CombinedDPS/TotalDPS, with Minion fallback)
 	local fullDps = safeNum(out.FullDPS, 0)
 	local combinedDps = safeNum(out.CombinedDPS, 0)
 	local totalDps = safeNum(out.TotalDPS, 0)
-	res.EffectiveDPS = (fullDps > 0 and fullDps) or (combinedDps > 0 and combinedDps) or totalDps
+	local playerEff = (fullDps > 0 and fullDps) or (combinedDps > 0 and combinedDps) or totalDps
 
+	local minionEff = 0
 	if type(out.Minion) == "table" then
+		local mFull = safeNum(out.Minion.FullDPS, 0)
+		local mComb = safeNum(out.Minion.CombinedDPS, 0)
+		local mTot = safeNum(out.Minion.TotalDPS, 0)
+		minionEff = (mFull > 0 and mFull) or (mComb > 0 and mComb) or mTot
 		res.Minion = {
-			TotalDPS = safeNum(out.Minion.TotalDPS, 0),
-			FullDPS = safeNum(out.Minion.FullDPS, 0),
-			CombinedDPS = safeNum(out.Minion.CombinedDPS, 0),
+			TotalDPS = mTot,
+			FullDPS = mFull,
+			CombinedDPS = mComb,
 			Life = safeNum(out.Minion.Life, 0),
 			EnergyShield = safeNum(out.Minion.EnergyShield, 0),
 			TotalEHP = safeNum(out.Minion.TotalEHP, 0),
 		}
 	end
+	res.EffectiveDPS = (fullDps > 0 and fullDps) or math.max(playerEff, minionEff)
 
 	if type(extraFields) == "table" then
 		for _, k in ipairs(extraFields) do
@@ -1720,6 +1726,45 @@ end
 
 -- ---- Capability 2: Import / Export (Share Code, XML, GGG .build JSON) ----
 
+local function autoResolveMainSocketGroupIfZeroDps()
+	if not build or not build.skillsTab or not build.calcsTab then
+		return
+	end
+	local curStats = extractStatsTable()
+	if (curStats.EffectiveDPS or 0) > 0 then
+		return
+	end
+	local groups = build.skillsTab.socketGroupList or {}
+	if #groups <= 1 then
+		return
+	end
+	local okCalc, calcFunc = pcall(function()
+		return build.calcsTab:GetMiscCalculator()
+	end)
+	if not okCalc or type(calcFunc) ~= "function" then
+		return
+	end
+	local bestIdx = nil
+	local bestDps = 0
+	for idx, grp in ipairs(groups) do
+		if grp and grp.enabled ~= false and grp.source ~= "Explode" and type(grp.gemList) == "table" and #grp.gemList > 0 then
+			local okRun, candOut = pcall(calcFunc, { mainSocketGroup = idx })
+			if okRun and type(candOut) == "table" then
+				local st = extractStatsTable(candOut)
+				local d = tonumber(st.EffectiveDPS) or 0
+				if d > bestDps then
+					bestDps = d
+					bestIdx = idx
+				end
+			end
+		end
+	end
+	if bestIdx and bestIdx ~= build.mainSocketGroup then
+		build.mainSocketGroup = bestIdx
+		refreshBuild()
+	end
+end
+
 methods.load_build_xml = function(params)
 	if not params or type(params.xml) ~= "string" or params.xml == "" then
 		error("params.xml (non-empty XML string) is required", 0)
@@ -1753,6 +1798,7 @@ methods.load_build_xml = function(params)
 		slots[slotName] = entry
 	end
 	loadEngineFromXML(params.xml, params.name or slotName)
+	autoResolveMainSocketGroupIfZeroDps()
 	activeSlot = slotName
 	setSlotXml(entry, saveEngineToXML())
 	collectgarbage("collect")

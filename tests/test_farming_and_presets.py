@@ -3,17 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from poe2brain.knowledge.service import KnowledgeService
 from poe2brain.models.builds import BuildStats
 from poe2brain.models.ninja import NinjaSkillGroupSummary
-from poe2brain.ninja.xml_inspector import _select_best_main_skill
+from poe2brain.ninja.xml_inspector import _select_best_main_skill, is_non_primary_skill
 from poe2brain.trade.farming import recommend_farming_strategies
-
-
-@dataclass
-class _FakeQuote:
-    exalted: float
 
 
 @dataclass
@@ -21,36 +17,184 @@ class _FakeRates:
     divine_exalted: float = 400.0
 
 
-class _StubEconomy:
-    def __init__(self, prices: dict[str, float]) -> None:
-        self._prices = {k.lower(): v for k, v in prices.items()}
+class _StubCategoryEconomy:
+    """Category-driven stub mirroring `EconomyService.get_category_market_summary`."""
+
+    def __init__(self, entries: list[dict[str, Any]]) -> None:
+        self._entries = entries
 
     def get_reference_rates(self, league: str, force_refresh: bool = False) -> _FakeRates:
         return _FakeRates(divine_exalted=400.0)
 
-    def get_price(self, query: str, league: str = "Forbidden Rites", force_refresh: bool = False):
-        val = self._prices.get(query.lower())
-        return _FakeQuote(exalted=val) if val is not None else None
+    def get_category_market_summary(
+        self,
+        categories: tuple[str, ...],
+        league: str = "Forbidden Rites",
+        *,
+        token_filter: tuple[str, ...] | None = None,
+        entry_tokens: tuple[str, ...] | None = None,
+        min_volume_divine: float = 0.25,
+        top_n: int = 5,
+        force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        div_ex = 400.0
+        cat_set = {c.lower() for c in categories}
+        toks = tuple(t.lower() for t in (token_filter or ()))
+        ent_toks = tuple(t.lower() for t in (entry_tokens or ()))
 
-
-def test_farming_strategy_day1_vs_endgame_and_build_fit() -> None:
-    econ = _StubEconomy(
-        {
-            "Expedition Logbook": 80.0,
-            "Olroth's Resolve": 12000.0,
-            "Svalinn": 260.0,
-            "Ritual Tablet": 40.0,
-            "Sacred Bloom": 45.0,
-            "Omen of Whittling": 7000.0,
-            "Breach Tablet": 2.0,
-            "Reaver Catalyst": 480.0,
-            "Breachstone": 1400.0,
-            "Delirium Tablet": 2.0,
-            "Concentrated Liquid Isolation": 640.0,
-            "Soul Core of Azcapa": 1150.0,
-            "Faded Crisis Fragment": 2800.0,
-            "Architect's Orb": 4200.0,
+        matched = [
+            e
+            for e in self._entries
+            if e["category"] in cat_set
+            and (not toks or any(t in e["name"].lower() for t in toks))
+        ]
+        entries_out = [
+            {
+                "id": e["id"],
+                "name": e["name"],
+                "category": e["category"],
+                "exalted": e["exalted"],
+                "divine": round(e["exalted"] / div_ex, 3),
+                "volume_divine": e["volume_divine"],
+            }
+            for e in self._entries
+            if ent_toks and any(et in e["name"].lower() for et in ent_toks)
+        ]
+        liquid = [e for e in matched if (e["volume_divine"] or 0.0) >= min_volume_divine]
+        pool = liquid or matched
+        div_vals = sorted(e["exalted"] / div_ex for e in pool)
+        p90 = (
+            round(div_vals[min(len(div_vals) - 1, int(len(div_vals) * 0.9))], 3)
+            if div_vals
+            else 0.0
+        )
+        pool_sorted = sorted(pool, key=lambda e: e["exalted"], reverse=True)
+        return {
+            "categories": sorted(cat_set),
+            "priced_count": len(matched),
+            "liquid_count": len(liquid),
+            "total_volume_divine": round(sum(e["volume_divine"] or 0.0 for e in matched), 2),
+            "volume_weighted_change_7d_pct": 5.0 if matched else None,
+            "median_liquid_divine": round(div_vals[len(div_vals) // 2], 3) if div_vals else 0.0,
+            "p90_liquid_divine": p90,
+            "top_liquid_items": [
+                {
+                    "id": e["id"],
+                    "name": e["name"],
+                    "category": e["category"],
+                    "exalted": e["exalted"],
+                    "divine": round(e["exalted"] / div_ex, 3),
+                    "volume_divine": e["volume_divine"],
+                    "change_7d_pct": 5.0,
+                }
+                for e in pool_sorted[:top_n]
+            ],
+            "entry_tickets": entries_out,
         }
+
+
+def test_data_driven_farming_strategy_day1_vs_endgame_and_build_fit() -> None:
+    econ = _StubCategoryEconomy(
+        [
+            {
+                "id": "expedition-logbook",
+                "name": "Expedition Logbook",
+                "category": "expedition",
+                "exalted": 80.0,
+                "volume_divine": 120.0,
+            },
+            {
+                "id": "perfect-flux",
+                "name": "Perfect Flux",
+                "category": "expedition",
+                "exalted": 12000.0,
+                "volume_divine": 60.0,
+            },
+            {
+                "id": "ritual-tablet",
+                "name": "Ritual Tablet",
+                "category": "ritual",
+                "exalted": 40.0,
+                "volume_divine": 80.0,
+            },
+            {
+                "id": "omen-sinistral-annulment",
+                "name": "Omen of Sinistral Annulment",
+                "category": "ritual",
+                "exalted": 13000.0,
+                "volume_divine": 350.0,
+            },
+            {
+                "id": "breach-tablet",
+                "name": "Breach Tablet",
+                "category": "breach",
+                "exalted": 2.0,
+                "volume_divine": 90.0,
+            },
+            {
+                "id": "refined-sibilant-catalyst",
+                "name": "Refined Sibilant Catalyst",
+                "category": "breach",
+                "exalted": 6000.0,
+                "volume_divine": 400.0,
+            },
+            {
+                "id": "delirium-tablet",
+                "name": "Delirium Tablet",
+                "category": "delirium",
+                "exalted": 2.0,
+                "volume_divine": 60.0,
+            },
+            {
+                "id": "potent-liquid-ferocity",
+                "name": "Potent Liquid Ferocity",
+                "category": "delirium",
+                "exalted": 6500.0,
+                "volume_divine": 220.0,
+            },
+            {
+                "id": "guatelitzi-endurance",
+                "name": "Guatelitzi's Soul Core of Endurance",
+                "category": "ultimatum",
+                "exalted": 3300.0,
+                "volume_divine": 180.0,
+            },
+            {
+                "id": "faded-crisis-fragment",
+                "name": "Faded Crisis Fragment",
+                "category": "fragments",
+                "exalted": 2800.0,
+                "volume_divine": 500.0,
+            },
+            {
+                "id": "architects-orb",
+                "name": "Architect's Orb",
+                "category": "incursion",
+                "exalted": 4200.0,
+                "volume_divine": 310.0,
+            },
+            {
+                "id": "the-grand-project",
+                "name": "The Grand Project",
+                "category": "map",
+                "exalted": 2400.0,
+                "volume_divine": 90.0,
+            },
+            {
+                "id": "against-the-darkness",
+                "name": "Against the Darkness",
+                "category": "jewel",
+                "exalted": 2100.0,
+                "volume_divine": 75.0,
+            },
+            {
+                "id": "celestial-alloy",
+                "name": "Celestial Alloy",
+                "category": "verisium",
+                "exalted": 600.0,
+                "volume_divine": 200.0,
+            },
+        ]
     )
 
     day1_report = recommend_farming_strategies(
@@ -63,8 +207,11 @@ def test_farming_strategy_day1_vs_endgame_and_build_fit() -> None:
     top_day1_ids = {s["id"] for s in day1_report["strategies"][:3]}
     assert "fortress_atlas_rush" in top_day1_ids
     assert "negative_rarity_bases" not in top_day1_ids
+    # Dynamically surfaced live drops (zero hardcoded item names!)
+    ritual = next(s for s in day1_report["strategies"] if s["id"] == "ritual_wildwood")
+    assert ritual["top_payout_item"] == "Omen of Sinistral Annulment"
+    assert ritual["market_score"] > 0
 
-    # Zoom-mapper with sweet-spot IIR (115%) and high move speed should score Breach/Ritual high
     zoom_build = BuildStats(
         class_name="Ranger",
         ascendancy_name="Pathfinder",
@@ -92,7 +239,6 @@ def test_farming_strategy_day1_vs_endgame_and_build_fit() -> None:
     neg_strat = next(s for s in zoom_report["strategies"] if s["id"] == "negative_rarity_bases")
     assert any("Negative-Rarity" in w for w in neg_strat["build_warnings"])
 
-    # Negative IIR build should unlock negative_rarity_bases
     neg_build = BuildStats(
         class_name="Ranger",
         ascendancy_name="Deadeye",
@@ -110,6 +256,7 @@ def test_farming_strategy_day1_vs_endgame_and_build_fit() -> None:
         econ,  # type: ignore[arg-type]
         stage="endgame",
         budget_exalted=2000.0,
+        focus="balanced",
         build_stats=neg_build,
         slot_name="neg_mf",
     )
@@ -120,7 +267,25 @@ def test_farming_strategy_day1_vs_endgame_and_build_fit() -> None:
     assert neg_strat_after["build_fit_score"] > neg_strat["build_fit_score"]
 
 
-def test_xml_inspector_skips_curses_and_banners_as_main_skill() -> None:
+def test_sqlite_driven_non_primary_skill_classification() -> None:
+    # Classified purely via SQLite `gems.gem_kind` + `gems.tags_json` (zero hardcoded skill names)
+    for utility in (
+        "Despair",
+        "Elemental Weakness",
+        "Defiance Banner",
+        "Arctic Armour",
+        "Blasphemy",
+        "Life Remnants",
+        "Herald of Thunder",
+        "Wind Dancer",
+        "Ghost Dance",
+        "Blink",
+    ):
+        assert is_non_primary_skill(utility), f"Expected utility/non-primary for {utility}"
+
+    for primary in ("Spark", "Comet", "Ice Shot", "Poisonburst Arrow", "Enervating Nova"):
+        assert not is_non_primary_skill(primary), f"Expected primary active skill for {primary}"
+
     groups = [
         NinjaSkillGroupSummary(
             index=1,
