@@ -1343,11 +1343,15 @@ class BuildService:
             yield scratch
         finally:
             try:
-                self.bridge.call("delete_slot", {"slot": scratch})
-            except Exception:
-                pass
-            if restore_slot is not None:
-                self.bridge.call("switch_slot", {"slot": restore_slot, "createIfMissing": False})
+                if restore_slot is not None:
+                    self.bridge.call(
+                        "switch_slot", {"slot": restore_slot, "createIfMissing": False}
+                    )
+            finally:
+                try:
+                    self.bridge.call("delete_slot", {"slot": scratch})
+                except Exception:
+                    pass
 
     def undo(self, slot: str = "main") -> BuildStats:
         self.bridge.call("undo", {"slot": slot})
@@ -4137,19 +4141,26 @@ class BuildService:
         )
         if modified_equip or fallback_cfg:
             try:
-                wf = self.what_if(
-                    slot=slot,
-                    equip_items=modified_equip or None,
-                    set_config=fallback_cfg,
-                    apply=False,
-                )
-                dps_delta = wf.effective_dps_delta
-                ehp_delta = wf.total_ehp_delta
+                with self._scratch_slot(slot, prefix="runes", restore_slot=slot) as rune_slot:
+                    for equipment_slot, item_text in modified_equip.items():
+                        self.bridge.call(
+                            "equip_item",
+                            {
+                                "slot": rune_slot,
+                                "targetSlot": equipment_slot,
+                                "itemText": item_text,
+                            },
+                        )
+                    if fallback_cfg:
+                        self.bridge.call("set_config", {"slot": rune_slot, "values": fallback_cfg})
+                    after = self.get_stats(slot=rune_slot)
+                dps_delta = after.effective_dps - stats.effective_dps
+                ehp_delta = after.total_ehp - stats.total_ehp
                 res_after = {
-                    "fire": round(wf.after_stats.fire_resist, 1),
-                    "cold": round(wf.after_stats.cold_resist, 1),
-                    "lightning": round(wf.after_stats.lightning_resist, 1),
-                    "chaos": round(wf.after_stats.chaos_resist, 1),
+                    "fire": round(after.fire_resist, 1),
+                    "cold": round(after.cold_resist, 1),
+                    "lightning": round(after.lightning_resist, 1),
+                    "chaos": round(after.chaos_resist, 1),
                 }
             except Exception as exc:
                 notes.append(f"PoB2 delta verification skipped: {exc}")

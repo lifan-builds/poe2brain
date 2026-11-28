@@ -7,6 +7,7 @@ from __future__ import annotations
 import gzip
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -265,15 +266,26 @@ def test_journeys_12_and_13_pob2_weapon_swap_megalomaniac_and_rune_optimizer() -
         assert mega.trade_url and "pathofexile.com/trade2/search/poe2/" in mega.trade_url
 
         # Journey 13b: Rune & Soul Core Socket Optimizer with PoB2 verification
-        runes = svc.optimize_rune_sockets(
-            slot="comm_j12", objective="balanced", offline_prices=True
-        )
+        before = svc.get_stats(slot="comm_j12")
+        with patch.object(svc, "clone_slot", wraps=svc.clone_slot) as clone:
+            runes = svc.optimize_rune_sockets(
+                slot="comm_j12", objective="balanced", offline_prices=True
+            )
+        assert clone.call_count <= 1
+        assert svc.list_slots()["activeSlot"] == "comm_j12"
+        assert svc.get_stats(slot="comm_j12") == before
         assert runes.total_available_sockets > 0
         assert len(runes.recommendations) >= 2
         assert runes.pob_verified_dps_delta != 0.0
         assert runes.pob_verified_ehp_delta > 0
         assert runes.estimated_total_cost_exalted is None
         assert any("Locked socket-bound augment" in n for n in runes.notes)
+
+        with patch("poe2brain.pob.service._rewrite_item_runes", return_value="Invalid item"):
+            invalid = svc.optimize_rune_sockets(slot="comm_j12", offline_prices=True)
+        assert any("Unrecognized PoE2 item base" in note for note in invalid.notes)
+        assert svc.list_slots()["activeSlot"] == "comm_j12"
+        assert svc.get_stats(slot="comm_j12") == before
     finally:
         svc.close()
 
