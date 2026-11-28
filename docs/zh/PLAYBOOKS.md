@@ -64,18 +64,18 @@ uv run poe2 pob what-if --slot main --borrow-from ref --borrow-slot "Weapon 1" -
 
 ---
 
-## 工作流 3：预算内市集一口价捡漏 & 四倍仓一键分拣
+## 工作流 3：预算内市集按 PoB2 权重找提升 & 四倍仓一键分拣
 
 ```bash
-# 1. 自动按 PoB2 真实边际权重搜市集，只看金币一口价（离线秒买，防密语钓鱼），
-#    且自动给未腐化装备补满 20% 品质 + 孔位 + 高级符文后按真实总成本性价比排序
+# 1. 自动按 PoB2 真实边际权重搜市集，自动给未腐化装备补满 20% 品质 + 孔位 + 高级符文
+#    再按真实总成本与 DPS/EHP 性价比排序
 uv run poe2 trade upgrades \
   --equip-slot "Weapon 1" \
   --max-exalted 50 \
   --securable-only \
   --slot main
 
-# 2. 单件装备 Ctrl+C 估价（同时拆分一口价与密语价，标记压价号警告）
+# 2. 单件装备 Ctrl+C 实时估价（结合全服行情并标记压价异常号）
 uv run poe2 trade check --file item.txt
 
 # 3. 四倍仓批量分拣（把多件 Ctrl+C 粘进 dump.txt）

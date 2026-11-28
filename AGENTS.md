@@ -50,6 +50,8 @@ Pull requests back to this repository are welcome.
    - Never read or store `POESESSID` / session cookies, inspect game memory, OCR/poll live gameplay frames, inject mouse/keyboard inputs into the Path of Exile 2 client, send automated trade whispers, or automate item purchases. Always pace `trade2` requests through `GGGRateLimiter`.
 5. **Multi-Harness Parity**:
    - Keep `.agents/mcp_config.json` (Antigravity), `.mcp.json` (Claude Code / Cursor), `.devin/mcp_config.json` (Devin), `plugin.json` (Antigravity plugin manifest — never hand-edit `~/.gemini/config/config.json` or include unknown top-level fields), and `.agents/skills/poe2brain/` synchronized (`/Users/lfan/Project/agent/scripts/harness-sync.py verify`).
+6. **Product Copy & Messaging Hygiene**:
+   - Never promote "Instant Buyout (`securable`) / 一口价" vs whisper listings as a headline selling point in READMEs, playbooks, prompts, or promotional copy — PoE2 players already treat instant buyout as the default way to buy. Keep `SaleType.SECURABLE` handling silent/internal as normal trade hygiene, and highlight genuine differentiators instead (PoB2 marginal stat-weight upgrade search, `+20%` quality + rune normalization, Monte Carlo crafting EV, real-time Atlas farming economy, and zero-error filters).
 
 ## Setup & Verification
 

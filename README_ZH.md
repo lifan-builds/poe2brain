@@ -35,14 +35,14 @@
 
 直接拿通用大模型问《流放之路 2》配装、做装或市集捡漏，90% 会翻车：AI 会用流放 1 的老黄历告诉你「75% 格挡上限」「改造石洗词缀」「用工艺台」「用 0.4 就删掉的同质化预兆」，甚至把 PoB 战神勾选的虚高面板当成真实伤害。
 
-**`poe2brain`** 是一套 **完全免费开源、跨平台（Windows 零编译）** 的 PoE2 专属智能引擎：同一套核心同时提供 **命令行 (`poe2`)** 与 **MCP Server (`poe2brain-mcp`，45 个 1:1 工具)**，把本地后台真跑的 **Path of Building 2**、Patch `0.5.5` 离线真值数据库、实时市集一口价捡漏、做装期望求解器和防崩过滤器工坊直接交给你的 AI 助手。
+**`poe2brain`** 是一套 **完全免费开源、跨平台（Windows 零编译）** 的 PoE2 专属智能引擎：同一套核心同时提供 **命令行 (`poe2`)** 与 **MCP Server (`poe2brain-mcp`，45 个 1:1 工具)**，把本地后台真跑的 **Path of Building 2**、Patch `0.5.5` 离线真值数据库、实时市集按 PoB2 权重找提升、做装期望求解器和防崩过滤器工坊直接交给你的 AI 助手。
 
 | 玩家 / AI 常见痛点 | 直接问普通 AI / 手工查表 | 用 `poe2brain` (`Patch 0.5.5`) |
 | :--- | :--- | :--- |
 | **拿流放 1 规则套流放 2** | 瞎编 75% 格挡、工艺台、已删除通货 | **离线 SQLite + FTS5 真值库**：769 条官方弹窗、54 条防幻觉铁律、23 升华，**支持中文直接搜** |
 | **抄到「PoB 战神」水货 BD** | 只看勾满药剂/满感电的虚假面板 | **本地后台真跑 PoB2**：一键**去水审计 (`pob audit`)**（含怒火锤炼/召唤契约等条件辅助与虚高攻速预警）+ 前 5 项配装瓶颈 |
 | **想找冷门高伤高速黑马 BD** | 榜一全是天价镜子装或烂大街 Meta | **每日自动去水更新的实时 BD 索引**（GitHub Actions 滚动发布 + 本地 SQLite 缓存）：一句 `--preset sleeper` 1 秒算出真实 DPS × 移速 × 稀有度黑马榜 |
-| **市集被密语压价号钓鱼** | 最低价全是 1 崇高不卖人的脚本号 | 自动拆分 **金币一口价 (`securable`，离线秒买)** vs **密语 (`whisper`)**，自动补满 20% 品质与符文再跑分 |
+| **市集挑装备全靠眼看拍脑袋** | 看不出哪把底子打满品质符文后提升最大 | 按你当前 **PoB2 真实边际权重** 搜市集，自动模拟补满 **20% 品质 + 符文** 再按真实 DPS/EHP 性价比排序 |
 | **做装靠感觉容易血本无归** | 不懂 0.5.5 阶梯通货等级下限与词池互斥 | **精确条件词池 MDP + 蒙特卡洛 (`p50`/`p80`/`p95`)**，直接算出「自己做 vs 市集买」谁更赚 |
 | **过滤器漏底材或进游戏直接报错** | `MapTier` / `Expert` 基底写错崩溃，或漏掉 82 物等/超凡工艺底材 | **7 类崩溃自校验编译器 + NeverSink 自动修复**：实时物价分层、绑定 PoB2 抓 82 物等/超凡底材、中英文语音播报 |
 | **担心封号 / Windows 装不上** | 要抠 `POESESSID` Cookie，或在 Windows 折腾 C 编译器 | **零 `POESESSID`、零读内存、零自动交易**（支持本地 PoB2 导入与官方 GGG OAuth 2.1）；**Windows 零编译开箱即用** |
@@ -102,7 +102,7 @@ uv run poe2 ninja search --preset sleeper --limit 5
 ### 2. 像和老玩家聊天一样直接问 AI（接入 MCP 后直接复制使用）
 
 - **找黑马 BD：** *「帮我找当前赛季冷门、不要永恒时刻（Temporalis）、真实去水 DPS 高且移速快的 3 套黑马 BD，并找出它们前期最省钱的时光机过渡快照。」*
-- **给自己的号体检：** *「导入我本地 PoB2 里最新保存的 BD，跑一次去水审计告诉我最大瓶颈是什么，再在 50 崇高以内搜市集金币一口价能买到的最大武器提升。」*
+- **给自己的号体检：** *「导入我本地 PoB2 里最新保存的 BD，跑一次去水审计告诉我最大瓶颈是什么，再在 50 崇高以内按 PoB2 权重搜市集能买到的最大武器提升。」*
 - **四倍仓一键分拣：** *「我把刚才刷图打的一堆装备 `Ctrl+C` 贴给你，按 5 崇高为界帮我分成立即秒卖、半成品值得做、赌鉴定揭秘、直接分解四堆。」*
 - **做装前先算账：** *「我想做一把 82 级法杖要 T1 法伤 + 法术技能等级，帮我算期望成本和 p80 脸黑成本，对比市集直接买划算还是自己做划算。」*
 - **防翻车刷图 + 智能语音过滤器：** *「根据我当前槽位 BD 生成一条 50 字符以内的防翻车异界引路石正则，再帮我生成一套暗黑金色、抓 82 物等/超凡底材、带中文大货语音播报的严格过滤器。」*
@@ -123,7 +123,7 @@ flowchart TB
 
     CORE --> P1["1. 0.5.5 真值知识库<br/>中英文检索 · 23 升华<br/>50 字符引路石正则"]
     CORE --> P2["2. 无头 PoB2 引擎<br/>去水审计 · 词缀溯源<br/>辅助扫榜 · 范围珠宝 · 假设沙盒"]
-    CORE --> P3["3. 实时经济 & 市集捡漏<br/>崇高本位 · 一口价 vs 密语<br/>金币复利套利 · 四倍仓分拣"]
+    CORE --> P3["3. 实时经济 & 市集捡漏<br/>崇高本位 · PoB2 算真提升<br/>金币复利套利 · 四倍仓分拣"]
     CORE --> P4["4. 精确做装求解器<br/>条件词池 · 蒙特卡洛成本<br/>防砸词保护 · 赚钱做装榜"]
     CORE --> P5["5. poe.ninja 抄作业<br/>每日滚动去水索引 · 意图预设<br/>!反向排除 · 时光机过渡点"]
     CORE --> P6["6. 0.5.5 智能过滤器工坊<br/>实时物价 · PoB2/82物等/超凡底材<br/>中英文语音播报 · 7 类报错校验"]
@@ -234,8 +234,8 @@ uv run poe2 pob calc-breakdown EnergyShield --slot main
 uv run poe2 pob supports --slot main --max-tier 2 --no-lineage
 uv run poe2 pob radius-jewels --jewel "Controlled Metamorphosis" --slot main
 
-# 4. 市集 50E 一口价自动捡漏（自动模拟补满 20% 品质 + 高级符文再算提升）
-uv run poe2 trade upgrades --equip-slot "Weapon 1" --max-exalted 50 --securable-only --slot main
+# 4. 市集 50E 内按 PoB2 权重搜提升（自动模拟补满 20% 品质 + 高级符文再算真伤）
+uv run poe2 trade upgrades --equip-slot "Weapon 1" --max-exalted 50 --slot main
 
 # 5. 藏身处套利扫描（统一 --budget 支持 500 崇高或 5d 神圣）& 赚钱做装榜
 uv run poe2 econ arbitrage --budget 5d --gold 50000
@@ -260,7 +260,7 @@ uv run poe2 filter generate --slot main --strictness strict \
 | **知识库 (9)** | `poe2_search_knowledge`, `poe2_explain_mechanic`, `poe2_inspect_gem/base/unique/augment/ascendancy`, `poe2_meta_ladder`, `poe2_waystone_regex` | `poe2 wiki search/mechanic/gem/base/unique/augment/ascendancy/meta/regex` | 中英文真值检索、23 升华、全服 Meta、50 字符防翻车引路石/碑牌正则 |
 | **无头 PoB2 (15)** | `poe2_pob_load/stats/audit/compare/hc_audit/eval_item/stat_weights/suggest_nodes/optimize_runes/calc_breakdown/supports/radius_jewels/what_if/import_local/import_character` | `poe2 pob load/stats/audit/compare/hc-audit/eval-item/weights/nodes/runes/calc-breakdown/supports/radius-jewels/what-if/import-local/import-character` | 多槽位 PoB2 计算、去水体检与瓶颈/IIR 定位、HC 猝死审计、词缀溯源、符文/辅助/范围珠宝排榜、无损假设沙盒 |
 | **经济搬砖 (5)** | `poe2_currency_price`, `poe2_market_scan`, `poe2_boss_ev`, `poe2_farming_strategy`, `poe2_scan_arbitrage` | `poe2 econ price/scan/bosses/farming/arbitrage` | 崇高本位实时物价、赛季初/终局异界搬砖与大师策略、门票收益比、金币税感知套利与复利阶梯 |
-| **市集估价 (4)** | `poe2_parse_item`, `poe2_price_check`, `poe2_triage_dump`, `poe2_find_upgrades` | `poe2 trade parse/check/triage/upgrades` | 中英文 `Ctrl+C` 解析、一口价 vs 密语估价、四倍仓分拣、PoB2 真实提升捡漏 |
+| **市集估价 (4)** | `poe2_parse_item`, `poe2_price_check`, `poe2_triage_dump`, `poe2_find_upgrades` | `poe2 trade parse/check/triage/upgrades` | 中英文 `Ctrl+C` 解析、实时估价与异常压价检测、四倍仓分拣、PoB2 真实提升捡漏 |
 | **做装求解 (3)** | `poe2_craft_odds`, `poe2_craft_plan`, `poe2_scan_craft_profit` | `poe2 craft odds/plan/profit` | 精确条件词池概率、防砸词保护、期望与 p80 脸黑成本、高利润低竞争做装榜 |
 | **poe.ninja (3)** | `poe2_ninja_snapshots`, `poe2_ninja_search`, `poe2_ninja_character` | `poe2 ninja snapshots/search/character` | 全服快照、`--preset` 黑马/开荒/速刷检索、`!反向过滤`、时光机低预算过渡点探测 |
 | **过滤器工坊 (5)** | `poe2_filter_presets`, `poe2_filter_generate`, `poe2_filter_restyle`, `poe2_filter_validate`, `poe2_filter_heal` | `poe2 filter presets/generate/restyle/validate/heal` | 实时物价分层、PoB2/82物等/超凡底材、中英文语音播报、NeverSink 自动修复、7 类报错校验（含可选色盲/夜间模式） |
@@ -278,7 +278,7 @@ uv run poe2 filter generate --slot main --strictness strict \
 | **国服中文剪贴板解析（含带空格 `稀 有 度:`）** | ✅ | ✅ | 支持直接 `Ctrl+C` 复制国服装备做解析与词缀评估 |
 | **0.5.5 智能过滤器、语音播报 & 老过滤器修复** | ✅ | ✅ | 本地生成/校验 `.filter`（抓 82 物等/超凡底材），进游戏零报错 |
 | **精确做装词池概率 & 防砸词规划 (`craft odds/plan`)** | ✅ | ✅ | 离线概率与步骤计算；自定义通货汇率即可算国服成本 |
-| **实时市集一口价捡漏 & `poe.ninja` 榜单** | ✅ | ⏳ 评估中 | 目前接入国际服公开只读接口；国服实时物价后续视零 Cookie 合规接口可行性持续跟进 |
+| **实时市集按 PoB2 搜提升 & `poe.ninja` 榜单** | ✅ | ⏳ 评估中 | 目前接入国际服公开只读接口；国服实时物价后续视零 Cookie 合规接口可行性持续跟进 |
 
 - **1.0 正式版跟进计划：** 离线数据库构建管线与无头 PoB2 引擎均为自动化更新结构；1.0 解包数据与 PoB2 天赋树发布后会第一时间同步升级。
 - **近期路线图：** 多点天赋树路径自动优化（目前支持单点/短路径推荐与可控蜕变/妄想症选孔）、按赛季实时物价自动刷新过滤器分级。
