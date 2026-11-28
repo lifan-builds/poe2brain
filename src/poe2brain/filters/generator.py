@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from poe2brain.config import DEFAULT_LEAGUE, POE2_PATCH, get_cache_dir, get_gamedata_db_path
+from poe2brain.config import DEFAULT_LEAGUE, POE2_PATCH, get_gamedata_db_path, get_pob_slots_dir
 from poe2brain.filters.grammar import (
     FilterGamedataIndex,
     get_filter_gamedata_index,
@@ -638,7 +638,7 @@ def extract_build_filter_context(
         build_service.load_build(pob_code, slot=slot)
     elif bridge_idle:
         safe_slot = _SAFE_SLOT_FILENAME_RE.sub("_", slot.strip()) or "main"
-        snap_path = get_cache_dir() / "pob_slots" / f"{safe_slot}.xml"
+        snap_path = get_pob_slots_dir() / f"{safe_slot}.xml"
         if snap_path.is_file():
             snap_xml = snap_path.read_text(encoding="utf-8")
             if build_service is None or "<PlayerStat" in snap_xml:
@@ -878,6 +878,7 @@ class FilterGenerator:
         sound_pack: SoundPackManifest | None = None,
         require_custom_sounds: bool = False,
         prices_ex: Mapping[str, float] | None = None,
+        include_economy: bool = True,
     ) -> list[str]:
         """Generates Patch 0.5.5 economy + PoB2 override blocks for native or NeverSink filters."""
         blocks: list[str] = []
@@ -900,7 +901,7 @@ class FilterGenerator:
             "Faded Crisis Fragment",
             "Preserved Vertebrae",
         )
-        for nm in highlight_055_candidates:
+        for nm in highlight_055_candidates if include_economy else ():
             if (
                 nm not in self.index.basetype_to_classes
                 or nm in self.index.dormant_or_removed_basetypes
@@ -926,7 +927,7 @@ class FilterGenerator:
                         theme.tiers[tk],
                         sound_pack=sound_pack,
                         require_custom_sounds=require_custom_sounds,
-                        section_comment=f"Patch {POE2_PATCH} Live Economy Priority ({tk.upper()})",
+                        section_comment=f"Patch {POE2_PATCH} Economy Priority ({tk.upper()})",
                     )
                 )
 
@@ -1228,12 +1229,13 @@ class FilterGenerator:
             else:
                 tier_buckets["hide"].append(bt_name)
 
+        price_source = league if use_live_economy else f"offline {POE2_PATCH} reference prices"
         banner_bar = "#" + "=" * 95
         sections: list[str] = [
             "\n".join(
                 [
                     banner_bar,
-                    f"# poe2brain Loot Filter — Path of Exile 2 Patch {POE2_PATCH} ({league})",
+                    f"# poe2brain Loot Filter — PoE2 Patch {POE2_PATCH} ({price_source})",
                     f"# FILTER:     {filter_name}",
                     f"# STRICTNESS: {strict_tier.value}",
                     f"# THEME:      {resolved_theme.id} ({resolved_theme.name})",

@@ -8,7 +8,7 @@
 
 > **零手写 JSON（推荐）：** 在 `poe2brain` 目录直接运行一键配置命令，自动填入 `uv` 绝对路径（根治 Windows GUI 找不到 `uv` 报错），省去手改 JSON：
 > ```bash
-> # Cherry Studio + DeepSeek/豆包/Qwen（精简 17 核心工具并自动复制到剪贴板，去软件里「从 JSON 导入」粘贴即可）
+> # Cherry Studio + DeepSeek/豆包/Qwen（精简 19 核心工具并自动复制到剪贴板，去软件里「从 JSON 导入」粘贴即可）
 > uv run poe2 setup-mcp --client cherry --profile core --copy
 > # Trae / Cursor / Claude Code / Codex 自动写入配置文件
 > uv run poe2 setup-mcp --client trae --profile core
@@ -27,7 +27,7 @@ claude mcp add poe2brain -- uv --directory /ABSOLUTE/PATH/TO/poe2brain run poe2b
 
 ### Cursor
 1. 打开 **Settings → Tools & MCP → Add new global MCP server**（或编辑 `~/.cursor/mcp.json`）。
-2. 粘贴以下配置并保存，刷新工具列表看到 **45 个 `poe2_*` 工具**（使用 `--profile core` 时为 17 个核心工具） 即成功：
+2. 粘贴以下配置并保存，刷新工具列表看到 **46 个 `poe2_*` 工具**（使用 `--profile core` 时为 19 个核心工具） 即成功：
 
 ```json
 {
@@ -41,7 +41,7 @@ claude mcp add poe2brain -- uv --directory /ABSOLUTE/PATH/TO/poe2brain run poe2b
 ```
 
 ### Antigravity
-仓库自带完整的 `plugin.json`、`.agents/mcp_config.json` 与 `.agents/skills/poe2brain/SKILL.md`，直接在 Antigravity 打开 `poe2brain` 工作区或安装为本地插件即可自动加载全部 45 个工具与防幻觉规则。
+仓库自带完整的 `plugin.json`、`.agents/mcp_config.json` 与 `.agents/skills/poe2brain/SKILL.md`，直接在 Antigravity 打开 `poe2brain` 工作区或安装为本地插件即可自动加载全部 46 个工具与防幻觉规则。
 
 ### Cherry Studio / Cline / 通用 MCP 客户端
 - **类型 (Type):** `STDIO`
@@ -88,4 +88,4 @@ uv --directory C:/dev/poe2brain run poe2 <子命令> --json
 
 ### 刷图正则与防崩过滤器
 12. **一条命令搞定引路石正则 + 护耳暗黑过滤器：**
-    > 按我 `main` 槽位生成一条不超过 50 字符的异界引路石防翻车正则；再帮我生成一个严格档位、暗黑金色、红绿色盲友好、凌晨 2 点不刺耳的过滤器并校验 0 报错。
+    > 按我 `main` 槽位生成一条不超过 50 字符的异界引路石防翻车正则；再以 NeverSink 严格版为底版，做一个暗黑金色、红绿色盲友好、凌晨 2 点不刺耳的过滤器并校验 0 报错。

@@ -7,7 +7,7 @@
 [![CI (Windows + macOS)](https://img.shields.io/github/actions/workflow/status/lifan-builds/poe2brain/ci.yml?branch=main&style=flat-square&label=CI%20Windows%20%2B%20macOS)](https://github.com/lifan-builds/poe2brain/actions/workflows/ci.yml)
 [![Benchmark](https://img.shields.io/badge/PoE2Bench%200.5.5-27.3%25%20%E2%86%92%20100%25-22c55e?style=flat-square)](#benchmark-how-accurate-is-poe2brain)
 [![Patch](https://img.shields.io/badge/PoE2-0.5.5%20Forbidden%20Rites-d4a24c?style=flat-square)](https://github.com/lifan-builds/poe2brain)
-[![MCP Tools](https://img.shields.io/badge/MCP%20%2B%20CLI-45%20Tools%20(1%3A1)-38bdf8?style=flat-square)](#11-mcp-tool--cli-command-reference)
+[![MCP Tools](https://img.shields.io/badge/MCP%20%2B%20CLI-46%20Tools%20(1%3A1)-38bdf8?style=flat-square)](#11-mcp-tool--cli-command-reference)
 [![Platforms](https://img.shields.io/badge/OS-Windows%20%7C%20macOS%20%7C%20Linux-64748b?style=flat-square)](#60-second-quickstart)
 [![Python](https://img.shields.io/badge/Python-3.12%2B-3776ab?style=flat-square)](pyproject.toml)
 [![License](https://img.shields.io/badge/License-GPL--3.0--only-e11d48?style=flat-square)](LICENSE)
@@ -39,7 +39,7 @@
 
 General-purpose LLMs constantly hallucinate **Path of Exile 1** mechanics onto **Path of Exile 2** — quoting `75%` Block caps, Scouring Orbs, Crafting Bench mods, removed `0.4` Homogenising Omens, or fake PoB-warrior DPS inflated by unsustainable flasks and 100% Shock.
 
-**`poe2brain`** replaces guesswork with a single typed Python 3.12+ engine exposing **45 MCP tools** (`poe2brain-mcp`) and **1:1 JSON CLI commands** (`poe2 ... --json`) backed by live headless **PathOfBuilding-PoE2**, an offline Patch `0.5.5` SQLite + FTS5 database, official `trade2` pricing, exact crafting probability solvers, and a self-validating loot filter studio.
+**`poe2brain`** replaces guesswork with a single typed Python 3.12+ engine exposing **46 MCP tools** (`poe2brain-mcp`) and **1:1 JSON CLI commands** (`poe2 ... --json`) backed by live headless **PathOfBuilding-PoE2**, an offline Patch `0.5.5` SQLite + FTS5 database, official `trade2` pricing, exact crafting probability solvers, and a self-validating loot filter studio.
 
 | Problem Players & AI Agents Hit | Generic LLM / Ad-Hoc Scripts | `poe2brain` (`Patch 0.5.5`) |
 | :--- | :--- | :--- |
@@ -124,9 +124,11 @@ uv run poe2 craft profit --budget mid
 # PoB2-aware <=50-char Waystone & Precursor Tablet stash regexes (with 0..6 mod revive schedule)
 uv run poe2 wiki regex --slot main
 
-# PoB2-tailored 0.5.5 loot filter (live economy, ilvl 82/Exceptional bases, EN/ZH voice callouts)
-uv run poe2 filter generate --slot main --strictness strict \
-  --look "obsidian gold voice callout" --out my_build.filter --install
+# Start with NeverSink's semi-strict PoE2 filter. Use a local .filter path to branch from your own.
+uv run poe2 filter restyle semi_strict --base-only --out my_build.filter
+
+# Add a look to the working copy
+uv run poe2 filter restyle my_build.filter --base-only --look "obsidian gold" --out my_gold.filter
 ```
 
 ---
@@ -137,7 +139,7 @@ uv run poe2 filter generate --slot main --strictness strict \
 flowchart TB
     A["AI Agents & Players<br/>Claude Code · Cursor · Antigravity · Codex · Devin · Terminal"]
     A -->|JSON-first CLI| CLI["poe2 (Typer)"]
-    A -->|stdio MCP| MCP["poe2brain-mcp (45 Tools, 1:1 Parity)"]
+    A -->|stdio MCP| MCP["poe2brain-mcp (46 Tools, 1:1 Parity)"]
     CLI --> CORE["Typed Python 3.12+ Domain Core"]
     MCP --> CORE
 
@@ -175,6 +177,7 @@ uv sync
 # Bootstrap headless PathOfBuilding-PoE2 runtime into ~/.cache/poe2brain/pob2
 # • Windows: zero C compiler needed (auto-reuses local PoB2 or pulls MIT x64 lua51.dll)
 # • macOS / Linux: compiles LuaJIT 2.1 + luautf8 automatically
+uv run poe2 init  # choose 国服 (cn) or 国际服 (international)
 uv run poe2 bootstrap pob2
 
 # Verify engine, SQLite 0.5.5 gamedata DB, and PoB2 runtime readiness
@@ -208,7 +211,9 @@ uv run poe2 version --json
 
 ## Connecting to Your AI Assistant
 
-Use `poe2 setup-mcp --profile core` to configure an MCP client with 17 core tools. Run `poe2 doctor` to check the installation, `poe2 update` to update it, or `poe2 uninstall` to remove it.
+A terminal prompts for the game realm on first use. Switch later with `poe2 init cn` or `poe2 init international`. CLI and MCP share the choice. Noninteractive commands keep the existing international behavior until a realm is selected. [Tencent character imports, filters, and prices](docs/zh/CN_REALM.md)
+
+Use `poe2 setup-mcp --profile core` to configure an MCP client with 19 core tools. Run `poe2 doctor` to check the installation, `poe2 update` to update it, or `poe2 uninstall` to remove it.
 
 The repository also ships manifests for these clients:
 
@@ -243,13 +248,14 @@ uv run poe2brain-mcp
 
 ## 1:1 MCP Tool & CLI Command Reference
 
-Every single MCP tool maps 1:1 to a `poe2 ... --json` CLI command over the exact same typed domain services (**45 tools total**):
+Every single MCP tool maps 1:1 to a `poe2 ... --json` CLI command over the exact same typed domain services (**46 tools total**):
 
 <details open>
-<summary><strong>Expand / Collapse Full 45-Tool Reference Table</strong></summary>
+<summary><strong>Expand / Collapse Full 46-Tool Reference Table</strong></summary>
 
 | Pillar | MCP Tool (`poe2brain`) | CLI Command (`uv run ...`) | Purpose |
 | :--- | :--- | :--- | :--- |
+| **Setup** | `poe2_init` | `poe2 init <realm> --json` | Save the player’s realm for the CLI and MCP. |
 | **Health** | `poe2_status` | `poe2 version --json` | Verify patch (`0.5.5`), default league (`Forbidden Rites`), SQLite DB, and headless PoB2 readiness. |
 | **Knowledge** | `poe2_search_knowledge` | `poe2 wiki search "<query>" [--category <cat>] [--limit 12] --json` | FTS5 + exact search across 769 GGG `KeywordPopups`, 54 anti-hallucination rules, 1,711 gems, 443 uniques (439 live in 0.5.5), 3,219 live bases, 313 augments, 293 levers, and 882 runeforge recipes. |
 | **Knowledge** | `poe2_explain_mechanic` | `poe2 wiki mechanic "<topic>" --json` | Authoritative `MechanicFact` (`poe1_trap`, `poe2_live_rule`, `formula_expr`) + official GGG keyword popups. |
@@ -274,7 +280,7 @@ Every single MCP tool maps 1:1 to a `poe2 ... --json` CLI command over the exact
 | **PoB2** | `poe2_pob_radius_jewels` | `poe2 pob radius-jewels [--jewel "<jewel>"] [--slot main] [--stat FullDPS] [--max-dist 10] [--top 10] --json` | Rank Passive Tree Jewel Sockets × radius rings (`Controlled Metamorphosis` / `Against the Darkness`) by per-point gain & travel points saved. |
 | **PoB2** | `poe2_pob_what_if` | `poe2 pob what-if [--slot main] [--equip "Slot=TextOrPath"] [--edit-slot "<slot>" --add-mod "<line>" --remove-mod "<sub>" --set-quality 20] [--alloc-node <id>] [--dealloc-node <id>] [--config k=v] [--borrow-from <ref> --borrow-slot "<slot>"] [--scenario-matrix] [--apply] --json` | Transactional multi-change PoB2 hypothesis sandbox (`WhatIfReport`) with per-piece attribution, 3-scenario matrix, and automatic rollback. |
 | **PoB2** | `poe2_pob_import_local` | `poe2 pob import-local [<name_or_path>] [--dir <builds_dir>] [--slot main] [--list] --json` | Discover or load saved local Path of Building (PoE2) `.xml` builds directly (zero-auth Day-1 sync on Windows/macOS/Linux). |
-| **PoB2** | `poe2_pob_import_character` | `poe2 pob import-character [<character_name>] [--realm poe2] [--slot main] [--list] --json` | List or import private/Day-1 PoE2 characters via official GGG OAuth 2.1 PKCE (`poe2 auth login`, zero `POESESSID`). |
+| **PoB2** | `poe2_pob_import_character` | `poe2 pob import-character [<character_name>] [--realm poe2] [--slot main] [--list] --json` | Import a converted Tencent PoE2DB character page or PoB code. International users can list and import account characters via GGG OAuth. |
 | **Economy** | `poe2_currency_price` | `poe2 econ price "<query>" [--league "Forbidden Rites"] --json` | Live `CurrencyQuote` normalized to `{exalted, chaos, divine}` (`Exalted = 1.0`) with 7d trend and volume. |
 | **Economy** | `poe2_market_scan` | `poe2 econ scan [--category <cat>] [--min-volume-divine 5.0] [--league "Forbidden Rites"] --json` | High-liquidity exchange movers, numeraire-normalized cross-source spreads, and chanceable Uniques. |
 | **Economy** | `poe2_boss_ev` | `poe2 econ bosses [--encounter <id>] [--league "Forbidden Rites"] --json` | Live Pinnacle Boss & Trial entry costs vs chase unique drops (Arbiter, Xesht, Simulacrum, King in the Mists, Olroth, Sekhema, Trialmaster) with jackpot ratios & variable-roll notes. |
@@ -291,8 +297,8 @@ Every single MCP tool maps 1:1 to a `poe2 ... --json` CLI command over the exact
 | **Ninja** | `poe2_ninja_search` | `poe2 ninja search [--preset sleeper\|zoom_mapper\|league_start\|boss_killer\|hc_tank] [--ascendancy <csv_or_!neg>] [--skill <sk>] [--unique <u_or_!neg>] [--sort dps\|ehp\|level\|es\|life\|sleeper\|mobility] --json` | Multi-facet `Forbidden Rites` build search with intent presets, `!Term` negation, pre-audited `dewatered_dps`, `movement_speed_mod`, and `sleeper_score`. |
 | **Ninja** | `poe2_ninja_character` | `poe2 ninja character <account_or_url> [--name <char>] [--league "Forbidden Rites"] [--timemachine <lbl>] [--probe-timeline] [--load-pob] [--slot main] [--audit] --json` | Import live `poe.ninja` character or PoB2 share URL, binary-search time-machine stepping stones (`--probe-timeline`), or load + audit in PoB2. |
 | **Filter** | `poe2_filter_presets` | `poe2 filter presets --json` | List all 8 WCAG visual theme presets, 6 strictness tiers, 6 custom soundpack styles + musical keys/scales, and local PoE2 filter dir. |
-| **Filter** | `poe2_filter_generate` | `poe2 filter generate [--strictness semi_strict] [--theme <id>] [--look "<theme/cvd/2am/sound prompt>"] [--pob <code>] [--slot <slot>] [--slots <s1,s2>] [--out <path>] [--preview-html <html_path>] [--install] --json` | Compile a validated `0.5.5` `.filter` with live economy, solo/co-op `--slots` PoB2 context, inline `--look` theme/CVD/2am/sound intent, `.wav`/`.mp3` soundpack, and HTML preview. |
-| **Filter** | `poe2_filter_restyle` | `poe2 filter restyle <source_path_or_neversink_strictness> [--theme <preset>] [--look "<theme/cvd/2am/sound prompt>"] [--pob <code>] [--slot <slot>] [--slots <s1,s2>] [--out <path>] [--preview-html <html_path>] [--install] --json` | Auto-heal `0.5.5` stale `BaseType`s on local or MIT NeverSink `.filter` files, inject economy/co-op PoB2 overrides, and restyle look & sounds. |
+| **Filter** | `poe2_filter_restyle` | `poe2 filter restyle <source_path_or_neversink_strictness> [--base-only] [--theme <preset>] [--look "<theme/cvd/2am/sound prompt>"] [--pob <code>] [--slot <slot>] [--slots <s1,s2>] [--out <path>] [--preview-html <html_path>] [--install] --json` | Default recommendation for a new filter. Start from the player's file or NeverSink with `--base-only` to keep its priorities. |
+| **Filter** | `poe2_filter_generate` | `poe2 filter generate [--strictness semi_strict] [--theme <id>] [--look "<theme/cvd/2am/sound prompt>"] [--pob <code>] [--slot <slot>] [--slots <s1,s2>] [--out <path>] [--preview-html <html_path>] [--install] --json` | Generate a native filter from scratch when requested. Compile a validated `0.5.5` `.filter` with live economy, solo/co-op `--slots` PoB2 context, inline `--look` theme/CVD/2am/sound intent, `.wav`/`.mp3` soundpack, and HTML preview. |
 | **Filter** | `poe2_filter_validate` | `poe2 filter validate <filter_file_or_text> [--sound-dir <dir>] --json` | Validate any `.filter` file or text against PoE2 `0.5.5` `ItemClasses`, `BaseItemTypes`, grammar bounds, and custom sound files. |
 | **Filter** | `poe2_filter_heal` | `poe2 filter heal <filter_file_or_text> [--out <path>] [--sound-dir <dir>] --json` | **Filter Doctor**: auto-heal broken PoE1 / PoE2 `0.1` `.filter` syntax, stale `Expert ` prefixes, singular classes, and dead conditions to `0` errors. |
 

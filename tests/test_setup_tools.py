@@ -30,7 +30,7 @@ def test_core_mcp_profile_tool_subset_is_valid() -> None:
     core_tools = set(core_server._tool_manager._tools.keys())
     assert len(full_tools) >= 44
     assert core_tools == CORE_MCP_TOOL_NAMES
-    assert len(core_tools) == 17
+    assert {"poe2_filter_restyle", "poe2_filter_generate"} <= core_tools
 
 
 def test_candidate_github_urls_ordering(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -73,7 +73,7 @@ def test_setup_mcp_clients_and_uninstall_roundtrip(tmp_path: Path) -> None:
     )
     assert res["ok"] is True
     assert res["profile"] == "core"
-    assert res["tool_count"] == 17
+    assert res["tool_count"] == len(CORE_MCP_TOOL_NAMES)
     assert "--profile" in res["entry"]["args"]
     assert "core" in res["entry"]["args"]
 

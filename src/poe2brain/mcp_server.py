@@ -22,13 +22,21 @@ import httpx
 from poe2brain import ATTRIBUTION, LICENSE_SPDX, LICENSE_SUMMARY, __version__
 from poe2brain.config import (
     BUNDLED_DATA_DIR,
+    CN_FILTER_DIR_HELP,
+    CN_IMPORT_HELP,
     DEFAULT_LEAGUE,
     POE2_PATCH,
     REPO_ROOT,
     REPO_URL,
+    GameRealm,
+    RealmUnavailableError,
     get_cache_dir,
+    get_game_realm,
     get_gamedata_db_path,
     get_pob2_paths,
+    get_pob_slots_dir,
+    require_international,
+    set_game_realm,
 )
 from poe2brain.crafting import (
     CraftingMod,
@@ -57,6 +65,7 @@ from poe2brain.filters import (
     merge_build_filter_contexts,
     render_filter_preview_html,
 )
+from poe2brain.filters.preview import resolve_filter_install_dir
 from poe2brain.filters.soundpacks import SCALE_INTERVALS
 from poe2brain.filters.themes import parse_look_intent
 from poe2brain.knowledge import KnowledgeService, MetaService, build_waystone_regex_plan
@@ -99,7 +108,7 @@ def _mcp_tool(fn: Callable[..., Any]) -> Callable[..., Any]:
 
 
 def get_mcp_server(profile: str = "full") -> Any:
-    """Lazily import FastMCP and register MCP tools for `full` (45) or `core` (17) profile."""
+    """Lazily import FastMCP and register MCP tools for the full or core profile."""
     from poe2brain.setup_tools import CORE_MCP_TOOL_NAMES, SUPPORTED_MCP_PROFILES
 
     prof = (profile or "full").strip().lower()
@@ -117,7 +126,11 @@ def get_mcp_server(profile: str = "full") -> Any:
 
     server = FastMCP(
         "poe2brain",
-        instructions=f"{ATTRIBUTION}. License: {LICENSE_SUMMARY}.",
+        instructions=(
+            f"{ATTRIBUTION}. License: {LICENSE_SUMMARY}. "
+            "Check poe2_status first. If game_realm is null, ask the player to choose "
+            "国服 (cn) or 国际服 (international), then call poe2_init with their choice."
+        ),
         website_url=REPO_URL,
     )
     server._mcp_server.version = __version__
@@ -165,25 +178,31 @@ def get_knowledge_service() -> KnowledgeService:
     return _KNOWLEDGE_SVC
 
 
-def get_economy_service() -> EconomyService:
+def _shared_economy_service() -> EconomyService:
     global _ECONOMY_SVC
     if _ECONOMY_SVC is None:
         _ECONOMY_SVC = EconomyService()
     return _ECONOMY_SVC
 
 
+def get_economy_service() -> EconomyService:
+    require_international("Live economy")
+    return _shared_economy_service()
+
+
 def get_trade2_client() -> Trade2Client:
     global _TRADE2_CLIENT
     if _TRADE2_CLIENT is None:
-        _TRADE2_CLIENT = Trade2Client(economy=get_economy_service())
+        _TRADE2_CLIENT = Trade2Client(economy=_shared_economy_service())
     return _TRADE2_CLIENT
 
 
 def get_trade_advisor() -> TradeAdvisor:
+    require_international("Trade listings")
     global _TRADE_ADVISOR
     if _TRADE_ADVISOR is None:
         _TRADE_ADVISOR = TradeAdvisor(
-            economy=get_economy_service(),
+            economy=_shared_economy_service(),
             trade2=get_trade2_client(),
         )
     return _TRADE_ADVISOR
@@ -208,7 +227,7 @@ def get_build_service() -> BuildService:
             bridge=bridge,
             owns_bridge=False,
             trade_client=get_trade2_client(),
-            economy_service=get_economy_service(),
+            economy_service=_shared_economy_service(),
         )
     return _BUILD_SVC
 
@@ -216,11 +235,12 @@ def get_build_service() -> BuildService:
 def get_meta_service() -> MetaService:
     global _META_SVC
     if _META_SVC is None:
-        _META_SVC = MetaService(economy_service=get_economy_service())
+        _META_SVC = MetaService(economy_service=_shared_economy_service())
     return _META_SVC
 
 
 def get_ninja_service() -> NinjaBuildsService:
+    require_international("poe.ninja ladder", CN_IMPORT_HELP)
     global _NINJA_SVC
     b_svc = get_build_service()
     m_svc = get_meta_service()
@@ -234,7 +254,7 @@ def get_ninja_service() -> NinjaBuildsService:
 
 def get_filter_generator() -> FilterGenerator:
     global _FILTER_GEN
-    econ = get_economy_service()
+    econ = _shared_economy_service()
     b_svc = get_build_service()
     if (
         _FILTER_GEN is None
@@ -257,23 +277,25 @@ def get_neversink_adapter() -> NeverSinkAdapter:
 
 
 def get_craft_profit_scanner() -> CraftProfitScanner:
+    require_international("Craft profit")
     global _CRAFT_PROFIT_SCANNER
     planner = get_crafting_planner()
     if _CRAFT_PROFIT_SCANNER is None or _CRAFT_PROFIT_SCANNER.planner is not planner:
         _CRAFT_PROFIT_SCANNER = CraftProfitScanner(
             planner=planner,
-            economy=get_economy_service(),
+            economy=_shared_economy_service(),
             trade2=get_trade2_client(),
         )
     return _CRAFT_PROFIT_SCANNER
 
 
 def get_arbitrage_scanner() -> ArbitrageScanner:
+    require_international("Exchange arbitrage")
     global _ARBITRAGE_SCANNER
     k_db = get_knowledge_service().db
     if _ARBITRAGE_SCANNER is None or _ARBITRAGE_SCANNER.db.db_path != k_db.db_path:
         _ARBITRAGE_SCANNER = ArbitrageScanner(
-            economy=get_economy_service(),
+            economy=_shared_economy_service(),
             trade2=get_trade2_client(),
             db=k_db,
         )
@@ -282,11 +304,13 @@ def get_arbitrage_scanner() -> ArbitrageScanner:
 
 def get_pob_slot_snapshot_path(slot: str = "main") -> Path:
     safe = _SAFE_SLOT_RE.sub("_", slot.strip()) or "main"
-    return get_cache_dir() / "pob_slots" / f"{safe}.xml"
+    return get_pob_slots_dir() / f"{safe}.xml"
 
 
 def _slot_hydration_bucket(svc: BuildService) -> set[str]:
-    key = (id(svc.bridge), svc.bridge.state_epoch, str(get_cache_dir()))
+    key = (id(svc.bridge), svc.bridge.state_epoch, str(get_pob_slots_dir()))
+    if key not in _HYDRATED_SLOTS:
+        _HYDRATED_SLOTS.clear()
     return _HYDRATED_SLOTS.setdefault(key, set())
 
 
@@ -423,6 +447,8 @@ def resolve_live_crafting_prices(
     *,
     offline_only: bool = False,
 ) -> tuple[dict[str, float] | None, str]:
+    if get_game_realm() == GameRealm.CN:
+        return None, "offline_reference_0.5.5_not_tencent_prices"
     if offline_only:
         return None, "fallback_reference_0.5.5"
     try:
@@ -447,6 +473,11 @@ def resolve_live_crafting_prices(
 
 
 def format_domain_error(exc: Exception) -> dict[str, Any]:
+    if isinstance(exc, RealmUnavailableError):
+        return {
+            "ok": False, "game_realm": "cn", "error_type": "RealmUnavailableError",
+            "error": str(exc), "hint": exc.hint,
+        }
     if isinstance(exc, RemovedLeverError):
         return {
             "ok": False,
@@ -514,12 +545,14 @@ def _safe_tool_call(fn: Callable[[], dict[str, Any]]) -> dict[str, Any]:
 def collect_engine_status() -> EngineStatus:
     pob2 = get_pob2_paths()
     db_path = get_gamedata_db_path()
+    realm = get_game_realm()
     return EngineStatus(
+        game_realm=realm,
         version=__version__,
         attribution=ATTRIBUTION,
         license=LICENSE_SPDX,
         patch=POE2_PATCH,
-        default_league=DEFAULT_LEAGUE,
+        default_league=None if realm == GameRealm.CN else DEFAULT_LEAGUE,
         cache_dir=str(get_cache_dir()),
         bundled_data_dir=str(BUNDLED_DATA_DIR),
         gamedata_db_ready=db_path.is_file(),
@@ -556,6 +589,7 @@ def execute_craft_odds(
     base_entry = engine.resolve_base(base)
 
     prices, price_source = resolve_live_crafting_prices(league, offline_only=offline_prices)
+    quote_league = None if get_game_realm() == GameRealm.CN else league
 
     if item_text:
         parsed_item = parse_clipboard_item(item_text)
@@ -673,7 +707,7 @@ def execute_craft_odds(
                     **primary,
                     "base_type": base_entry.name,
                     "ilvl": ilvl,
-                    "league": league,
+                    "league": quote_league,
                     "price_source": price_source,
                     "assumed_rarity": state.rarity.value,
                     "evaluations": [e.model_dump(mode="json") for e in evals],
@@ -713,7 +747,7 @@ def execute_craft_odds(
             **dumped,
             "base_type": base_entry.name,
             "ilvl": ilvl,
-            "league": league,
+            "league": quote_league,
             "price_source": price_source,
             "assumed_rarity": state.rarity.value,
             "evaluations": [dumped],
@@ -736,7 +770,7 @@ def execute_craft_odds(
         **primary,
         "base_type": base_entry.name,
         "ilvl": ilvl,
-        "league": league,
+        "league": quote_league,
         "price_source": price_source,
         "assumed_rarity": state.rarity.value,
         "protect_existing_targets": protect_existing_targets,
@@ -786,6 +820,8 @@ def execute_craft_plan(
     )
     out = plan.model_dump(mode="json")
     out["price_source"] = price_source
+    if get_game_realm() == GameRealm.CN:
+        out["league"] = None
     return out
 
 
@@ -804,6 +840,7 @@ def execute_find_upgrades(
     limit: int = 10,
     league: str = DEFAULT_LEAGUE,
 ) -> dict[str, Any]:
+    require_international("Live trade upgrades")
     svc = get_build_service()
     if build_source:
         svc.load_build(build_source, slot=slot)
@@ -845,6 +882,13 @@ def execute_find_upgrades(
 # ---------------------------------------------------------------------------
 # MCP Tools (1:1 parity with SKILL.md)
 # ---------------------------------------------------------------------------
+
+
+@_mcp_tool
+def poe2_init(realm: GameRealm) -> dict[str, Any]:
+    """Save the player's choice of 国服 (cn) or 国际服 (international) for CLI and MCP."""
+    set_game_realm(GameRealm(realm))
+    return {"game_realm": realm}
 
 
 @_mcp_tool
@@ -962,6 +1006,7 @@ def execute_meta_ladder(
     include_economy_signals: bool = True,
     force_refresh: bool = False,
 ) -> dict[str, Any]:
+    require_international("Ladder", CN_IMPORT_HELP)
     report = get_meta_service().get_ladder_meta(
         league=league,
         top_n=top_n,
@@ -1123,7 +1168,7 @@ def poe2_pob_load(
     slot: str = "main",
     level: int | None = None,
 ) -> dict[str, Any]:
-    """Load PoB2 eN... code, pobb.in URL, XML, or GGG .build JSON and return BuildStats."""
+    """Load a PoB code, converted 国服 PoE2DB page, share URL, XML, or GGG .build JSON."""
 
     def _run() -> dict[str, Any]:
         svc = get_build_service()
@@ -1663,6 +1708,25 @@ def execute_pob_import_character(
 ) -> dict[str, Any]:
     from poe2brain.pob.oauth import GggOAuthClient
 
+    if get_game_realm() == GameRealm.CN:
+        from poe2brain.pob.cn import cn_export_name
+
+        if list_only or not character_name:
+            return {"realm": "cn", "instructions": CN_IMPORT_HELP}
+        source = character_name.strip()
+        if "://" in source:
+            if not cn_export_name(source):
+                raise ValueError(CN_IMPORT_HELP)
+        else:
+            try:
+                source = decode_pob2_code_to_xml(source)
+            except ValueError:
+                raise ValueError(CN_IMPORT_HELP) from None
+        svc = get_build_service()
+        stats = svc.load_build(source, slot=slot)
+        save_pob_slot_snapshot(svc, slot)
+        return {"realm": "cn", "slot": slot, "stats": stats.model_dump(mode="json")}
+
     oauth = GggOAuthClient()
     if list_only or not character_name:
         chars = oauth.list_characters(realm=realm)
@@ -1709,7 +1773,7 @@ def poe2_pob_import_character(
     slot: str = "main",
     list_only: bool = False,
 ) -> dict[str, Any]:
-    """List or import official PoE2 characters via GGG OAuth 2.1 PKCE (no POESESSID)."""
+    """Import a converted 国服 character page, PoB Code, or GGG account character."""
     return _safe_tool_call(
         lambda: execute_pob_import_character(
             character_name=character_name,
@@ -2636,13 +2700,15 @@ def _maybe_synthesize_sound_pack(
 
 
 def execute_filter_presets() -> dict[str, Any]:
-    filter_dir = detect_poe2_filter_dir()
+    cn = get_game_realm() == GameRealm.CN
+    filter_dir = None if cn else detect_poe2_filter_dir()
     themes = list_visual_themes()
     return {
         "patch": POE2_PATCH,
-        "default_league": DEFAULT_LEAGUE,
-        "detected_poe2_filter_dir": str(filter_dir),
-        "detected_poe2_filter_dir_exists": filter_dir.is_dir(),
+        "default_league": None if cn else DEFAULT_LEAGUE,
+        "detected_poe2_filter_dir": str(filter_dir) if filter_dir else None,
+        "detected_poe2_filter_dir_exists": bool(filter_dir and filter_dir.is_dir()),
+        **({"game_realm": "cn", "install_hint": CN_FILTER_DIR_HELP} if cn else {}),
         "theme_count": len(themes),
         "visual_themes": [
             {
@@ -2712,6 +2778,8 @@ def execute_filter_generate(
     league: str = DEFAULT_LEAGUE,
     offline: bool = False,
 ) -> dict[str, Any]:
+    cn = get_game_realm() == GameRealm.CN
+    target_dir = resolve_filter_install_dir(install_dir) if install else None
     strict_tier = _resolve_strictness_tier(strictness)
     look_intent = parse_look_intent(look)
     eff_cvd = _normalize_cvd_flag(cvd_safe if cvd_safe is not None else look_intent["cvd_safe"])
@@ -2733,7 +2801,7 @@ def execute_filter_generate(
         out_path=out_path,
         preview_html=preview_html,
         install=install,
-        install_dir=install_dir,
+        install_dir=target_dir,
     )
 
     resolved_out = Path(out_path).expanduser() if out_path is not None else None
@@ -2750,11 +2818,13 @@ def execute_filter_generate(
         theme=resolved_theme,
         sound_pack=sound_pack,
         league=league,
-        use_live_economy=not offline,
+        use_live_economy=not offline and not cn,
         build_context=build_ctx,
         output_path=resolved_out,
     )
 
+    if cn:
+        result.league = None
     if sound_pack is not None:
         result.validation = gen.validator.validate_text(
             result.filter_text,
@@ -2762,7 +2832,6 @@ def execute_filter_generate(
         )
 
     if install:
-        target_dir = Path(install_dir).expanduser() if install_dir is not None else None
         install_filter_bundle(result, target_dir=target_dir, sound_pack=sound_pack)
 
     if preview_html is not None:
@@ -2774,6 +2843,8 @@ def execute_filter_generate(
         )
 
     out = result.model_dump(mode="json")
+    if cn:
+        out.update(game_realm="cn", price_source="offline_reference_0.5.5_not_tencent_prices")
     out["theme"] = {
         "id": resolved_theme.id,
         "name": resolved_theme.name,
@@ -2813,7 +2884,11 @@ def execute_filter_restyle(
     filter_name: str | None = None,
     league: str = DEFAULT_LEAGUE,
     offline: bool = False,
+    base_only: bool = False,
 ) -> dict[str, Any]:
+    cn = get_game_realm() == GameRealm.CN
+    target_dir = resolve_filter_install_dir(install_dir) if install else None
+    base_only = base_only or cn
     raw_src = source.strip()
     if not raw_src:
         raise ValueError("source filter path or NeverSink strictness cannot be empty.")
@@ -2854,7 +2929,13 @@ def execute_filter_restyle(
     eff_cvd = _normalize_cvd_flag(cvd_safe if cvd_safe is not None else look_intent["cvd_safe"])
     eff_warm_night = bool(warm_night_mode or look_intent["warm_night_mode"])
     eff_sound_style = sound_style if sound_style is not None else look_intent["sound_style"]
-    resolved_theme = _resolve_visual_theme(theme, look, cvd_safe=eff_cvd)
+    resolved_theme = _resolve_visual_theme(
+        theme, look, cvd_safe=eff_cvd, default_preset=None if base_only else "forbidden_abyss"
+    )
+    if base_only and not (
+        eff_sound_style or custom_callouts or eff_warm_night or lowpass_hz is not None
+    ):
+        eff_sound_style = "none"
     build_ctx = _resolve_build_filter_context(pob=pob, slot=slot, slots=slots)
     sound_pack = _maybe_synthesize_sound_pack(
         sound_style=eff_sound_style,
@@ -2868,7 +2949,7 @@ def execute_filter_restyle(
         out_path=out_path,
         preview_html=preview_html,
         install=install,
-        install_dir=install_dir,
+        install_dir=target_dir,
     )
 
     resolved_out = Path(out_path).expanduser() if out_path is not None else None
@@ -2885,13 +2966,16 @@ def execute_filter_restyle(
         strictness=inferred_strictness,
         theme=resolved_theme,
         sound_pack=sound_pack,
+        base_only=base_only,
         league=league,
-        use_live_economy=not offline,
+        use_live_economy=not offline and not cn,
         build_context=build_ctx,
         filter_name=eff_name,
         output_path=resolved_out,
     )
 
+    if cn:
+        result.league = None
     if sound_pack is not None:
         result.validation = adapter.validator.validate_text(
             result.filter_text,
@@ -2899,7 +2983,6 @@ def execute_filter_restyle(
         )
 
     if install:
-        target_dir = Path(install_dir).expanduser() if install_dir is not None else None
         install_filter_bundle(result, target_dir=target_dir, sound_pack=sound_pack)
 
     if preview_html is not None:
@@ -2912,6 +2995,8 @@ def execute_filter_restyle(
         )
 
     out = result.model_dump(mode="json")
+    if cn:
+        out.update(game_realm="cn", price_source="source_filter_priorities")
     if resolved_theme is not None and (
         eff_cvd is not None
         or resolved_theme.id == "colorblind_safe"
@@ -3125,7 +3210,7 @@ def poe2_filter_generate(
     league: str = DEFAULT_LEAGUE,
     offline: bool = False,
 ) -> dict[str, Any]:
-    """Compile a validated PoE2 0.5.5 .filter + CVD/custom theme + warm-night/voice soundpack."""
+    """Generate a native filter from scratch on request. Usually recommend poe2_filter_restyle."""
     return _safe_tool_call(
         lambda: execute_filter_generate(
             strictness=strictness,
@@ -3176,11 +3261,17 @@ def poe2_filter_restyle(
     filter_name: str | None = None,
     league: str = DEFAULT_LEAGUE,
     offline: bool = False,
+    base_only: bool = False,
 ) -> dict[str, Any]:
-    """Auto-heal 0.5.5 stale BaseTypes, inject economy/co-op PoB2 overrides, & restyle .filter."""
+    """Recommended for creating filters. Branch from a local .filter or NeverSink 'semi_strict'.
+
+    Start with base_only=True to keep the base's priorities, colors and sounds. Pass a look to
+    customize its style. International economy and PoB2 rules are available with base_only=False.
+    """
     return _safe_tool_call(
         lambda: execute_filter_restyle(
             source=source,
+            base_only=base_only,
             theme=theme,
             look=look,
             cvd_safe=cvd_safe,
@@ -3361,8 +3452,8 @@ def main(argv: list[str] | None = None) -> None:
         choices=("full", "core"),
         default=os.environ.get("POE2BRAIN_MCP_PROFILE", "full").strip().lower() or "full",
         help=(
-            "MCP tool profile: 'full' (all 45 tools) or 'core' "
-            "(17 high-frequency tools for DeepSeek/Qwen/small models)."
+            "MCP tool profile: 'full' (all 46 tools) or 'core' "
+            "(a smaller tool set for DeepSeek/Qwen/small models)."
         ),
     )
     parsed = parser.parse_args(argv)

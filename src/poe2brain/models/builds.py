@@ -261,7 +261,7 @@ class RuneSocketRecommendation(Poe2Model):
 class RuneOptimizationReport(Poe2Model):
     slot_name: str = "main"
     objective: str = "balanced"
-    league: str = ""
+    league: str | None = ""
     total_available_sockets: int = 0
     armour_sockets: int = 0
     weapon_sockets: int = 0

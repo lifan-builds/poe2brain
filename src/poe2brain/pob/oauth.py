@@ -34,6 +34,7 @@ import httpx
 from pydantic import Field
 
 from poe2brain.config import (
+    CN_IMPORT_HELP,
     DEFAULT_GGG_OAUTH_CLIENT_ID,
     GGG_API_BASE_URL,
     GGG_OAUTH_AUTHORIZE_URL,
@@ -41,6 +42,7 @@ from poe2brain.config import (
     GGG_OAUTH_TOKEN_URL,
     USER_AGENT,
     get_cache_dir,
+    require_international,
 )
 from poe2brain.http import Poe2HttpClient
 from poe2brain.models.common import Poe2Model
@@ -232,6 +234,7 @@ class GggOAuthClient:
         open_browser: bool = True,
     ) -> GggAuthStatus:
         """Run interactive browser OAuth 2.1 PKCE flow with ephemeral localhost callback."""
+        require_international("GGG OAuth", CN_IMPORT_HELP)
         code_verifier, code_challenge = _pkce_pair()
         expected_state = secrets.token_hex(16)
         result_box: dict[str, Any] = {}

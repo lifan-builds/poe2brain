@@ -19,7 +19,7 @@
   - Also resolves public PoB2 share links across **`poe.ninja/poe2/pob/<id>`**, **`poe2db.tw/pob/<id>`**, **`maxroll.gg/poe2/pob/<id>`**, and **`pobb.in/<id>`**.
   - **Strict Boundary**: `NinjaBuildsService` refuses any `/api/protected/...` URL (`403` Cloudflare-gated internal endpoint).
 - **Slot Persistence & Performance**:
-  - Passing `--load-pob --slot main` (`load_into_pob=True`) loads the character into `Pob2Bridge` in `~1s` **and** saves `~/.cache/poe2brain/pob_slots/main.xml`, so subsequent `poe2 pob audit --slot main`, `poe2 trade upgrades --slot main`, and `poe2 filter generate --slot main` commands immediately see the imported build.
+  - Passing `--load-pob --slot main` (`load_into_pob=True`) loads the character into `Pob2Bridge` in `~1s` **and** saves `~/.cache/poe2brain/pob_slots/main.xml`, so subsequent `poe2 pob audit --slot main`, `poe2 trade upgrades --slot main`, and `poe2 filter restyle semi_strict --slot main` commands immediately see the imported build.
   - Keep `audit=False` during bulk inspection (`audit_build()` runs multi-pass `OnFrame` sweeps taking `~15–35s` on 12-skill builds); pass `--audit` (`audit=True`) when evaluating real Pinnacle Boss DPS/EHP.
 
 ---
@@ -47,7 +47,18 @@ Every `.filter` generated or restyled by `poe2brain` is verified by `FilterValid
 
 ---
 
-## 3. Visual Themes (`--theme` / `--look`) & Custom Soundpack Studio (`--sound-style`)
+## 3. Creating a filter from an existing base
+
+Start from the player's current PoE2 `.filter` or upstream NeverSink for PoE2. Keep a separate working copy so the original remains available for updates.
+
+```bash
+poe2 filter restyle semi_strict --base-only --out my.filter --json
+poe2 filter restyle my.filter --base-only --look "cyberpunk neon" --out my-neon.filter --json
+```
+
+The base-only workflow keeps the source priorities and skips economy tier injection. Explicit build inputs can add build-specific highlights. A selected CN realm uses this workflow by default. The named NeverSink preset receives compatibility repairs against the current patch. A supplied file is validated before styling. If its localized rules fail validation, keep the original and report the diagnostic. For an international league build-and-economy overlay, omit `--base-only` and start each refresh from the upstream source.
+
+## 4. Visual Themes (`--theme` / `--look`) & Custom Soundpack Studio (`--sound-style`)
 
 1. **6 Strictness Tiers (`--strictness`)**:
    - `soft` -> `regular` -> `semi_strict` (default endgame starter) -> `strict` -> `very_strict` -> `uber_strict`.

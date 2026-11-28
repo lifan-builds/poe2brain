@@ -8,6 +8,7 @@ import shutil
 import sys
 from pathlib import Path
 
+from poe2brain.config import CN_FILTER_DIR_HELP, GameRealm, get_game_realm
 from poe2brain.filters.validator import FilterValidator
 from poe2brain.models.filters import (
     FilterCompileResult,
@@ -90,18 +91,27 @@ def detect_poe2_filter_dir(
     )
 
 
+def resolve_filter_install_dir(target_dir: str | Path | None) -> Path:
+    if target_dir is None and get_game_realm() == GameRealm.CN:
+        raise ValueError(CN_FILTER_DIR_HELP)
+    dest_dir = Path(target_dir or detect_poe2_filter_dir()).expanduser().resolve()
+    if any(part.casefold() == "wegamefilters" for part in dest_dir.parts):
+        raise ValueError("WeGame 会还原 WeGameFilters 中的文件，请选择国服游戏内的过滤器目录。")
+    if dest_dir.name.lower() == "onlinefilters":
+        raise ValueError(
+            f"Refusing to install local filter into '{dest_dir}': "
+            "PoE2 reserves `onlinefilters/` for web-synced filters."
+        )
+    return dest_dir
+
+
 def install_filter_bundle(
     result: FilterCompileResult,
     *,
     target_dir: Path | None = None,
     sound_pack: SoundPackManifest | None = None,
 ) -> Path:
-    dest_dir = (target_dir or detect_poe2_filter_dir()).expanduser().resolve()
-    if dest_dir.name.lower() == "onlinefilters":
-        raise ValueError(
-            f"Refusing to install local filter into '{dest_dir}': "
-            "PoE2 reserves `onlinefilters/` for web-synced filters."
-        )
+    dest_dir = resolve_filter_install_dir(target_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     if sound_pack is not None:
@@ -244,7 +254,7 @@ def render_filter_preview_html(
         cards.append(_render_card(tier_key, item_label, subtitle, style, uri, clip_desc))
 
     strict_txt = result.strictness.value if result else "semi_strict"
-    league_txt = result.league if result else "Forbidden Rites"
+    league_txt = (result.league or "国服") if result else "Forbidden Rites"
     build_banner = ""
     if result and result.build_context:
         bc = result.build_context
@@ -313,6 +323,9 @@ def render_filter_preview_html(
         f"{html.escape(theme.description)} — "
         "Click any ground item nameplate to audition its alert sound."
     )
+
+    if result and result.theme_id in {"neversink_original", "source_original"}:
+        sub_line = "Theme sample. Load your .filter in the game to preview the original styles."
 
     doc = f"""<!doctype html>
 <html lang="en">

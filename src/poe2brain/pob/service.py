@@ -18,6 +18,9 @@ from poe2brain.config import (
     DEFAULT_LEAGUE,
     GGG_TRADE2_BASE_URL,
     GGG_TRADE2_WEB_BASE_URL,
+    GameRealm,
+    get_game_realm,
+    require_international,
 )
 from poe2brain.http import Poe2HttpClient
 from poe2brain.models.builds import (
@@ -3668,6 +3671,7 @@ class BuildService:
         """Rank unallocated Notables for a Megalomaniac Jewel and compile a Trade2 search."""
         from poe2brain.trade.ee2_bundle import get_default_bundle
 
+        require_international("Megalomaniac trade search")
         ranked = self.rank_passive_upgrades(
             slot=slot,
             mode="anoint",
@@ -3895,7 +3899,10 @@ class BuildService:
             "chaos": (0.0 if stats.chaos_immune else round(max(0.0, 60.0 - stats.chaos_resist), 1)),
         }
 
-        # Live economy price helper (never default missing to 0)
+        cn = get_game_realm() == GameRealm.CN
+        if cn and max_budget_exalted is not None:
+            require_international("Rune budget pricing")
+        offline_prices = offline_prices or cn
         price_cache: dict[str, float | None] = {}
         econ = None if offline_prices else self._economy_service
         if not offline_prices and econ is None:
@@ -4170,10 +4177,12 @@ class BuildService:
                 "than defaulting missing prices to 0.0)."
             )
 
+        if cn:
+            notes.append("国服符文价格未接入；推荐基于本地 PoB2 配装。")
         return RuneOptimizationReport(
             slot_name=slot,
             objective=objective,
-            league=league,
+            league=None if cn else league,
             total_available_sockets=armour_socks + weapon_socks,
             armour_sockets=armour_socks,
             weapon_sockets=weapon_socks,

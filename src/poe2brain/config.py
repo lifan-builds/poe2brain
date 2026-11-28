@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[2]
@@ -88,6 +90,56 @@ def get_cache_dir() -> Path:
     if override:
         return Path(override).expanduser().resolve()
     return (Path.home() / ".cache" / "poe2brain").resolve()
+
+
+class GameRealm(StrEnum):
+    INTERNATIONAL = "international"
+    CN = "cn"
+
+
+CN_MARKET_URL = "https://poe.game.qq.com/trade2"
+CN_CONVERTER_URL = "https://poe2db.tw/cn/account"
+CN_IMPORT_HELP = (
+    "在 WeGame《流放之路：降临》数据 → 角色 → 一键分享，复制链接。"
+    f"在 {CN_CONVERTER_URL} 转换后，"
+    "将角色页（/cn/qq_build?name=…）网址或 PoB Code 传给 poe2 pob import-character。"
+)
+CN_FILTER_DIR_HELP = "请用 --install-dir 指定国服客户端设置中打开的过滤器目录。"
+CN_MARKET_HELP = (
+    f"请在国服市集 {CN_MARKET_URL} 查看报价，用 poe2 trade parse 解析复制的装备，"
+    "或用 poe2 pob eval-item 对比装备。"
+)
+
+
+def get_game_realm() -> GameRealm | None:
+    try:
+        return GameRealm((get_cache_dir() / "realm").read_text(encoding="utf-8").strip())
+    except FileNotFoundError:
+        return None
+
+
+def set_game_realm(realm: GameRealm) -> None:
+    root = get_cache_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="w", dir=root, delete=False, encoding="utf-8") as tmp:
+        tmp.write(realm.value + "\n")
+    Path(tmp.name).replace(root / "realm")
+
+
+class RealmUnavailableError(ValueError):
+    def __init__(self, feature: str, hint: str) -> None:
+        super().__init__(f"{feature} currently uses international realm data. 当前选择为国服。")
+        self.hint = hint
+
+
+def require_international(feature: str, hint: str = CN_MARKET_HELP) -> None:
+    if get_game_realm() == GameRealm.CN:
+        raise RealmUnavailableError(feature, hint)
+
+
+def get_pob_slots_dir() -> Path:
+    root = get_cache_dir() / "pob_slots"
+    return root / "cn" if get_game_realm() == GameRealm.CN else root
 
 
 def get_pob2_dir() -> Path:

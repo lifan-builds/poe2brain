@@ -6,6 +6,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 
+from poe2brain.config import GameRealm
+
 
 class Poe2Model(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
@@ -45,7 +47,8 @@ class EngineStatus(Poe2Model):
     attribution: str = "Based on poe2brain by lifan-builds (https://github.com/lifan-builds/poe2brain)"
     license: str = "GPL-3.0-only"
     patch: str
-    default_league: str
+    default_league: str | None
+    game_realm: GameRealm | None = None
     cache_dir: str
     bundled_data_dir: str
     gamedata_db_ready: bool

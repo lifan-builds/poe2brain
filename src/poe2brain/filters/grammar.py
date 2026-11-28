@@ -396,16 +396,19 @@ class ParsedFilter:
     trailing_comments: list[str] = field(default_factory=list)
     syntax_errors: list[tuple[int, str]] = field(default_factory=list)
 
-    def render(self) -> str:
+    def render(self, *, preserve_import_order: bool = False) -> str:
         parts: list[str] = []
         if self.preamble_comments:
             parts.append("\n".join(self.preamble_comments))
+        sections: list[tuple[int, str]] = []
         for imp in self.imports:
             opt = " Optional" if imp.optional else ""
             cmt = f" # {imp.comment}" if imp.comment else ""
-            parts.append(f'Import "{imp.path}"{opt}{cmt}')
-        for blk in self.blocks:
-            parts.append(blk.render())
+            sections.append((imp.line, f'Import "{imp.path}"{opt}{cmt}'))
+        sections.extend((blk.line, blk.render()) for blk in self.blocks)
+        if preserve_import_order:
+            sections.sort(key=lambda section: section[0])
+        parts.extend(section for _, section in sections)
         if self.trailing_comments:
             parts.append("\n".join(self.trailing_comments))
         return "\n\n".join(p for p in parts if p is not None) + "\n"

@@ -464,11 +464,11 @@ _FARMING_LOOPS: tuple[_FarmingLoopSpec, ...] = (
             "to suppress Normal->Magic/Rare upgrades.",
             "Run Area Level 81–82 Irradiated T15/T16 maps with maximum Pack Size to flood "
             "Normal ilvl 82 meta bases & Exceptional (21%+ quality / 3-socket) drops.",
-            "Pair with `poe2 filter generate --strictness strict` so Exceptional and "
-            "ilvl 82 crafting bases highlight cleanly for bulk crafter sales.",
+            "Branch from the strict NeverSink filter and check its Exceptional and "
+            "ilvl 82 crafting-base rules before farming.",
         ),
         recommended_commands=(
-            "poe2 filter generate --slot main --strictness strict --out base_farm.filter",
+            "poe2 filter restyle strict --slot main --out base_farm.filter",
             "poe2 craft profit --budget mid",
         ),
         requires_negative_iir=True,

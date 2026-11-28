@@ -21,7 +21,9 @@ from poe2brain.config import (
     POE2_PATCH,
     REPO_ROOT,
     USER_AGENT,
+    GameRealm,
     get_cache_dir,
+    get_game_realm,
     get_gamedata_db_path,
     get_pob2_paths,
 )
@@ -35,11 +37,10 @@ CN_GITHUB_MIRRORS: tuple[str, ...] = (
     "https://gh-proxy.com/",
 )
 
-# 17 highest-frequency tools covering all 6 pillars (~62% smaller schema for
-# DeepSeek / Qwen / Doubao / open-weights models on Cherry Studio & Trae).
 CORE_MCP_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "poe2_status",
+        "poe2_init",
         "poe2_search_knowledge",
         "poe2_explain_mechanic",
         "poe2_waystone_regex",
@@ -55,6 +56,7 @@ CORE_MCP_TOOL_NAMES: frozenset[str] = frozenset(
         "poe2_craft_plan",
         "poe2_ninja_search",
         "poe2_filter_generate",
+        "poe2_filter_restyle",
         "poe2_filter_validate",
     }
 )
@@ -452,10 +454,12 @@ def run_doctor(
                 }
             )
 
+    realm = get_game_realm()
     return {
+        "game_realm": realm,
         "ok": len(issues) == 0,
         "patch": POE2_PATCH,
-        "default_league": DEFAULT_LEAGUE,
+        "default_league": None if realm == GameRealm.CN else DEFAULT_LEAGUE,
         "platform": platform.platform(),
         "python": sys.version.split()[0],
         "repo_dir": str(root),

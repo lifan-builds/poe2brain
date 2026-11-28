@@ -7,7 +7,7 @@
 [![CI (Windows + macOS)](https://img.shields.io/github/actions/workflow/status/lifan-builds/poe2brain/ci.yml?branch=main&style=flat-square&label=CI%20Windows%20%2B%20macOS)](https://github.com/lifan-builds/poe2brain/actions/workflows/ci.yml)
 [![准确率基准](https://img.shields.io/badge/PoE2Bench%200.5.5-27.3%25%20%E2%86%92%20100%25-22c55e?style=flat-square)](#准确率实测接入-poe2brain-前后对比)
 [![版本](https://img.shields.io/badge/流放之路2-0.5.5%20禁忌秘仪-d4a24c?style=flat-square)](https://github.com/lifan-builds/poe2brain)
-[![工具数](https://img.shields.io/badge/MCP%20%2B%20CLI-45%20个全功能工具-38bdf8?style=flat-square)](#完整工具与命令速查)
+[![工具数](https://img.shields.io/badge/MCP%20%2B%20CLI-46%20个全功能工具-38bdf8?style=flat-square)](#完整工具与命令速查)
 [![平台](https://img.shields.io/badge/支持系统-Windows%20%7C%20macOS%20%7C%20Linux-64748b?style=flat-square)](#windows--macos-3-分钟上手)
 [![免费开源](https://img.shields.io/badge/协议-GPL--3.0--only%20完全免费开源-e11d48?style=flat-square)](LICENSE)
 
@@ -35,7 +35,7 @@
 
 直接拿通用大模型问《流放之路 2》配装、做装或市集捡漏，90% 会翻车：AI 会用流放 1 的老黄历告诉你「75% 格挡上限」「改造石洗词缀」「用工艺台」「用 0.4 就删掉的同质化预兆」，甚至把 PoB 战神勾选的虚高面板当成真实伤害。
 
-**`poe2brain`** 是一套 **完全免费开源、跨平台（Windows 零编译）** 的 PoE2 专属智能引擎：同一套核心同时提供 **命令行 (`poe2`)** 与 **MCP Server (`poe2brain-mcp`，45 个 1:1 工具)**，把本地后台真跑的 **Path of Building 2**、Patch `0.5.5` 离线真值数据库、实时市集按 PoB2 权重找提升、做装期望求解器和防崩过滤器工坊直接交给你的 AI 助手。
+**`poe2brain`** 是一套 **完全免费开源、跨平台（Windows 零编译）** 的 PoE2 专属智能引擎：同一套核心同时提供 **命令行 (`poe2`)** 与 **MCP Server (`poe2brain-mcp`，46 个 1:1 工具)**，把本地后台真跑的 **Path of Building 2**、Patch `0.5.5` 离线真值数据库、实时市集按 PoB2 权重找提升、做装期望求解器和防崩过滤器工坊直接交给你的 AI 助手。
 
 | 玩家 / AI 常见痛点 | 直接问普通 AI / 手工查表 | 用 `poe2brain` (`Patch 0.5.5`) |
 | :--- | :--- | :--- |
@@ -105,7 +105,7 @@ uv run poe2 ninja search --preset sleeper --limit 5
 - **给自己的号体检：** *「导入我本地 PoB2 里最新保存的 BD，跑一次去水审计告诉我最大瓶颈是什么，再在 50 崇高以内按 PoB2 权重搜市集能买到的最大武器提升。」*
 - **四倍仓一键分拣：** *「我把刚才刷图打的一堆装备 `Ctrl+C` 贴给你，按 5 崇高为界帮我分成立即秒卖、半成品值得做、赌鉴定揭秘、直接分解四堆。」*
 - **做装前先算账：** *「我想做一把 82 级法杖要 T1 法伤 + 法术技能等级，帮我算期望成本和 p80 脸黑成本，对比市集直接买划算还是自己做划算。」*
-- **防翻车刷图 + 智能语音过滤器：** *「根据我当前槽位 BD 生成一条 50 字符以内的防翻车异界引路石正则，再帮我生成一套暗黑金色、抓 82 物等/超凡底材、带中文大货语音播报的严格过滤器。」*
+- **防翻车刷图 + 智能语音过滤器：** *「根据我当前槽位 BD 生成一条 50 字符以内的防翻车异界引路石正则，再从 NeverSink 严格版派生一套暗黑金色、抓 82 物等/超凡底材、带中文大货语音播报的严格过滤器。」*
 
 > 更多中文对话模板请见：[docs/zh/AGENT_SETUP.md](docs/zh/AGENT_SETUP.md)
 
@@ -117,7 +117,7 @@ uv run poe2 ninja search --preset sleeper --limit 5
 flowchart TB
     A["玩家 & AI 助手<br/>Claude Code · Cursor · Antigravity · Codex · Cherry Studio"]
     A -->|JSON 命令行| CLI["poe2 (CLI)"]
-    A -->|MCP 协议| MCP["poe2brain-mcp (45 个 1:1 工具)"]
+    A -->|MCP 协议| MCP["poe2brain-mcp (46 个 1:1 工具)"]
     CLI --> CORE["Python 3.12+ 强类型核心引擎"]
     MCP --> CORE
 
@@ -133,7 +133,7 @@ flowchart TB
 
 ## Windows / macOS 3 分钟上手
 
-> **国内直连卡顿 / 没有付费 Claude？** 见 **[国内免代理一键装 &amp; Cherry Studio / Trae + DeepSeek 零 JSON 接入指南](docs/zh/CN_FREE_SETUP.md)**：自带阿里云/南京大学镜像脚本 `scripts/install_cn.ps1`、`poe2 setup-mcp --profile core`（精简 17 工具适配国产模型）、`poe2 doctor` 自检、`poe2 update --cn`（1.0 一键更新）与 `poe2 uninstall` 一键卸载。
+> **国内直连卡顿 / 没有付费 Claude？** 见 **[国内免代理一键装 &amp; Cherry Studio / Trae + DeepSeek 零 JSON 接入指南](docs/zh/CN_FREE_SETUP.md)**：自带阿里云/南京大学镜像脚本 `scripts/install_cn.ps1`、`poe2 setup-mcp --profile core`（精简 19 工具适配国产模型）、`poe2 doctor` 自检、`poe2 update --cn`（1.0 一键更新）与 `poe2 uninstall` 一键卸载。
 >
 > **不会命令行？最省心的方法（推荐）：** 直接把下面这句话发给你的 AI 编程/桌面客户端（**Claude Code / Cursor / Codex / Antigravity / Trae**），让 AI 全自动帮你装好：
 >
@@ -166,6 +166,7 @@ uv sync
 # 初始化无头 PoB2 引擎
 # • Windows：无需安装 Visual Studio / C 编译器！自动复用本地 PoB2 或拉取 MIT x64 lua51.dll
 # • macOS / Linux：自动编译 LuaJIT 2.1 + luautf8
+uv run poe2 init  # 选择 cn（国服）或 international（国际服）
 uv run poe2 bootstrap pob2
 
 # 检查一切就绪
@@ -179,7 +180,8 @@ uv run poe2 version --json
   uv run poe2 pob import-local --list
   uv run poe2 pob import-local --slot main
   ```
-- **方式 B：官方 GGG OAuth 2.1 PKCE 登录（与 PoB2 相同的官方授权流程）**
+- **国服角色：** 在 WeGame 一键分享角色后，将分享链接交给 PoE2DB 转换。用 `uv run poe2 pob import-character "转换后的角色页网址" --slot main` 导入。[国服导入步骤](docs/zh/CN_REALM.md)
+- **方式 B（国际服）：官方 GGG OAuth 2.1 PKCE 登录（与 PoB2 相同的官方授权流程）**
   ```bash
   uv run poe2 auth login
   uv run poe2 pob import-character --list
@@ -241,10 +243,11 @@ uv run poe2 trade upgrades --equip-slot "Weapon 1" --max-exalted 50 --slot main
 uv run poe2 econ arbitrage --budget 5d --gold 50000
 uv run poe2 craft profit --budget mid
 
-# 6. 生成 <=50 字符防翻车引路石正则 & 绑定 PoB2 + 中文语音播报的 0.5.5 严格过滤器
+# 6. 生成引路石正则，从 NeverSink 的半严格版派生个人过滤器
 uv run poe2 wiki regex --slot main
-uv run poe2 filter generate --slot main --strictness strict \
-  --look "暗黑金色 中文语音播报" --out my_build.filter --install
+uv run poe2 filter restyle semi_strict --base-only --out my_build.filter
+# 已有过滤器可传本地 .filter 路径。以下示例在副本上调整配色
+uv run poe2 filter restyle my_build.filter --base-only --look "暗黑金色" --out my_gold.filter
 ```
 
 ---
@@ -252,10 +255,11 @@ uv run poe2 filter generate --slot main --strictness strict \
 ## 完整工具与命令速查
 
 <details>
-<summary><strong>点击展开：全部 45 个 MCP 工具与 CLI 命令一览</strong></summary>
+<summary><strong>点击展开：全部 46 个 MCP 工具与 CLI 命令一览</strong></summary>
 
 | 模块 | 代表 MCP 工具 | 对应 CLI 命令 | 核心用途 |
 | :--- | :--- | :--- | :--- |
+| **选择区服** | `poe2_init` | `poe2 init cn` 或 `poe2 init international` | 首次交互时选择，后续可切换。CLI 与 MCP 共用设置，角色槽按区服保存。 |
 | **状态** | `poe2_status` | `poe2 version --json` | 检查补丁 (`0.5.5`)、数据库与无头 PoB2 就绪状态 |
 | **知识库 (9)** | `poe2_search_knowledge`, `poe2_explain_mechanic`, `poe2_inspect_gem/base/unique/augment/ascendancy`, `poe2_meta_ladder`, `poe2_waystone_regex` | `poe2 wiki search/mechanic/gem/base/unique/augment/ascendancy/meta/regex` | 中英文真值检索、23 升华、全服 Meta、50 字符防翻车引路石/碑牌正则 |
 | **无头 PoB2 (15)** | `poe2_pob_load/stats/audit/compare/hc_audit/eval_item/stat_weights/suggest_nodes/optimize_runes/calc_breakdown/supports/radius_jewels/what_if/import_local/import_character` | `poe2 pob load/stats/audit/compare/hc-audit/eval-item/weights/nodes/runes/calc-breakdown/supports/radius-jewels/what-if/import-local/import-character` | 多槽位 PoB2 计算、去水体检与瓶颈/IIR 定位、HC 猝死审计、词缀溯源、符文/辅助/范围珠宝排榜、无损假设沙盒 |
@@ -263,7 +267,7 @@ uv run poe2 filter generate --slot main --strictness strict \
 | **市集估价 (4)** | `poe2_parse_item`, `poe2_price_check`, `poe2_triage_dump`, `poe2_find_upgrades` | `poe2 trade parse/check/triage/upgrades` | 中英文 `Ctrl+C` 解析、实时估价与异常压价检测、四倍仓分拣、PoB2 真实提升捡漏 |
 | **做装求解 (3)** | `poe2_craft_odds`, `poe2_craft_plan`, `poe2_scan_craft_profit` | `poe2 craft odds/plan/profit` | 精确条件词池概率、防砸词保护、期望与 p80 脸黑成本、高利润低竞争做装榜 |
 | **poe.ninja (3)** | `poe2_ninja_snapshots`, `poe2_ninja_search`, `poe2_ninja_character` | `poe2 ninja snapshots/search/character` | 全服快照、`--preset` 黑马/开荒/速刷检索、`!反向过滤`、时光机低预算过渡点探测 |
-| **过滤器工坊 (5)** | `poe2_filter_presets`, `poe2_filter_generate`, `poe2_filter_restyle`, `poe2_filter_validate`, `poe2_filter_heal` | `poe2 filter presets/generate/restyle/validate/heal` | 实时物价分层、PoB2/82物等/超凡底材、中英文语音播报、NeverSink 自动修复、7 类报错校验（含可选色盲/夜间模式） |
+| **过滤器工坊 (5)** | `poe2_filter_presets`, `poe2_filter_generate`, `poe2_filter_restyle`, `poe2_filter_validate`, `poe2_filter_heal` | `poe2 filter presets/restyle/generate/validate/heal` | 实时物价分层、PoB2/82物等/超凡底材、中英文语音播报、NeverSink 自动修复、7 类报错校验（含可选色盲/夜间模式） |
 
 </details>
 
@@ -271,13 +275,15 @@ uv run poe2 filter generate --slot main --strictness strict \
 
 ## 国服（腾讯服）vs 国际服 & 1.0 更新计划
 
+[国服角色导入与过滤器使用指南](docs/zh/CN_REALM.md)涵盖 WeGame 一键分享转 PoB Code、在国服客户端加载过滤器副本，以及国服物价的数据来源。
+
 | 功能模块 | 国际服 | 国服（腾讯服） | 说明 |
 | :--- | :---: | :---: | :--- |
 | **本地 PoB2 算伤 / 去水审计 / 切武器检查 / 符文选配** | ✅ | ✅ | 纯本地离线计算，直接读电脑里的 PoB2 存档 |
 | **0.5.5 中英文机制真值库 & 引路石/圣物/碑牌正则** | ✅ | ✅ | 内置中文检索，≤50 字符搜索正则直接粘进仓库 |
 | **国服中文剪贴板解析（含带空格 `稀 有 度:`）** | ✅ | ✅ | 支持直接 `Ctrl+C` 复制国服装备做解析与词缀评估 |
-| **0.5.5 智能过滤器、语音播报 & 老过滤器修复** | ✅ | ✅ | 本地生成/校验 `.filter`（抓 82 物等/超凡底材），进游戏零报错 |
-| **精确做装词池概率 & 防砸词规划 (`craft odds/plan`)** | ✅ | ✅ | 离线概率与步骤计算；自定义通货汇率即可算国服成本 |
+| **0.5.5 物品过滤器** | ✅ | 本地文件 | 以现用过滤器或 NeverSink 为底稿，另存并校验；在国服客户端的过滤器目录选择副本，检查加载结果与音效 |
+| **精确做装词池概率 & 防砸词规划 (`craft odds/plan`)** | ✅ | ✅ | 离线计算概率与步骤。国服成本显示版本参考价，实际价格由玩家在国服市集核对 |
 | **实时市集按 PoB2 搜提升 & `poe.ninja` 榜单** | ✅ | ⏳ 评估中 | 目前接入国际服公开只读接口；国服实时物价后续视零 Cookie 合规接口可行性持续跟进 |
 
 - **1.0 正式版跟进计划：** 离线数据库构建管线与无头 PoB2 引擎均为自动化更新结构；1.0 解包数据与 PoB2 天赋树发布后会第一时间同步升级。

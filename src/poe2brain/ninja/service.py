@@ -58,6 +58,7 @@ from poe2brain.ninja.xml_inspector import (
     inspect_pob2_xml_or_code,
     is_non_primary_skill,
 )
+from poe2brain.pob.cn import cn_export_name, cn_export_url, read_cn_export_code
 
 if TYPE_CHECKING:
     from poe2brain.pob.service import BuildService
@@ -2028,6 +2029,7 @@ class NinjaBuildsService:
             if tm_vals and tm_vals[0].strip():
                 resolved_tm = tm_vals[0].strip()
 
+        cn_name = cn_export_name(raw_input) if parsed_url else None
         m_char = _NINJA_CHAR_URL_RE.match(clean_url_no_qs)
         m_prof = _NINJA_PROFILE_URL_RE.match(clean_url_no_qs) if not m_char else None
         m_ninja_share = _NINJA_POB_SHARE_RE.match(clean_url_no_qs)
@@ -2145,6 +2147,14 @@ class NinjaBuildsService:
             pob_code = self._cached_get_text(
                 resolved_url, pace_on_miss=True, force_refresh=force_refresh
             )
+        elif cn_name:
+            resolved_char = cn_name
+            resolved_url = cn_export_url(cn_name)
+            source_kind = "poe2db_pob"
+            page = self._cached_get_text(
+                resolved_url, pace_on_miss=False, force_refresh=force_refresh
+            )
+            pob_code = read_cn_export_code(page)
         elif m_poe2db:
             paste_id = m_poe2db.group(1)
             resolved_url = f"https://poe2db.tw/pob/{paste_id}/raw"

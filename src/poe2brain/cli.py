@@ -12,7 +12,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from poe2brain.config import DEFAULT_LEAGUE
+from poe2brain.config import DEFAULT_LEAGUE, GameRealm, get_game_realm
 from poe2brain.mcp_server import (
     close_pob_services,
     collect_engine_status,
@@ -54,6 +54,7 @@ from poe2brain.mcp_server import (
     normalize_item_text_for_pob2,
     normalize_pob_objective,
     parse_config_kv_pairs,
+    poe2_init,
     run_bootstrap_script,
     run_sync_gamedata,
     run_with_service_cleanup,
@@ -64,7 +65,7 @@ from poe2brain.trade import parse_clipboard_item, parsed_item_to_pob2_text
 app = typer.Typer(
     name="poe2",
     help="poe2brain — Path of Exile 2 (0.5.5 / Forbidden Rites) intelligence CLI.",
-    no_args_is_help=True,
+    invoke_without_command=True,
 )
 wiki_app = typer.Typer(
     help="Pillar 1: PoE2 0.5.5 game knowledge, mechanics, gems, bases, uniques, augments.",
@@ -90,7 +91,7 @@ ninja_app = typer.Typer(
     no_args_is_help=True,
 )
 filter_app = typer.Typer(
-    help="Pillar 6: PoE2 0.5.5 loot filter compiler, theme composer, custom soundpacks, & healing.",
+    help="Start with 'restyle semi_strict --base-only' for a NeverSink-based filter.",
     no_args_is_help=True,
 )
 auth_app = typer.Typer(
@@ -133,6 +134,8 @@ def _run_cli(
 ) -> None:
     try:
         try:
+            if not json_output:
+                _choose_first_realm()
             result = compute_fn()
         except typer.Exit:
             raise
@@ -186,6 +189,38 @@ def _read_item_input(
     raise ValueError('Provide item text via --text "<ctrl_c>" or --file <path>.')
 
 
+def _prompt_realm() -> GameRealm:
+    return typer.prompt(
+        "选择游戏服务器 / Choose your game realm [cn = 国服, international = 国际服]",
+        type=GameRealm,
+        err=True,
+    )
+
+
+def _choose_first_realm() -> None:
+    if sys.stdin.isatty() and sys.stderr.isatty() and get_game_realm() is None:
+        poe2_init(_prompt_realm())
+
+
+@app.command("init")
+def init_cmd(
+    realm: Annotated[
+        GameRealm | None, typer.Argument(help="Game realm: cn (国服) or international (国际服).")
+    ] = None,
+    json_output: JsonOpt = False,
+) -> None:
+    """Choose or switch the game realm shared by the CLI and MCP."""
+    if realm is None:
+        if not sys.stdin.isatty() or json_output:
+            raise typer.BadParameter("Specify cn (国服) or international (国际服).")
+        realm = _prompt_realm()
+    result = poe2_init(realm)
+    if json_output:
+        _emit_json(result)
+    else:
+        typer.echo(f"Game realm / 游戏服务器: {realm.value}")
+
+
 def _version_flag_callback(value: bool) -> None:
     if value:
         from poe2brain import ATTRIBUTION, LICENSE_SUMMARY, __version__
@@ -198,6 +233,7 @@ def _version_flag_callback(value: bool) -> None:
 
 @app.callback()
 def _root_callback(
+    ctx: typer.Context,
     version: Annotated[
         bool,
         typer.Option(
@@ -210,6 +246,9 @@ def _root_callback(
     ] = False,
 ) -> None:
     """Path of Exile 2 intelligence engine for AI agents and power users."""
+    if ctx.invoked_subcommand is None:
+        _choose_first_realm()
+        typer.echo(ctx.get_help())
 
 
 @app.command("version")
@@ -222,8 +261,11 @@ def version_cmd(json_output: JsonOpt = False) -> None:
         db_label = "ready" if status.gamedata_db_ready else "missing (run poe2 sync gamedata)"
         console.print(
             f"[bold cyan]poe2brain[/bold cyan] v{status.version} "
-            f"(PoE2 [bold]{status.patch}[/bold] | League: [bold]{status.default_league}[/bold])"
+            f"(PoE2 [bold]{status.patch}[/bold])"
         )
+        console.print(f"  Game realm   : {status.game_realm or 'unset (poe2 init)'}")
+        if status.default_league:
+            console.print(f"  Intl. league : {status.default_league}")
         console.print(f"  {status.attribution}")
         console.print(f"  License      : {status.license} (see ATTRIBUTION.md)")
         console.print(f"  PoB2 runtime : {pob_label}")
@@ -1678,7 +1720,7 @@ def pob_import_local_cmd(
 def pob_import_character_cmd(
     character_name: Annotated[
         str | None,
-        typer.Argument(help="PoE2 character name to import (omit to list account characters)."),
+        typer.Argument(help="GGG character name, or 国服 PoE2DB character URL / PoB Code."),
     ] = None,
     realm: Annotated[str, typer.Option("--realm", help="GGG realm (default: poe2).")] = "poe2",
     slot: Annotated[str, typer.Option("--slot", help="Target PoB2 build slot.")] = "main",
@@ -1688,7 +1730,7 @@ def pob_import_character_cmd(
     ] = False,
     json_output: JsonOpt = False,
 ) -> None:
-    """List or import official PoE2 characters via GGG OAuth 2.1 PKCE (run 'poe2 auth login')."""
+    """Import a 国服 PoE2DB export or an international GGG account character."""
 
     def _compute() -> dict[str, Any]:
         return execute_pob_import_character(
@@ -1699,6 +1741,9 @@ def pob_import_character_cmd(
         )
 
     def _render(data: dict[str, Any]) -> None:
+        if "instructions" in data:
+            typer.echo(data["instructions"])
+            return
         if "characters" in data:
             table = Table(title=f"GGG Account Characters ({data['realm']})")
             table.add_column("Name", style="bold cyan")
@@ -1711,7 +1756,7 @@ def pob_import_character_cmd(
             return
         st = data["stats"]
         console.print(
-            f"[bold green]Imported GGG character[/bold green] {data['character_name']} -> "
+            f"[bold green]Imported character[/bold green] ({data['realm']}) -> "
             f"[{data['slot']}] ({st.get('ascendancy_name') or st.get('class_name')} "
             f"Lv{st.get('level')}, DPS={st.get('effective_dps', 0):,.1f}, "
             f"EHP={st.get('total_ehp', 0):,.1f})"
@@ -3316,6 +3361,8 @@ def _render_filter_compile_summary(data: dict[str, Any], label: str) -> None:
         f"({val['total_blocks']} blocks, {val['error_count']} errors, "
         f"{val['warning_count']} warnings)"
     )
+    if data.get("game_realm") == "cn":
+        console.print(f"  国服过滤器分级来源: {data['price_source']}")
     if data.get("healed_basetypes"):
         console.print(f"  Healed    : {', '.join(data['healed_basetypes'])}")
     if data.get("filter_path"):
@@ -3335,7 +3382,7 @@ def filter_presets_cmd(json_output: JsonOpt = False) -> None:
     def _render(data: dict[str, Any]) -> None:
         console.print(
             f"[bold cyan]PoE2 {data['patch']} Filter Studio Presets[/bold cyan] "
-            f"(PoE2 folder: {data['detected_poe2_filter_dir']})"
+            f"{data.get('install_hint') or data['detected_poe2_filter_dir']}"
         )
         t_table = Table(title=f"Visual Themes ({data['theme_count']})")
         t_table.add_column("ID", style="cyan")
@@ -3469,7 +3516,7 @@ def filter_generate_cmd(
     ] = False,
     json_output: JsonOpt = False,
 ) -> None:
-    """Compile a validated PoE2 0.5.5 .filter, CVD/custom look, .wav/.mp3 soundpack, & preview."""
+    """Generate a native filter from scratch. For a new filter, start with restyle."""
 
     def _compute() -> dict[str, Any]:
         return execute_filter_generate(
@@ -3515,7 +3562,7 @@ def filter_restyle_cmd(
         str | None,
         typer.Option(
             "--theme",
-            help="Visual theme preset ID, or 'none' (defaults to forbidden_abyss unless --look).",
+            help="Visual theme preset. --base-only keeps the original look by default.",
         ),
     ] = None,
     look: Annotated[
@@ -3598,12 +3645,20 @@ def filter_restyle_cmd(
         bool, typer.Option("--offline", help="Use offline Patch 0.5.5 economy baselines.")
     ] = False,
     json_output: JsonOpt = False,
+    base_only: Annotated[
+        bool,
+        typer.Option(
+            "--base-only",
+            help="Keep the base's priorities and appearance. Apply only requested style changes.",
+        ),
+    ] = False,
 ) -> None:
-    """Auto-heal 0.5.5 stale BaseTypes, inject economy/co-op PoB2 overrides, & restyle a .filter."""
+    """Branch from NeverSink or a local .filter. Start with restyle semi_strict --base-only."""
 
     def _compute() -> dict[str, Any]:
         return execute_filter_restyle(
             source=source,
+            base_only=base_only,
             theme=theme,
             look=look,
             cvd_safe=cvd_safe,
@@ -3775,6 +3830,7 @@ def doctor_cmd(
             "[bold green]OK[/bold green]" if d["ok"] else "[bold yellow]ISSUES FOUND[/bold yellow]"
         )
         console.print(f"[bold cyan]poe2brain doctor[/bold cyan] — {badge} (PoE2 {d['patch']})")
+        console.print(f"  Game realm   : {d['game_realm'] or 'unset (poe2 init)'}")
         console.print(f"  Repo dir     : {d['repo_dir']}")
         console.print(f"  uv path      : {d['uv_path'] or '[red]missing[/red]'}")
         db_ok = "[green]ready[/green]" if d["gamedata_db_ready"] else "[red]missing[/red]"
@@ -3814,7 +3870,7 @@ def setup_mcp_cmd(
         str,
         typer.Option(
             "--profile",
-            help="MCP profile: 'full' (45 tools) or 'core' (17 tools, great for DeepSeek/Qwen).",
+            help="MCP profile: 'full' (46 tools) or 'core' (smaller set for DeepSeek/Qwen).",
         ),
     ] = "full",
     copy: Annotated[

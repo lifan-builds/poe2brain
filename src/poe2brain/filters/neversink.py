@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from poe2brain.config import DEFAULT_LEAGUE, POE2_PATCH
+from poe2brain.config import BUNDLED_DATA_DIR, DEFAULT_LEAGUE, POE2_PATCH
 from poe2brain.filters.generator import FilterGenerator
 from poe2brain.filters.grammar import (
     NUMERIC_OPERATORS,
@@ -159,6 +159,8 @@ def _apply_style_to_neversink_block(
     *,
     sound_pack: SoundPackManifest | None,
     require_custom_sounds: bool,
+    change_visuals: bool,
+    change_sounds: bool,
 ) -> None:
     if blk.visibility != "Show":
         for st in blk.statements:
@@ -172,62 +174,48 @@ def _apply_style_to_neversink_block(
     # Preserve partial `Continue` decorator layers without clobbering background/sound
     if has_continue and "SetBackgroundColor" not in existing_actions:
         for st in blk.statements:
-            if st.keyword == "SetFontSize":
+            if change_visuals and st.keyword == "SetFontSize":
                 st.values = [str(style.font_size)]
         return
 
-    _set_or_append_action(blk.statements, blk.line, "SetFontSize", [str(style.font_size)])
-    _set_or_append_action(
-        blk.statements,
-        blk.line,
-        "SetTextColor",
-        style.text_color.to_filter_tokens().split(),
-    )
-    _set_or_append_action(
-        blk.statements,
-        blk.line,
-        "SetBorderColor",
-        style.border_color.to_filter_tokens().split(),
-    )
-    _set_or_append_action(
-        blk.statements,
-        blk.line,
-        "SetBackgroundColor",
-        style.background_color.to_filter_tokens().split(),
-    )
-
-    # Remove prior sound/beam/icon actions so the new theme + soundpack apply cleanly
-    blk.statements = [
-        st
-        for st in blk.statements
-        if st.keyword
-        not in (
+    if change_sounds:
+        sound_actions = {
             "PlayAlertSound",
             "PlayAlertSoundPositional",
             "CustomAlertSound",
             "CustomAlertSoundOptional",
-            "PlayEffect",
-            "MinimapIcon",
-        )
-    ]
+        }
+        blk.statements = [st for st in blk.statements if st.keyword not in sound_actions]
+        clip = sound_pack.clips.get(style.tier.value) if sound_pack else None
+        if style.builtin_sound_id is not None and not (clip and require_custom_sounds):
+            _set_or_append_action(
+                blk.statements,
+                blk.line,
+                "PlayAlertSound",
+                [str(style.builtin_sound_id), str(style.sound_volume)],
+            )
+        if clip is not None:
+            kw = "CustomAlertSound" if require_custom_sounds else "CustomAlertSoundOptional"
+            _set_or_append_action(
+                blk.statements,
+                blk.line,
+                kw,
+                [clip.relative_filter_path, str(style.sound_volume)],
+                quoted_flags=[True, False],
+            )
 
-    clip = sound_pack.clips.get(style.tier.value) if sound_pack else None
-    if style.builtin_sound_id is not None and not (clip and require_custom_sounds):
-        _set_or_append_action(
-            blk.statements,
-            blk.line,
-            "PlayAlertSound",
-            [str(style.builtin_sound_id), str(style.sound_volume)],
-        )
-    if clip is not None:
-        kw = "CustomAlertSound" if require_custom_sounds else "CustomAlertSoundOptional"
-        _set_or_append_action(
-            blk.statements,
-            blk.line,
-            kw,
-            [clip.relative_filter_path, str(style.sound_volume)],
-            quoted_flags=[True, False],
-        )
+    if not change_visuals:
+        return
+    _set_or_append_action(blk.statements, blk.line, "SetFontSize", [str(style.font_size)])
+    for key, color in (
+        ("SetTextColor", style.text_color),
+        ("SetBorderColor", style.border_color),
+        ("SetBackgroundColor", style.background_color),
+    ):
+        _set_or_append_action(blk.statements, blk.line, key, color.to_filter_tokens().split())
+    blk.statements = [
+        st for st in blk.statements if st.keyword not in ("PlayEffect", "MinimapIcon")
+    ]
     if style.beam is not None:
         beam_vals = [style.beam.color, "Temp"] if style.beam.temp else [style.beam.color]
         _set_or_append_action(blk.statements, blk.line, "PlayEffect", beam_vals)
@@ -890,12 +878,13 @@ class NeverSinkAdapter:
         *,
         source_filter_path: Path | None = None,
         strictness: StrictnessTier | str = StrictnessTier.SEMI_STRICT,
-        theme: VisualThemeSpec | str | None = "forbidden_abyss",
+        theme: VisualThemeSpec | str | None = "default",
         style_prompt: str | None = None,
         theme_overrides: Mapping[str, Mapping[str, Any]] | None = None,
         sound_pack: SoundPackManifest | None = None,
         require_custom_sounds: bool = False,
         inject_055_overrides: bool = True,
+        base_only: bool = False,
         league: str = DEFAULT_LEAGUE,
         use_live_economy: bool = False,
         pob_code: str | None = None,
@@ -911,7 +900,7 @@ class NeverSinkAdapter:
         if source_filter_text is not None:
             raw_text = source_filter_text
         elif source_filter_path is not None:
-            raw_text = source_filter_path.read_text(encoding="utf-8")
+            raw_text = source_filter_path.read_text(encoding="utf-8-sig")
         else:
             raw_text = self.fetch_neversink_text(strict_tier)
 
@@ -922,6 +911,8 @@ class NeverSinkAdapter:
             resolved_theme = compose_theme(
                 style_prompt, base_preset=base_p, overrides=theme_overrides
             )
+        elif theme == "default":
+            resolved_theme = None if base_only else get_visual_theme("forbidden_abyss")
         elif isinstance(theme, str):
             resolved_theme = get_visual_theme(theme)
         else:
@@ -936,28 +927,40 @@ class NeverSinkAdapter:
             pob_slots=pob_slots,
         )
 
-        syntax_clean = _repair_raw_syntax_lines(raw_text, [])
+        supplied_base = source_filter_text is not None or source_filter_path is not None
+        preserve_rules = base_only and supplied_base
+        syntax_clean = raw_text if preserve_rules else _repair_raw_syntax_lines(raw_text, [])
         parsed = parse_filter_text(syntax_clean)
-        healed_items = self.heal_parsed_filter(parsed)
+        if preserve_rules:
+            source_dir = source_filter_path.parent if source_filter_path is not None else None
+            source_report = self.validator.validate_parsed(parsed, filter_dir=source_dir)
+            if not source_report.valid:
+                error = next(d for d in source_report.diagnostics if d.severity == "error")
+                raise ValueError(f"Base filter line {error.line}: {error.message}")
+        healed_items = [] if preserve_rules else self.heal_parsed_filter(parsed)
 
-        if resolved_theme is not None:
+        if resolved_theme is not None or (base_only and sound_pack is not None):
+            style_theme = resolved_theme or get_visual_theme("forbidden_abyss")
             for blk in parsed.blocks:
                 sem_tier = map_neversink_meta_to_semantic_tier(blk.meta_type, blk.meta_tier)
-                tier_style = resolved_theme.tiers.get(sem_tier, resolved_theme.tiers["c"])
+                tier_style = style_theme.tiers.get(sem_tier, style_theme.tiers["c"])
                 _apply_style_to_neversink_block(
                     blk,
                     tier_style,
                     sound_pack=sound_pack,
                     require_custom_sounds=require_custom_sounds,
+                    change_visuals=resolved_theme is not None,
+                    change_sounds=not base_only or sound_pack is not None,
                 )
 
         injected_count = 0
-        if inject_055_overrides:
+        if inject_055_overrides and (not base_only or resolved_build_ctx is not None):
             active_theme = resolved_theme or get_visual_theme("forbidden_abyss")
-            prices_ex, _ = self.generator.collect_market_prices(
-                league=league,
-                use_live_economy=use_live_economy,
-            )
+            prices_ex = None
+            if not base_only:
+                prices_ex, _ = self.generator.collect_market_prices(
+                    league=league, use_live_economy=use_live_economy,
+                )
             ov_text_blocks = self.generator.build_poe2_override_blocks(
                 active_theme,
                 strictness=strict_tier,
@@ -965,6 +968,7 @@ class NeverSinkAdapter:
                 sound_pack=sound_pack,
                 require_custom_sounds=require_custom_sounds,
                 prices_ex=prices_ex,
+                include_economy=not base_only,
             )
             ov_parsed = parse_filter_text("\n\n".join(ov_text_blocks))
             injected_count = len(ov_parsed.blocks)
@@ -972,15 +976,23 @@ class NeverSinkAdapter:
             for idx_b, b in enumerate(parsed.blocks):
                 b.block_index = idx_b
 
-        attribution = [
-            f"# Adapted & healed for PoE2 Patch {POE2_PATCH} by poe2brain (GPL-3.0-only).",
-            (
+        attribution = []
+        notice = f"# Adapted for PoE2 Patch {POE2_PATCH} by poe2brain (GPL-3.0-only)."
+        if notice not in raw_text.splitlines():
+            attribution.append(notice)
+        if not supplied_base:
+            attribution.append(
                 "# Base filter structure courtesy of NeverSink "
                 "(https://github.com/NeverSinkDev/NeverSink-Filter-for-PoE2, MIT License)."
-            ),
-        ]
+            )
+            license_text = (BUNDLED_DATA_DIR / "filter" / "LICENSE.NeverSink").read_text(
+                encoding="utf-8"
+            )
+            attribution.extend(f"# {line}".rstrip() for line in license_text.splitlines())
         parsed.preamble_comments = attribution + parsed.preamble_comments
-        compiled_text = parsed.render()
+        compiled_text = parsed.render(preserve_import_order=base_only)
+        if preserve_rules and not injected_count and resolved_theme is None and sound_pack is None:
+            compiled_text = raw_text
 
         out_dir: Path | None = None
         written_path_str: str | None = None
@@ -1001,7 +1013,9 @@ class NeverSinkAdapter:
             patch=POE2_PATCH,
             league=league,
             strictness=strict_tier,
-            theme_id=resolved_theme.id if resolved_theme else "neversink_original",
+            theme_id=resolved_theme.id
+            if resolved_theme
+            else ("source_original" if supplied_base and base_only else "neversink_original"),
             sound_pack_id=sound_pack.pack_id if sound_pack else None,
             filter_text=compiled_text,
             filter_path=written_path_str,

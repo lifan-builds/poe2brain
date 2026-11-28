@@ -37,7 +37,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://cn.poe2brain.clifan.com/insta
 
 ## 二、国产免费客户端「零 JSON 接入」（两条零成本路线）
 
-国产模型或免费额度（**DeepSeek-V3/R1、豆包、通义千问 Qwen、硅基流动免费额度**）上下文窗口比旗舰模型紧，建议接入时加上 **`--profile core`** —— 只暴露最常用的 **17 个核心工具**（覆盖机制查询、PoB2 去水审计/换辅助/配符文、引路石正则、市集查价/找提升/四倍仓分拣、做装算账、黑马 BD、过滤器生成与校验），减少约 62% 工具 Schema 占用，调用又准又省钱。
+国产模型或免费额度（**DeepSeek-V3/R1、豆包、通义千问 Qwen、硅基流动免费额度**）上下文窗口比旗舰模型紧，建议接入时加上 **`--profile core`** —— 只暴露最常用的 **19 个核心工具**（覆盖机制查询、PoB2 去水审计/换辅助/配符文、引路石正则、市集查价/找提升/四倍仓分拣、做装算账、黑马 BD、从现有过滤器创建分支及校验），减少工具列表占用的上下文。
 
 ### 路线 A：Cherry Studio + DeepSeek / 硅基流动免费额度（最像微信/豆包聊天）
 
@@ -60,7 +60,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://cn.poe2brain.clifan.com/insta
 ### 其他客户端一键写入（Cursor / Claude Code / Codex）
 
 ```powershell
-# Cursor（推荐旗舰模型用全量 45 工具，省略 --profile 即可）
+# Cursor（推荐旗舰模型用全量 46 工具，省略 --profile 即可）
 uv run poe2 setup-mcp --client cursor
 
 # Claude Code / Codex

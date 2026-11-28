@@ -267,7 +267,7 @@ class FilterHealReport(Poe2Model):
 class FilterCompileResult(Poe2Model):
     filter_name: str
     patch: str = POE2_PATCH
-    league: str = DEFAULT_LEAGUE
+    league: str | None = DEFAULT_LEAGUE
     strictness: StrictnessTier
     theme_id: str
     sound_pack_id: str | None = None

@@ -116,22 +116,21 @@ uv run poe2 wiki regex --slot main
 
 ---
 
-## 工作流 6：一句大白话生成 0.5.5 语音过滤器 & 修复 NeverSink / 老过滤器
+## 工作流 6　从现有过滤器创建自己的版本
+
+优先选自己已经在用的 PoE2 过滤器。第一次使用可以从 NeverSink 的半严格版开始。`--base-only` 沿用底版的显示优先级。省略样式参数会保留原有配色和声音。这条路径无需查询市集价格。
 
 ```bash
-# 1. 按当前 PoB2 构筑 + 0.5.5 实时物价生成严格过滤器（自动抓 82 物等/超凡底材 + 中文大货语音播报 + 一键安装）
-uv run poe2 filter generate \
-  --slot main \
-  --strictness strict \
-  --look "暗黑金色 中文语音播报" \
-  --out my_build.filter \
-  --preview-html preview.html \
-  --install
+# 1. 从 NeverSink 建立副本；已有底版可把 semi_strict 换成本地 .filter 路径
+uv run poe2 filter restyle semi_strict --base-only --out my_build.filter
 
-# 2. 双人开黑共享过滤器（自动合并两人的武器、防具基底与未满抗性）
-uv run poe2 filter generate --slots p1,p2 --strictness semi_strict --out duo.filter
+# 2. 在副本上修改配色与声音，并预览
+uv run poe2 filter restyle my_build.filter --base-only --look "暗黑金色 中文语音播报" \
+  --out my_voice.filter --preview-html preview.html
 
-# 3. 兼容并魔改 NeverSink / 修复 PoE1 或 0.1 报错老过滤器（清除失效词条与前缀，校验至 0 报错）
-uv run poe2 filter restyle strict --slot main --look "赛博霓虹 电子音效" --out ns_custom.filter
+# 3. 国际服示例：从 NeverSink 添加双人构筑规则及国际服物价规则
+uv run poe2 filter restyle semi_strict --slots p1,p2 --out duo.filter
+
+# 4. 单独修复旧版过滤器
 uv run poe2 filter heal old_broken.filter --out healed_055.filter
 ```

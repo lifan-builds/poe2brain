@@ -77,7 +77,7 @@ def test_skill_readme_mcp_and_cli_1_to_1_parity() -> None:
 
     skill_tools = set(re.findall(r"\|\s*`?(poe2_[a-z0-9_]+)`?\s*\|", skill_text))
     readme_tools = set(re.findall(r"\|\s*`?(poe2_[a-z0-9_]+)`?\s*\|", readme_text))
-    assert len(skill_tools) == 45
+    assert len(skill_tools) == 46
     assert skill_tools == readme_tools
 
     registered_tools = {t.name for t in mcp_mod.mcp._tool_manager.list_tools()}
@@ -119,6 +119,47 @@ def test_skill_readme_mcp_and_cli_1_to_1_parity() -> None:
     ):
         sub_res = runner.invoke(app, sub_args)
         assert sub_res.exit_code == 0, f"Failed --help for {sub_args}: {sub_res.stdout}"
+
+
+def test_mature_filter_branch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    adapter = mcp_mod.get_neversink_adapter()
+    upstream = (
+        'Show\n\tBaseType == "Divine Orb" "Fist of Kalguur"\n'
+        "\tSetTextColor 11 22 33\n\tPlayAlertSound 4 173\n"
+    )
+    monkeypatch.setattr(adapter, "fetch_neversink_text", lambda strictness: upstream)
+    monkeypatch.setattr(
+        adapter.generator, "collect_market_prices", lambda **kwargs: pytest.fail("Fetched prices")
+    )
+    out = tmp_path / "mine.filter"
+    run = CliRunner().invoke(
+        app, ["filter", "restyle", "semi_strict", "--base-only", "--out", str(out), "--json"]
+    )
+    assert run.exit_code == 0, run.stdout
+    result = json.loads(run.stdout)
+    assert result["validation"]["valid"]
+    assert result["injected_override_blocks"] == 0
+    assert result["sound_pack"] is None
+    assert result["healed_basetypes"] == ["Fist of Kalguur"]
+    assert "Copyright (c) 2026 NeverSink" in result["filter_text"]
+    assert "SetTextColor 11 22 33" in result["filter_text"]
+    assert "PlayAlertSound 4 173" in result["filter_text"]
+    branch = mcp_mod.poe2_filter_restyle(source=str(out), base_only=True)
+    assert branch["filter_text"] == result["filter_text"]
+    source = branch["filter_text"] + 'Import "addon.filter" Optional\nHide\n\tBaseType == "Gold"\n'
+    recolored = mcp_mod.poe2_filter_restyle(source=source, base_only=True, theme="cyberpunk_neon")
+    assert "SetTextColor 11 22 33" not in recolored["filter_text"]
+    assert "PlayAlertSound 4 173" in recolored["filter_text"]
+    assert (
+        recolored["filter_text"].index('BaseType == "Divine Orb"')
+        < recolored["filter_text"].index('Import "addon.filter" Optional')
+        < recolored["filter_text"].index('BaseType == "Gold"')
+    )
+    unsupported = mcp_mod.poe2_filter_restyle(
+        source='Show\n\tBaseType == "神圣石"\n', base_only=True, out_path=str(out)
+    )
+    assert not unsupported["ok"]
+    assert out.read_text(encoding="utf-8") == result["filter_text"]
 
 
 def test_cli_wiki_and_trade_parse(isolated_cli_env: dict[str, str]) -> None:
@@ -1245,7 +1286,7 @@ async def test_mcp_server_stdio_roundtrip(isolated_cli_env: dict[str, str], tmp_
             await session.initialize()
             tools_resp = await session.list_tools()
             names = {t.name for t in tools_resp.tools}
-            assert len(names) == 45
+            assert len(names) == 46
             assert {
                 "poe2_status",
                 "poe2_farming_strategy",

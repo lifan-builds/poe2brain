@@ -185,6 +185,7 @@ if ($LASTEXITCODE -ne 0) {
     if ($LASTEXITCODE -ne 0) { throw "uv sync 失败，请检查网络连接。" }
 }
 
+Write-Host "首次交互初始化时请选择游戏区服：cn（国服）或 international（国际服）。可用 uv run poe2 init 切换。"
 & $uvExe run poe2 bootstrap pob2 --cn
 if ($LASTEXITCODE -ne 0) { throw "poe2 bootstrap pob2 失败，可运行 uv run poe2 doctor --network 排查。" }
 
