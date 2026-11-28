@@ -5,12 +5,12 @@
   "description": "Agent-native Path of Exile 2 intelligence engine: Patch 0.5.5 knowledge & ladder meta, poe.ninja build discovery & character import, headless Path of Building 2 math, live Forbidden Rites trade & arbitrage, exact crafting solver, and custom loot filter + theme + soundpack studio.",
   "repository": {
     "type": "git",
-    "url": "https://github.com/lfan/poe2brain"
+    "url": "https://github.com/lifan-builds/poe2brain"
   },
   "suggestedPrompts": [
     "Search poe.ninja Forbidden Rites Martial Artist builds, import the top character into PoB2, and generate a strict cyberpunk loot filter with custom synth sounds",
     "Audit and dewater my PoB2 build code, then find the highest-DPS gear upgrade under 50 Exalted",
-    "Price-check this PoE2 item from my clipboard and split Instant Buyout Gold listings from whispers",
+    "Price-check this PoE2 item from my clipboard and check whether to sell or craft-finish it",
     "Calculate exact crafting odds and expected Exalted cost vs buying for a +5 Lightning Wand"
   ]
 }

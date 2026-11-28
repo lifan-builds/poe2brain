@@ -794,7 +794,7 @@ def execute_find_upgrades(
     equip_slot: str,
     max_exalted: float | None = 50.0,
     min_spirit: int = 0,
-    securable_only: bool = False,
+    securable_only: bool = True,
     slot: str = "main",
     build_source: str | None = None,
     objective: str = "FullDPS",
@@ -1204,7 +1204,7 @@ def poe2_pob_stat_weights(
     slot: str = "main",
     league: str = DEFAULT_LEAGUE,
     max_exalted: float | None = None,
-    securable_only: bool = False,
+    securable_only: bool = True,
 ) -> dict[str, Any]:
     """Compute marginal PoB2 stat weights for an equipment slot and build a trade2 filter."""
 
@@ -1234,7 +1234,7 @@ def poe2_pob_suggest_nodes(
     max_path_dist: int = 8,
     include_keystones: bool = False,
     max_exalted: float | None = None,
-    securable_only: bool = False,
+    securable_only: bool = True,
     league: str = DEFAULT_LEAGUE,
 ) -> dict[str, Any]:
     """Rank reachable notables, Amulet anoints (anoint), or Megalomaniac combos + Trade2 search."""
@@ -1855,6 +1855,7 @@ def poe2_farming_strategy(
         b_stats = None
         if slot:
             b_svc = get_build_service()
+            ensure_pob_slot_loaded(b_svc, slot=slot, require_existing=True)
             b_stats = b_svc.audit_build(slot=slot).sustainable_pinnacle_stats
 
         return recommend_farming_strategies(
@@ -2030,11 +2031,11 @@ def poe2_parse_item(item_text: str) -> dict[str, Any]:
 @_mcp_tool
 def poe2_price_check(
     item_text: str,
-    securable_only: bool = False,
+    securable_only: bool = True,
     league: str = DEFAULT_LEAGUE,
     roll_tolerance: float = 0.9,
 ) -> dict[str, Any]:
-    """Price-check PoE2 item: splits Instant Buyout (securable Gold fee) vs whisper listings."""
+    """Price-check a PoE2 item across live exchange and trade2 listings with fixer warnings."""
 
     def _run() -> dict[str, Any]:
         res = get_trade_advisor().price_check_item(
@@ -2053,8 +2054,9 @@ def poe2_find_upgrades(
     equip_slot: str,
     max_exalted: float | None = 50.0,
     min_spirit: int = 0,
-    securable_only: bool = False,
+    securable_only: bool = True,
     slot: str = "main",
+    build_source: str | None = None,
     objective: str = "FullDPS",
     league: str = DEFAULT_LEAGUE,
     limit: int = 10,
@@ -2070,6 +2072,7 @@ def poe2_find_upgrades(
             min_spirit=min_spirit,
             securable_only=securable_only,
             slot=slot,
+            build_source=build_source,
             objective=objective,
             stat_filters=stat_filters,
             no_pob=no_pob,
@@ -2085,7 +2088,7 @@ def execute_triage_dump(
     items: Sequence[str] | str,
     min_exalted: float = 5.0,
     roll_tolerance: float = 0.9,
-    securable_only: bool = False,
+    securable_only: bool = True,
     live_trade: bool = True,
     league: str = DEFAULT_LEAGUE,
 ) -> dict[str, Any]:
@@ -2105,7 +2108,7 @@ def execute_triage_dump(
 def poe2_triage_dump(
     items: list[str] | str,
     min_exalted: float = 5.0,
-    securable_only: bool = False,
+    securable_only: bool = True,
     live_trade: bool = True,
     roll_tolerance: float = 0.9,
     league: str = DEFAULT_LEAGUE,
@@ -2160,6 +2163,7 @@ def poe2_craft_plan(
     sims: int = 3000,
     base_cost_exalted: float = 0.0,
     item_text: str | None = None,
+    offline_prices: bool = False,
     league: str = DEFAULT_LEAGUE,
 ) -> dict[str, Any]:
     """Solve optimal PoE2 0.5.5 crafting policy, Monte Carlo p50/p80/p95 cost, and buy-vs-craft."""
@@ -2172,6 +2176,7 @@ def poe2_craft_plan(
             sims=sims,
             base_cost_exalted=base_cost_exalted,
             item_text=item_text,
+            offline_prices=offline_prices,
             league=league,
         )
     )

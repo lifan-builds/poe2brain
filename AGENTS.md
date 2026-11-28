@@ -29,7 +29,7 @@ Pull requests back to this repository are welcome.
 - `src/poe2brain/crafting/` — Exact conditional `ModPoolEngine` (`min_mod_level` floors, family mutual exclusion, dynamic elemental tag-blocking, cross-slot/cross-pool Essence/Alloy hydration), sunk-cost-disciplined MDP / Monte Carlo `CraftingPlanner` (`Crystallisation` swaps, `4-mod Fracturing Orb` checkpoints, & `protect_existing_targets` collateral brick protection), and `CraftProfitScanner` (`profit.py`).
 - `src/poe2brain/ninja/` — `NinjaBuildsService` (`build-index-state` + `snapshot-versions` + binary-search `probe_character_timeline` + live `HTTP 200` `/poe2/pob/raw/overview/code` character/time-machine/multi-site PoB2 importer + SSF viability/co-dependency search), pure-stdlib `SearchResult` protobuf + `NDIC\x02` dictionary codec (`protobuf.py`), `<2ms` `<PathOfBuilding2>` XML inspector (`xml_inspector.py`), and runtime SQLite `BuildStore` (`store.py`, `~/.cache/poe2brain/builds.sqlite`) synced via ETag from the daily GitHub Actions rolling `build-index` release (`scripts/sync_build_index.py`, `.github/workflows/sync-build-index.yml`).
 - `src/poe2brain/filters/` — Self-validating PoE2 `0.5.5` `.filter` compiler (`generator.py`, including co-op `merge_build_filter_contexts`), lossless AST & 7-trap `FilterValidator` (`grammar.py`, `validator.py` over `data/filter/item_classes_0.5.5.json`), 8 WCAG-verified visual presets + Viénot/Machado CVD-verified `compose_theme` (`themes.py`), stdlib `44.1 kHz` `16-bit` stereo `.wav` synth + `warm_night_mode` Butterworth LPF + hybrid `voice_callout` studio (`soundpacks.py`), `NeverSinkAdapter` `0.10.4a` restyler + `heal_filter_text` legacy Filter Doctor (`neversink.py`), and HTML drop/audio preview + OS bundle installer (`preview.py`).
-- `src/poe2brain/cli.py` & `mcp_server.py` — Thin Typer CLI (`poe2 ... --json`) and `FastMCP("poe2brain")` (`mcp>=1.6.0,<2.0.0`, 44 tools in 1:1 parity) surfaces delegating directly to the six domain modules.
+- `src/poe2brain/cli.py` & `mcp_server.py` — Thin Typer CLI (`poe2 ... --json`) and `FastMCP("poe2brain")` (`mcp>=1.6.0,<2.0.0`, 45 tools in 1:1 parity, with 17 tools in `--profile core`) surfaces delegating directly to the six domain modules.
 
 ## Core Repo Invariants
 
@@ -50,8 +50,6 @@ Pull requests back to this repository are welcome.
    - Never read or store `POESESSID` / session cookies, inspect game memory, OCR/poll live gameplay frames, inject mouse/keyboard inputs into the Path of Exile 2 client, send automated trade whispers, or automate item purchases. Always pace `trade2` requests through `GGGRateLimiter`.
 5. **Multi-Harness Parity**:
    - Keep `.agents/mcp_config.json` (Antigravity), `.mcp.json` (Claude Code / Cursor), `.devin/mcp_config.json` (Devin), `plugin.json` (Antigravity plugin manifest — never hand-edit `~/.gemini/config/config.json` or include unknown top-level fields), and `.agents/skills/poe2brain/` synchronized (`/Users/lfan/Project/agent/scripts/harness-sync.py verify`).
-6. **Product Copy & Messaging Hygiene**:
-   - Never promote "Instant Buyout (`securable`) / 一口价" vs whisper listings as a headline selling point in READMEs, playbooks, prompts, or promotional copy — PoE2 players already treat instant buyout as the default way to buy. Keep `SaleType.SECURABLE` handling silent/internal as normal trade hygiene, and highlight genuine differentiators instead (PoB2 marginal stat-weight upgrade search, `+20%` quality + rune normalization, Monte Carlo crafting EV, real-time Atlas farming economy, and zero-error filters).
 
 ## Setup & Verification
 

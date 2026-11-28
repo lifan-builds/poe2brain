@@ -4,7 +4,7 @@
 # Windows 国内免代理一键安装脚本（自动配置南京大学 Python 镜像 + 阿里云 PyPI 镜像 + GitHub 镜像兜底）
 # 用法示例：
 #   powershell -ExecutionPolicy ByPass -File .\scripts\install_cn.ps1
-#   powershell -ExecutionPolicy ByPass -c "irm https://ghfast.top/https://raw.githubusercontent.com/lifan-builds/poe2brain/main/scripts/install_cn.ps1 | iex"
+#   powershell -ExecutionPolicy ByPass -c "irm https://cn.poe2brain.clifan.com/install_cn.ps1 | iex"
 
 param(
     [string]$InstallDir = "C:\dev\poe2brain",

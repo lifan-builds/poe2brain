@@ -1,12 +1,12 @@
 # Headless Path of Building 2 (`PoB2`) Workflows
 
-`poe2brain` embeds a persistent macOS ARM64 `LuaJIT` + `PathOfBuilding-PoE2` (`tree 0_5`, `v0.23.1`) JSON-RPC bridge (`~/.cache/poe2brain/pob2`, seeded in `<2s` by `scripts/bootstrap_pob2.sh`). All DPS, EHP, Spirit, resistance, passive node, and item swap numbers come from real PoB2 `CalcOffence.lua` / `CalcDefence.lua` execution — never estimate DPS by hand.
+`poe2brain` embeds a persistent cross-platform `LuaJIT` + `PathOfBuilding-PoE2` (`tree 0_5`, `v0.23.1`) JSON-RPC bridge (`~/.cache/poe2brain/pob2`, provisioned by `uv run poe2 bootstrap pob2`). All DPS, EHP, Spirit, resistance, passive node, and item swap numbers come from real PoB2 `CalcOffence.lua` / `CalcDefence.lua` execution — never estimate DPS by hand.
 
 ## 1. Runtime & Multi-Slot Session Hygiene
 
 1. **Check Readiness**: If `poe2_status` (`poe2 version --json`) reports `pob2_runtime_ready: false`, run:
    ```bash
-   /Users/lfan/Project/poe2/poe2brain/scripts/bootstrap_pob2.sh
+   uv run poe2 bootstrap pob2
    ```
 2. **Supported Build Inputs (`poe2_pob_load`)**:
    - **`eN...` Share Codes** (PoB2 export strings, decoded via ZLib `wbits=47` / encoded `wbits=15`).
@@ -27,9 +27,9 @@
    - Run `poe2 pob hc-audit [<code_url_or_file>] --slot main --top-nodes 5 --json` (`HcRipAuditReport`) to inspect sustainable Pinnacle Phys/Ele/Chaos Max Hits, catch lethal **non-CI Low-Life ES Bleed/Poison bypass** (`bleed_poison_es_bypass`) and **Chaos `2x` ES damage** (`chaos_2x_es_vulnerability`), check Belt Charms, and rank top reachable defensive EHP passive respec clusters with exact Gold cost.
 7. **Calculation Provenance, Support Gem Sweeps, Radius Jewels & Transactional What-Ifs**:
    - **Formula & Modifier Provenance (`poe2_pob_calc_breakdown`)**: Run `poe2 pob calc-breakdown "FullDPS" --slot main --json` (or `"EnergyShield"`, `"ManaCost"`, `"CritChance"`, `"ChaosResist"`) to inspect exact PoB2 `Calcs.lua` formula lines and every `BASE`/`INC`/`MORE`/`FLAG` modifier grouped by `Item`, `Tree`, `Skill`, and `Config` source — automatically warning when `calcsInput.skill_number` was pointing at a secondary socket group instead of `mainSocketGroup`.
-   - **Support Gem Optimizer (`poe2_pob_supports`)**: Run `poe2 pob supports --slot main [--group <idx>] [--replace-gem "<name>"] [--max-tier 3] --json` to sweep every compatible PoE2 `0.5.5` Support Gem (Tier `I`–`III` + Lineage) via `GetMiscCalculator()`, reporting DPS/EHP deltas alongside `mana_sustainable_after`, `spirit_overflow`, `attributes_met_after`, and cross-group `lineage_conflict_skill` (`max_copies_per_char=1`).
-   - **Radius Jewel Socket × Ring Solver (`poe2_pob_radius_jewels`)**: Run `poe2 pob radius-jewels "Controlled Metamorphosis" --slot main --json` (or `"Against the Darkness"`) to rank every Passive Tree Jewel Socket × radius ring (`Very Small`..`Massive`) by per-point gain & travel points saved.
-   - **Transactional Hypothesis Sandbox (`poe2_pob_what_if`)**: Run `poe2 pob what-if --slot main [--edit-slot "Weapon 1" --add-mod "+100 to maximum Life" --quality 20] [--alloc-node <id>] [--borrow-from ref --borrow-slot "Ring 1"] [--scenario-matrix] --json` to test combined gear/tree/config changes or attribute why a reference `poe.ninja` build out-scales `main` per borrowed piece — automatically rolling `main` back unless `--apply` is passed.
+   - **Support Gem Optimizer (`poe2_pob_supports`)**: Run `poe2 pob supports --slot main [--group <idx>] [--replace-gem "<name>"] [--max-tier 5] --json` to sweep every compatible PoE2 `0.5.5` Support Gem (Tier `I`–`III` + Lineage) via `GetMiscCalculator()`, reporting DPS/EHP deltas alongside `mana_sustainable_after`, `spirit_overflow`, `attributes_met_after`, and cross-group `lineage_conflict_skill` (`max_copies_per_char=1`).
+   - **Radius Jewel Socket × Ring Solver (`poe2_pob_radius_jewels`)**: Run `poe2 pob radius-jewels --jewel "Controlled Metamorphosis" --slot main --json` (or `"Against the Darkness"`) to rank every Passive Tree Jewel Socket × radius ring (`Very Small`..`Massive`) by per-point gain & travel points saved.
+   - **Transactional Hypothesis Sandbox (`poe2_pob_what_if`)**: Run `poe2 pob what-if --slot main [--edit-slot "Weapon 1" --add-mod "+100 to maximum Life" --set-quality 20] [--alloc-node <id>] [--borrow-from ref --borrow-slot "Ring 1"] [--scenario-matrix] --json` to test combined gear/tree/config changes or attribute why a reference `poe.ninja` build out-scales `main` per borrowed piece — automatically rolling `main` back unless `--apply` is passed.
 
 ---
 
@@ -85,5 +85,5 @@ After dewatering, verify these six PoE2 failure modes before chasing raw DPS:
 
 Never hand-guess `trade2` stat weights when a build is loaded in PoB2:
 1. **Compute Exact Marginal Weights**: Run `poe2_pob_stat_weights --equip-slot "<slot>" --objective <dps|ehp|balanced>` (`TradeQueryGenerator`-backed). It perturbation-tests every eligible mod + open `rune_sockets` on that slot to compute exact `StatWeightEntry` weights and compiles `SlotStatWeights.trade2_weighted_filter` into an unauthenticated-safe `type: "count"` query (`min: 2..3` across top highest-impact mods, avoiding unauthenticated `/api/trade2/search` `HTTP 400` complexity rejections on `type: "weight"`).
-2. **Search + Fetch + Simulate (`poe2_find_upgrades`)**: Pass the slot, `--max-exalted <budget>`, required `--min-spirit` (if replacing a Spirit slot), and optional `--securable-only` (Instant Buyout Gold listings).
+2. **Search + Fetch + Simulate (`poe2_find_upgrades`)**: Pass the slot, `--max-exalted <budget>`, and `--min-spirit` if replacing a Spirit slot. The search queries buyout listings by default. Pass `--include-whisper` to include whisper listings.
 3. **Verify Non-Linear Interactions & Craft Top-Off Normalization**: Linear stat weights and `count` pre-filters are approximations (crit chance × crit bonus, accuracy caps, archmage mana × cast speed are non-linear). `poe2_find_upgrades` defaults to `normalize_craft_topoff=True`, evaluating **both** the raw listing (`upgrade_diff`) and its bench-finished state (`topoff_upgrade_diff`: `20%` Quality + Artificer sockets + Greater Iron/Body Runes on non-corrupted martial/caster/armour items, leaving corrupted listings untouched) with exact currency cost (`topoff_cost_exalted`) and all-in `all_in_price_exalted` ROI.

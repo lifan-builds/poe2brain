@@ -1602,18 +1602,6 @@ class NinjaBuildsService:
     # 4. Live Character & Multi-Site PoB2 Share URL Import -> Pob2Bridge
     # ------------------------------------------------------------------
 
-    def _resolve_overview_slug(
-        self, league_or_slug: str, *, force_refresh: bool = False
-    ) -> tuple[str, str, str]:
-        """Resolve `(league_display_name, league_url_slug, snapshot_name_slug)`."""
-        snap_rep = self.get_snapshot_state(league_or_slug, force_refresh=force_refresh)
-        p = snap_rep.primary
-        return (
-            p.league_name,
-            p.league_url,
-            p.snapshot_name or re.sub(r"[^a-z0-9]+", "-", p.league_name.lower()).strip("-"),
-        )
-
     def _find_corpus_fallback(
         self, account: str, character: str, *, league_slug: str | None = None
     ) -> dict[str, Any] | None:

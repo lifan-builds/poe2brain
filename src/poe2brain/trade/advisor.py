@@ -142,7 +142,6 @@ def _should_route_to_economy(item: ParsedItem, roll_tolerance: float, securable_
         item.rarity == ItemRarity.UNIQUE
         and not item.corrupted
         and not item.sanctified
-        and not securable_only
         and item.name
     ):
         if not item.identified or roll_tolerance <= 0.0:
@@ -494,7 +493,7 @@ class TradeAdvisor:
         raw_text: str,
         league: str = DEFAULT_LEAGUE,
         roll_tolerance: float = 0.9,
-        securable_only: bool = False,
+        securable_only: bool = True,
     ) -> PriceCheckResult:
         """
         Price-check any PoE2 `Ctrl+C` or `Ctrl+Alt+C` clipboard item:
@@ -526,7 +525,6 @@ class TradeAdvisor:
         if item.rarity == ItemRarity.CURRENCY and not payload["query"].get("type"):
             payload["query"]["type"] = item.base_type
             payload["query"].pop("filters", None)
-        resolve_trade_category(item, self._bundle)
         return self._execute_trade2_query(payload, league=league, limit=15)
 
     def find_trade_candidates(
@@ -538,7 +536,7 @@ class TradeAdvisor:
         ) = None,
         max_price_exalted: float | None = None,
         min_spirit: int | None = None,
-        securable_only: bool = False,
+        securable_only: bool = True,
         limit: int = 10,
     ) -> PriceCheckResult:
         """
@@ -651,19 +649,19 @@ class TradeAdvisor:
         league: str = DEFAULT_LEAGUE,
         min_sell_exalted: float = 5.0,
         roll_tolerance: float = 0.9,
-        securable_only: bool = False,
+        securable_only: bool = True,
         live_trade: bool = True,
     ) -> DumpTriageReport:
         """Batch price-check and triage a dump tab of mixed PoE2 `Ctrl+C` / `Ctrl+Alt+C` items.
 
         Classifies every item into one of four actionable buckets:
-        - `sell_instant`: Stackable for Alva Exchange or Instant Buyout (`securable`).
+        - `sell_instant`: Ready to sell on Alva's Currency Exchange or live trade2.
         - `craft_finish_ev`: Uncorrupted Rare with fractured/high-tier core and open affix slot(s)
           where Desecrating or slamming adds positive expected value before selling.
         - `high_variance_id_or_unveil`: Unidentified Tier 3–5 high-ilvl gear or unrevealed
           `Desecrated Prefix`/`Suffix` item awaiting Well of Souls unveil.
         - `salvage_or_vendor`: Sub-threshold items best routed to Salvage Bench, Disenchant
-          (Chance Shards), or 3-to-1 Reforging Bench rather than burning Gold listing fees.
+          (Chance Shards), or 3-to-1 Reforging Bench rather than listing.
         """
         from poe2brain.crafting.planner import _bone_family_for_base
         from poe2brain.trade.item_parser import split_multi_item_clipboard_dump
@@ -792,7 +790,7 @@ class TradeAdvisor:
                     else "High-ilvl unidentified base"
                 )
                 next_step = (
-                    f"List un-ID'd via Instant Buyout (~{est_total_ex:.1f} Ex) for guaranteed bulk "
+                    f"List un-ID'd on trade2 (~{est_total_ex:.1f} Ex) for guaranteed bulk "
                     f"return, or Scroll of Wisdom ID to gamble T1 rolls on {item.base_type}."
                 )
                 rationale = (
@@ -879,7 +877,7 @@ class TradeAdvisor:
                     )
                     price_ref_div = round(price_ref / div_rate, 4) if div_rate > 0 else 0.0
                     next_step = (
-                        f"List in Instant Buyout (securable) tab at ~{price_ref:.1f} Ex "
+                        f"List on trade2 at ~{price_ref:.1f} Ex "
                         f"({price_ref_div:.2f} Div)."
                     )
                     rationale = (
@@ -898,7 +896,7 @@ class TradeAdvisor:
                         "Salvage at the Salvage Bench for Artificer's Shards / quality currency."
                     )
                 else:
-                    next_step = "Vendor for Gold / Regal Shards; below Instant Buyout threshold."
+                    next_step = "Vendor for Gold / Regal Shards; below listing threshold."
                 rationale = (
                     f"Estimated value ({est_total_ex:.1f} Ex) is below {min_sell_exalted:.1f} Ex "
                     "listing threshold."
@@ -935,8 +933,8 @@ class TradeAdvisor:
             f"{counts['sell_instant']} sell_instant, {counts['craft_finish_ev']} craft_finish_ev, "
             f"{counts['high_variance_id_or_unveil']} high_variance_id_or_unveil, "
             f"{counts['salvage_or_vendor']} salvage_or_vendor.",
-            "Route stackables (Soul Cores, Catalysts, Runes, Omens) through Alva's Currency "
-            "Exchange and equipment/gems/tablets through Gold-fee Instant Buyout tabs.",
+            "List stackables (Soul Cores, Catalysts, Runes, Omens) on Alva's Currency Exchange "
+            "and gear/gems/tablets directly on trade2.",
         ]
         return DumpTriageReport(
             league=league,

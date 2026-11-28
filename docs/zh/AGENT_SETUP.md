@@ -27,7 +27,7 @@ claude mcp add poe2brain -- uv --directory /ABSOLUTE/PATH/TO/poe2brain run poe2b
 
 ### Cursor
 1. 打开 **Settings → Tools & MCP → Add new global MCP server**（或编辑 `~/.cursor/mcp.json`）。
-2. 粘贴以下配置并保存，刷新工具列表看到 **42 个 `poe2_*` 工具** 即成功：
+2. 粘贴以下配置并保存，刷新工具列表看到 **45 个 `poe2_*` 工具**（使用 `--profile core` 时为 17 个核心工具） 即成功：
 
 ```json
 {
@@ -41,7 +41,7 @@ claude mcp add poe2brain -- uv --directory /ABSOLUTE/PATH/TO/poe2brain run poe2b
 ```
 
 ### Antigravity
-仓库自带完整的 `plugin.json`、`.agents/mcp_config.json` 与 `.agents/skills/poe2brain/SKILL.md`，直接在 Antigravity 打开 `poe2brain` 工作区或安装为本地插件即可自动加载全部 42 个工具与防幻觉规则。
+仓库自带完整的 `plugin.json`、`.agents/mcp_config.json` 与 `.agents/skills/poe2brain/SKILL.md`，直接在 Antigravity 打开 `poe2brain` 工作区或安装为本地插件即可自动加载全部 45 个工具与防幻觉规则。
 
 ### Cherry Studio / Cline / 通用 MCP 客户端
 - **类型 (Type):** `STDIO`

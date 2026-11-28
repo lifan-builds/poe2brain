@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "poe2brain"
 version = "0.1.0"
-description = "Agent-native Path of Exile 2 intelligence engine: game knowledge, headless PoB2 math, live trade/economy, and exact crafting solver."
+description = "Agent-native Path of Exile 2 intelligence engine: Patch 0.5.5 knowledge & ladder meta, poe.ninja build discovery, headless PoB2 math, live trade & arbitrage, exact crafting solver, and validated loot filter studio."
 authors = [{ name = "lifan-builds" }]
 readme = "README.md"
 license = "GPL-3.0-only"

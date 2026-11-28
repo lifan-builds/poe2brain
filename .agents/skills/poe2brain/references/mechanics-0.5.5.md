@@ -52,7 +52,7 @@ Verified against client `4.5.4.3`, Path of Building 2 `v0.23.1` (`CalcOffence.lu
   - Base = `2` support sockets -> **Lesser Jeweller's Orb** (`3`) -> **Greater Jeweller's Orb** (`4`) -> **Perfect Jeweller's Orb** (`5` support sockets = "6-link"; Vaal corruption can add +1 on eligible gems).
 - **Support Gem Rules (`0.3+` vs Lineage)**:
   - **Standard Support Gems** drop in **Tiers `I` / `II` / `III`** (higher tiers upgrade values or add mechanics). You **CAN** use multiple copies of the same standard Support Gem across different skills on one character; within a *single* skill, max `1` support per `SupportGemCategory` family.
-  - **Lineage Support Gems** (75 endgame drop-only named supports) enforce **`max_copies_per_char = 1`**. Check `GemSummary.max_copies_per_char` via `poe2_inspect_gem`.
+  - **Lineage Support Gems** (80 endgame drop-only named supports) enforce **`max_copies_per_char = 1`**. Check `GemSummary.max_copies_per_char` via `poe2_inspect_gem`.
 - **Spirit & Weapon Set Passives**:
   - **Spirit** reserves persistent Buffs, Heralds, Minions, Blasphemy curses, and Meta-Gems (`Cast on Shock`, `Cast on Crit`, `Cast on Minion Death`, etc., which build **Energy** per trigger condition rather than PoE1 cooldowns).
   - Campaign Spirit bosses grant permanent base Spirit (`+100` total across campaign); extra Spirit comes ONLY from **Sceptres** (implicit `100` base Spirit + `% increased Spirit` local prefixes), **Solar Amulets** / explicit `# to Spirit` on Amulets, **Body Armour**, **Shields**, **Foci**, and specific Uniques/Ascendancies.

@@ -1,4 +1,4 @@
-# 流放之路 2 (`Patch 0.5.5` 禁忌仪式) 六大实战工作流手册
+# 流放之路 2 (`Patch 0.5.5` 禁忌秘仪) 六大实战工作流手册
 
 本手册整理了 `poe2brain` 最常用的实战命令与 **PoE1 → PoE2 `0.5.5` 防踩坑铁律**，既可以直接在终端运行，也可以作为你给 AI 助手下达复杂任务时的参考蓝图。
 
@@ -72,7 +72,6 @@ uv run poe2 pob what-if --slot main --borrow-from ref --borrow-slot "Weapon 1" -
 uv run poe2 trade upgrades \
   --equip-slot "Weapon 1" \
   --max-exalted 50 \
-  --securable-only \
   --slot main
 
 # 2. 单件装备 Ctrl+C 实时估价（结合全服行情并标记压价异常号）

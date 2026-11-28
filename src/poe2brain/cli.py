@@ -1042,8 +1042,12 @@ def pob_weights_cmd(
         typer.Option("--max-exalted", help="Optional max Exalted budget in trade2 filter."),
     ] = None,
     securable_only: Annotated[
-        bool, typer.Option("--securable-only", help="Restrict filter to Instant Buyout listings.")
-    ] = False,
+        bool,
+        typer.Option(
+            "--securable-only/--include-whisper",
+            help="Query buyout listings by default (pass --include-whisper to include whispers).",
+        ),
+    ] = True,
     league: Annotated[str, typer.Option("--league", help="Target PoE2 league.")] = DEFAULT_LEAGUE,
     slot: Annotated[str, typer.Option("--slot", help="Named PoB2 build slot.")] = "main",
     json_output: JsonOpt = False,
@@ -1106,8 +1110,11 @@ def pob_nodes_cmd(
     ] = None,
     securable_only: Annotated[
         bool,
-        typer.Option("--securable-only", help="Instant Buyout only (megalomaniac mode)."),
-    ] = False,
+        typer.Option(
+            "--securable-only/--include-whisper",
+            help="Query buyout listings by default in megalomaniac mode.",
+        ),
+    ] = True,
     league: Annotated[str, typer.Option("--league", help="PoE2 league name.")] = DEFAULT_LEAGUE,
     json_output: JsonOpt = False,
 ) -> None:
@@ -2474,15 +2481,18 @@ def trade_check_cmd(
     ] = None,
     securable_only: Annotated[
         bool,
-        typer.Option("--securable-only", help="Restrict to Instant Buyout (Gold fee) listings."),
-    ] = False,
+        typer.Option(
+            "--securable-only/--include-whisper",
+            help="Query buyout listings by default (pass --include-whisper to include whispers).",
+        ),
+    ] = True,
     roll_tolerance: Annotated[
         float, typer.Option("--roll-tolerance", help="Minimum affix roll fraction (0.0..1.0).")
     ] = 0.9,
     league: Annotated[str, typer.Option("--league", help="PoE2 league name.")] = DEFAULT_LEAGUE,
     json_output: JsonOpt = False,
 ) -> None:
-    """Price-check a PoE2 item: splits Instant Buyout (securable Gold fee) vs whisper listings."""
+    """Price-check a PoE2 item across live exchange and trade2 listings."""
 
     def _compute() -> dict[str, Any]:
         raw_txt = _read_item_input(file_path=file_path, text=text, positional=positional)
@@ -2502,14 +2512,15 @@ def trade_check_cmd(
             f"Est: [bold green]{data.get('estimated_exalted')} Ex[/bold green] "
             f"({data['total_matches']} total matches)"
         )
-        console.print(
-            f"  Instant Buyout (securable): min={dist.get('securable_min_exalted')} Ex | "
-            f"median={dist.get('securable_median_exalted')} Ex ({dist['count_securable']} listings)"
-        )
-        console.print(
-            f"  Overall (deduped)         : min={dist.get('min_exalted')} Ex | "
-            f"median={dist.get('median_exalted')} Ex ({dist['count_whisper']} whisper)"
-        )
+        min_ex = dist.get("securable_min_exalted") or dist.get("min_exalted")
+        med_ex = dist.get("securable_median_exalted") or dist.get("median_exalted")
+        n_list = dist["count_securable"] or dist["count_total"]
+        console.print(f"  Market range: min={min_ex} Ex | median={med_ex} Ex ({n_list} listings)")
+        if dist.get("count_whisper", 0) > 0:
+            console.print(
+                f"  Including whispers: min={dist.get('min_exalted')} Ex | "
+                f"median={dist.get('median_exalted')} Ex ({dist['count_whisper']} whisper)"
+            )
         if data.get("trade_url"):
             console.print(f"  Trade URL: {data['trade_url']}")
         for w in data.get("fixer_warnings", []):
@@ -2534,8 +2545,11 @@ def trade_upgrades_cmd(
     ] = 0,
     securable_only: Annotated[
         bool,
-        typer.Option("--securable-only", help="Restrict to Instant Buyout (Gold fee) listings."),
-    ] = False,
+        typer.Option(
+            "--securable-only/--include-whisper",
+            help="Query buyout listings by default (pass --include-whisper to include whispers).",
+        ),
+    ] = True,
     slot: Annotated[str, typer.Option("--slot", help="Loaded PoB2 build slot name.")] = "main",
     build: Annotated[
         str | None,
@@ -2645,8 +2659,11 @@ def trade_triage_cmd(
     ] = 5.0,
     securable_only: Annotated[
         bool,
-        typer.Option("--securable-only", help="Restrict trade2 queries to Instant Buyouts."),
-    ] = False,
+        typer.Option(
+            "--securable-only/--include-whisper",
+            help="Query buyout listings by default (pass --include-whisper to include whispers).",
+        ),
+    ] = True,
     live_trade: Annotated[
         bool,
         typer.Option(

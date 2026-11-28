@@ -4,7 +4,7 @@
 
 ## Headline Results (`gpt-6.2-astra`)
 
-Evaluated on **2026-11-26** with the exact same model (`gpt-6.2-astra`), zero web search, and identical local plain-text fixture files (decoded `.xml` PoB2 build, `.filter` file, Chinese Tencent clipboard item, and multi-item triage dump) supplied to both arms. Raw responses and per-check scores are archived in [`results/codex_0_5_5.json`](results/codex_0_5_5.json).
+Evaluated on **2026-11-27** with the exact same model (`gpt-6.2-astra`), zero web search, and identical local plain-text fixture files (decoded `.xml` PoB2 build, `.filter` file, Chinese Tencent clipboard item, and multi-item triage dump) supplied to both arms. Raw responses and per-check scores are archived in [`results/codex_0_5_5.json`](results/codex_0_5_5.json).
 
 | Metric | Without `poe2brain` | With `poe2brain` | Delta |
 | :--- | :---: | :---: | :---: |

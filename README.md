@@ -152,7 +152,7 @@ flowchart TB
 <details>
 <summary><strong>Deep Dive: What's Inside Each of the Six Pillars</strong></summary>
 
-1. **Knowledge, Ascendancies & Live Ladder Meta (`poe2brain.knowledge`)** — Read-only SQLite + FTS5 index (`data/poe2_0.5.5.sqlite`) over **769** official GGG `KeywordPopups`, **54** Patch `0.5.5` anti-hallucination rules & formulas, **1,711** gems, **435** uniques, **3,219** live PoE2 bases (catching PoE1 / stale `0.1` `Expert ` base traps), **313** socketable augments, **293** crafting levers, and **882** Verisium/Kalguuran runeforge recipes, plus `MetaService` (`TreeData/0_5` **8 playable classes & 23 Ascendancies**, `Abyssal Lich` inheritance, choice notables, bilingual `zh-CN`/`zh-TW` aliases, and live SC/HC/SSF/HCSSF ladder shares).
+1. **Knowledge, Ascendancies & Live Ladder Meta (`poe2brain.knowledge`)** — Read-only SQLite + FTS5 index (`data/poe2_0.5.5.sqlite`) over **769** official GGG `KeywordPopups`, **54** Patch `0.5.5` anti-hallucination rules & formulas, **1,711** gems, **443** uniques (439 live in 0.5.5), **3,219** live PoE2 bases (catching PoE1 / stale `0.1` `Expert ` base traps), **313** socketable augments, **293** crafting levers, and **882** Verisium/Kalguuran runeforge recipes, plus `MetaService` (`TreeData/0_5` **8 playable classes & 23 Ascendancies**, `Abyssal Lich` inheritance, choice notables, bilingual `zh-CN`/`zh-TW` aliases, and live SC/HC/SSF/HCSSF ladder shares).
 2. **Headless Path of Building 2 (`poe2brain.pob`)** — Persistent native `LuaJIT` + `PathOfBuilding-PoE2` (`tree 0_5`) JSON-RPC 2.0 daemon supporting multi-slot builds (`main`, `ref`, `candidate`), `eN...` / `poe.ninja` / `poe2db.tw` / `maxroll.gg` / `pobb.in` / XML / GGG `.build` JSON I/O, **dewatering audits with automatic upgrade bottlenecks**, `explain_calc` formula provenance, `rank_support_gems`, `rank_radius_jewels`, transactional `what_if` sandboxing, `<10ms` `GetMiscCalculator()` item sweeps, and marginal `trade2` stat weights.
 3. **Live Economy, Arbitrage & Official Trade2 (`poe2brain.trade`)** — 3-tier pricing router normalized to **`Exalted Orb = 1.0`** combining `api.poe2scout.com` + `poe.ninja` exchange overviews with unauthenticated `pathofexile.com/api/trade2` (`GGGRateLimiter` + `1.0s` buffer), `ArbitrageScanner` (`--budget`/`--gold`, `profit_ex_per_10k_gold`, compounding ladders, trap filters), `Exiled-Exchange-2`-backed EN/ZH `Ctrl+C` / `Ctrl+Alt+C` item parsing, PoB2-ranked slot upgrade search (auto-simulating `+20%` quality + Greater Runes), and multi-item quad-tab triage.
 4. **Exact Crafting Odds, Policy & Profit Scanner (`poe2brain.crafting`)** — Conditional `ModPoolEngine` (`display_tier = 1` best, tiered orb `min_mod_level` floors, family mutual exclusion, dynamic elemental tag-blocking, 3-draw without-replacement Well of Souls unveil, `Omen of Whittling`, cross-pool `Crystallisation`, blocking removed `0.4` Homogenising Omens & `0.5` Recombinators) + sunk-cost-disciplined `CraftingPlanner` (`4-mod Fracturing Orb`, `p50`/`p80`/`p95` Monte Carlo, buy-vs-craft) + `CraftProfitScanner` with automatic `competition_level` & `niche_score`.
@@ -183,7 +183,7 @@ uv run poe2 version --json
 
 > **Windows 中文用户？** 请直接查看保姆级图文命令指南：[docs/zh/QUICKSTART_WINDOWS.md](docs/zh/QUICKSTART_WINDOWS.md)
 >
-> **Optional web preview:** A lightweight browser playground is also hosted at [poe2brain.clifan.com](https://poe2brain.clifan.com/) (hosted overseas; local CLI/MCP above provides the full offline/headless PoB2 feature set).
+> Try the [web playground](https://poe2brain.clifan.com/) or its [China mirror](https://cn.poe2brain.clifan.com/). For local setup in China, see the [GitCode source mirror](https://gitcode.com/lifan-builds/poe2brain) and [Chinese setup guide](docs/zh/CN_FREE_SETUP.md).
 
 ### Importing Your Character (Day-1 Friendly, Zero `POESESSID`)
 
@@ -208,7 +208,9 @@ uv run poe2 version --json
 
 ## Connecting to Your AI Assistant
 
-`poe2brain` ships ready-to-use manifests across major agent harnesses out of the box:
+Use `poe2 setup-mcp --profile core` to configure an MCP client with 17 core tools. Run `poe2 doctor` to check the installation, `poe2 update` to update it, or `poe2 uninstall` to remove it.
+
+The repository also ships manifests for these clients:
 
 - **Claude Code / Cursor:** Open this repo directly (uses [.mcp.json](.mcp.json)), or add globally via the snippet below.
 - **Antigravity:** Ready-to-load plugin manifest in [plugin.json](plugin.json), workspace MCP config in [.agents/mcp_config.json](.agents/mcp_config.json), and skill in [.agents/skills/poe2brain/SKILL.md](.agents/skills/poe2brain/SKILL.md).
@@ -249,7 +251,7 @@ Every single MCP tool maps 1:1 to a `poe2 ... --json` CLI command over the exact
 | Pillar | MCP Tool (`poe2brain`) | CLI Command (`uv run ...`) | Purpose |
 | :--- | :--- | :--- | :--- |
 | **Health** | `poe2_status` | `poe2 version --json` | Verify patch (`0.5.5`), default league (`Forbidden Rites`), SQLite DB, and headless PoB2 readiness. |
-| **Knowledge** | `poe2_search_knowledge` | `poe2 wiki search "<query>" [--category <cat>] [--limit 12] --json` | FTS5 + exact search across 769 GGG `KeywordPopups`, 54 anti-hallucination rules, 1,711 gems, 435 uniques, 3,219 live bases, 313 augments, 293 levers, and 882 runeforge recipes. |
+| **Knowledge** | `poe2_search_knowledge` | `poe2 wiki search "<query>" [--category <cat>] [--limit 12] --json` | FTS5 + exact search across 769 GGG `KeywordPopups`, 54 anti-hallucination rules, 1,711 gems, 443 uniques (439 live in 0.5.5), 3,219 live bases, 313 augments, 293 levers, and 882 runeforge recipes. |
 | **Knowledge** | `poe2_explain_mechanic` | `poe2 wiki mechanic "<topic>" --json` | Authoritative `MechanicFact` (`poe1_trap`, `poe2_live_rule`, `formula_expr`) + official GGG keyword popups. |
 | **Knowledge** | `poe2_inspect_gem` | `poe2 wiki gem "<name>" --json` | Active, Spirit, Meta, Tiered Support (`I`/`II`/`III`), and `lineage_support` (`max_copies_per_char=1`) gem inspection. |
 | **Knowledge** | `poe2_inspect_base` | `poe2 wiki base "<name>" [--ilvl 82] --json` | Base properties, implicits, `display_tier=1` affixes at `ilvl`, and PoE1 / stale `Expert ` trap warnings. |
@@ -268,7 +270,7 @@ Every single MCP tool maps 1:1 to a `poe2 ... --json` CLI command over the exact
 | **PoB2** | `poe2_pob_suggest_nodes` | `poe2 pob nodes [--mode perPoint\|total\|anoint\|megalomaniac] [--slot main] [--top 10] --json` | Rank reachable passive notables (`perPoint`/`total`), Amulet anoints (`anoint`), or `Megalomaniac` 2–3 notable combos + clickable `trade2` URL (`megalomaniac`). |
 | **PoB2** | `poe2_pob_optimize_runes` | `poe2 pob runes [--slot main] [--objective balanced\|dps\|ehp\|spirit\|rarity] [--max-budget <ex>] --json` | Solve Armour/Weapon Rune & Soul Core Resist Tetris & socket optimization using SQLite `0.5.5` slot effects and transactional PoB2 DPS/EHP/Resist verification. |
 | **PoB2** | `poe2_pob_calc_breakdown` | `poe2 pob calc-breakdown "<query>" [--slot main] [--skill-group <idx>] [--max-mods 40] --json` | Inspect exact PoB2 calculation formulas & `BASE`/`INC`/`MORE`/`FLAG` modifier provenance grouped by source (`CalcBreakdownReport`). |
-| **PoB2** | `poe2_pob_supports` | `poe2 pob supports [--slot main] [--group <idx>] [--replace-slot <n>] [--replace-gem "<name>"] [--max-tier <1..3>] [--lineage/--no-lineage] [--top 15] --json` | Rank all compatible PoE2 `0.5.5` Support Gems (Tier `I`–`III` + Lineage) by DPS/EHP delta, Mana sustain, Spirit overflow, and Lineage `max_copies=1` conflicts. |
+| **PoB2** | `poe2_pob_supports` | `poe2 pob supports [--slot main] [--group <idx>] [--replace-slot <n>] [--replace-gem "<name>"] [--max-tier <1..5>] [--lineage/--no-lineage] [--top 15] --json` | Rank all compatible PoE2 `0.5.5` Support Gems (Uncut tiers 1–5 + Lineage) by DPS/EHP delta, Mana sustain, Spirit overflow, and Lineage `max_copies=1` conflicts. |
 | **PoB2** | `poe2_pob_radius_jewels` | `poe2 pob radius-jewels [--jewel "<jewel>"] [--slot main] [--stat FullDPS] [--max-dist 10] [--top 10] --json` | Rank Passive Tree Jewel Sockets × radius rings (`Controlled Metamorphosis` / `Against the Darkness`) by per-point gain & travel points saved. |
 | **PoB2** | `poe2_pob_what_if` | `poe2 pob what-if [--slot main] [--equip "Slot=TextOrPath"] [--edit-slot "<slot>" --add-mod "<line>" --remove-mod "<sub>" --set-quality 20] [--alloc-node <id>] [--dealloc-node <id>] [--config k=v] [--borrow-from <ref> --borrow-slot "<slot>"] [--scenario-matrix] [--apply] --json` | Transactional multi-change PoB2 hypothesis sandbox (`WhatIfReport`) with per-piece attribution, 3-scenario matrix, and automatic rollback. |
 | **PoB2** | `poe2_pob_import_local` | `poe2 pob import-local [<name_or_path>] [--dir <builds_dir>] [--slot main] [--list] --json` | Discover or load saved local Path of Building (PoE2) `.xml` builds directly (zero-auth Day-1 sync on Windows/macOS/Linux). |
@@ -279,9 +281,9 @@ Every single MCP tool maps 1:1 to a `poe2 ... --json` CLI command over the exact
 | **Economy** | `poe2_farming_strategy` | `poe2 econ farming [--stage day1\|early\|mid\|endgame] [--budget 100\|5d] [--focus balanced\|steady\|jackpot\|speed] [--slot main] --json` | Rank Patch `0.5.5` league-start & Atlas farming loops (Fortress Rush, Expedition, Ritual+Wildwood, Breach, Sekhema, Chaos, Delirium, Boss Rush, Negative-IIR) with live prices, Atlas Masters (`Jado`/`Hilda`/`Doryani`), Tablets, IIR guidance, and optional PoB2 build-fit scoring. |
 | **Economy** | `poe2_scan_arbitrage` | `poe2 econ arbitrage [--budget 500\|5d] [--gold <g>] [--ladder-target-divine <d>] [--min-volume-divine 2.0] [--live-books/--no-live-books] --json` | Executable `0.5.5` conversions, Alva spreads, order books, `profit_ex_per_10k_gold`, trap warnings, or multi-rung capital & Gold compounding ladder. |
 | **Trade** | `poe2_parse_item` | `poe2 trade parse [--file <path> \| --text "<ctrl_c>"] --json` | Parse PoE2 `Ctrl+C` / `Ctrl+Alt+C` text into `ParsedItem` and PoB2 `Item.lua` text. |
-| **Trade** | `poe2_price_check` | `poe2 trade check [--file <path> \| --text "<ctrl_c>"] [--securable-only] [--league "Forbidden Rites"] --json` | 3-tier live price check over `trade2` and exchange quotes with price-fixer outlier warnings. |
-| **Trade** | `poe2_triage_dump` | `poe2 trade triage [--file <path> \| --text "<multi_item_dump>"] [--min-exalted 5.0] [--securable-only] [--live-trade/--no-live-trade] --json` | Batch price-check & classify multi-item `Ctrl+C` dumps into `sell_instant`, `craft_finish_ev`, `high_variance_id_or_unveil`, and `salvage_or_vendor`. |
-| **Trade** | `poe2_find_upgrades` | `poe2 trade upgrades --equip-slot "<slot>" [--max-exalted 50] [--min-spirit 0] [--securable-only] [--normalize-topoff/--no-normalize-topoff] [--slot main] --json` | Query live `trade2` for slot upgrades, evaluate raw & craft-topped-off (`20%` Quality + Greater Runes) stats in PoB2, and rank by true all-in ROI. |
+| **Trade** | `poe2_price_check` | `poe2 trade check [--file <path> \| --text "<ctrl_c>"] [--include-whisper] [--league "Forbidden Rites"] --json` | 3-tier price check using buyout listings by default and exchange quotes with price-fixer outlier warnings. |
+| **Trade** | `poe2_triage_dump` | `poe2 trade triage [--file <path> \| --text "<multi_item_dump>"] [--min-exalted 5.0] [--include-whisper] [--live-trade/--no-live-trade] --json` | Batch price-check & classify multi-item `Ctrl+C` dumps into `sell_instant`, `craft_finish_ev`, `high_variance_id_or_unveil`, and `salvage_or_vendor`. |
+| **Trade** | `poe2_find_upgrades` | `poe2 trade upgrades --equip-slot "<slot>" [--max-exalted 50] [--min-spirit 0] [--include-whisper] [--normalize-topoff/--no-normalize-topoff] [--slot main] --json` | Query live `trade2` for slot upgrades, evaluate raw & craft-topped-off (`20%` Quality + Greater Runes) stats in PoB2, and rank by true all-in ROI. |
 | **Crafting** | `poe2_craft_odds` | `poe2 craft odds --base "<base>" --ilvl 82 [--lever "<lever>"] [--target "<mod>"] [--omen "<omen>"] [--item-text "<ctrl_c>"] [--protect-existing/--no-protect-existing] --json` | Exact conditional mod-pool hit odds (`CraftActionEval`) with live currency pricing and mid-craft collateral protection. |
 | **Crafting** | `poe2_craft_plan` | `poe2 craft plan --base "<base>" --ilvl 82 --target "<mod>"... [--buy-exalted <p>] [--sims 3000] --json` | Optimal state-conditional policy + Monte Carlo cost (`expected_cost_exalted`, `p50`/`p80`/`p95`) + `trade_vs_craft`. |
 | **Crafting** | `poe2_scan_craft_profit` | `poe2 craft profit [--budget all\|low\|mid\|high] [--live-trade/--no-live-trade] [--league "Forbidden Rites"] --json` | Rank profitable `0.5.5` crafts with sanitized live inputs, `p50`/`p80` drawdowns, live `securable` exits, `competition_level`, and `niche_score`. |
@@ -308,9 +310,9 @@ Every single MCP tool maps 1:1 to a `poe2 ... --json` CLI command over the exact
 - `poe2 bootstrap pob2 [--force] --json` — Seed or compile the local `LuaJIT` + `PathOfBuilding-PoE2` runtime.
 
 ```bash
-# Rebuild deterministic Patch 0.5.5 SQLite + FTS5 database & PoB2-enriched poe.ninja corpus
+# Rebuild the patch 0.5.5 database and refresh the PoB2 build index
 uv run python scripts/sync_gamedata.py
-uv run python scripts/sync_ninja_corpus.py --enrich-existing
+uv run python scripts/sync_build_index.py
 
 # Lint & run offline unit + headless PoB2 integration suites (tested on Windows + macOS CI)
 uv run ruff check . scripts

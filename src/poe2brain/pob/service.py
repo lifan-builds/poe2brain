@@ -293,7 +293,7 @@ class LiveSlotUpgradeReport(Poe2Model):
     equipment_slot: str
     metric: str = "FullDPS"
     max_price_exalted: float | None = None
-    securable_only: bool = False
+    securable_only: bool = True
     normalize_craft_topoff: bool = True
     query_id: str | None = None
     trade_url: str | None = None
@@ -2524,7 +2524,7 @@ class BuildService:
         metric: Literal["FullDPS", "TotalEHP", "balanced"] = "FullDPS",
         league: str = DEFAULT_LEAGUE,
         max_price_exalted: float | None = None,
-        securable_only: bool = False,
+        securable_only: bool = True,
         min_rune_sockets: int = 0,
         top_n: int = 35,
     ) -> SlotStatWeights:
@@ -2825,7 +2825,7 @@ class BuildService:
         league: str = DEFAULT_LEAGUE,
         max_price_exalted: float | None = None,
         min_spirit: int = 0,
-        securable_only: bool = False,
+        securable_only: bool = True,
         min_rune_sockets: int = 0,
         candidate_limit: int = 10,
         sort_by_value: bool = False,
@@ -3662,7 +3662,7 @@ class BuildService:
         top_combos: int = 10,
         min_match_count: int = 2,
         max_exalted: float | None = None,
-        securable_only: bool = False,
+        securable_only: bool = True,
         league: str = DEFAULT_LEAGUE,
     ) -> MegalomaniacSearchReport:
         """Rank unallocated Notables for a Megalomaniac Jewel and compile a Trade2 search."""

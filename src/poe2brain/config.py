@@ -90,9 +90,6 @@ def get_cache_dir() -> Path:
     return (Path.home() / ".cache" / "poe2brain").resolve()
 
 
-CACHE_DIR: Path = get_cache_dir()
-
-
 def get_pob2_dir() -> Path:
     override = os.environ.get("POE2BRAIN_POB2_DIR")
     if override:

@@ -40,7 +40,7 @@ Combines two zero-CAPTCHA public APIs:
 
 ## 3. Instant Buyout (`securable`) vs In-Person (`whisper`) & Price-Fixer Defense
 
-Path of Exile 2 supports **asynchronous Gold-fee Instant Buyout** alongside legacy whisper trade:
+Trade searches query Instant Buyout listings by default (`status.option = "securable"`). Pass `--include-whisper` to include whisper listings (`"available"`).
 
 | Listing Field / Mode | Instant Buyout (`SaleType.SECURABLE`) | In-Person Whisper (`SaleType.WHISPER`) |
 | :--- | :--- | :--- |
@@ -50,7 +50,7 @@ Path of Exile 2 supports **asynchronous Gold-fee Instant Buyout** alongside lega
 | **Price-Fixer Risk** | **Near-zero** (underpriced items get bought instantly by bots/players) | **High** (AFK/DND accounts list at 1–5 Exalted and never reply) |
 
 ### Mandatory Pricing Rules for Agents
-1. **Default search `status.option` to `"available"`**, then inspect **both** `distribution.securable_min_exalted` / `securable_median_exalted` and overall `median_exalted`.
+1. For searches that include whisper listings, compare `distribution.securable_min_exalted` / `securable_median_exalted` with the overall `median_exalted`.
 2. **Never quote raw `min_exalted` on `"available"` as market value** when `securable_min_exalted >> min_exalted` or `fixer_warnings` is non-empty (`Trade2Client` deduplicates repeated listings from the same `account_name`).
 3. **Factor Gold `fee`**: High-ilvl equipment and bulk maps carry non-trivial Gold buyout fees (`listing.fee`); surface the Gold fee alongside Exalted price when recommending `securable` Instant Buyouts.
 4. **When feeding `CraftingPlanner` (`buy_price_ex`)**: Anchor `buy_price_ex` to `securable_min_exalted` / `securable_median_exalted` (or deduplicated `p25_exalted` if only whisper listings exist) so fake 1-Exalt whisper fixers don't trick the planner into saying *"Buy instead of Craft"*.
@@ -85,5 +85,5 @@ Use `poe2_scan_arbitrage` (`poe2 econ arbitrage --json`) rather than eyeballing 
    - **Valid Plays**: Multi-socket **`Masterwork Rune` + `Orb of Extraction` -> `Perfect Runes`** (`Orb of Extraction` extracts ALL socketed augments simultaneously, halving/thirding extraction cost on 2–3 socket trash gear), **`Origin Spark` + `Origin Cradle` -> `Origin Core`**, **`300x Simulacrum Splinter` -> `Simulacrum`**, **`DistilledEmotion` 3-to-1** up to `Concentrated Liquid Isolation`, and empirical drop-weighted **`Catalyst` / `Refined Catalyst` 3-to-1 EV**.
    - **Blocked Traps**: **`3x Greater Rune` CANNOT 3-to-1 into `Perfect Rune`**; **`Potent Liquid Melancholy / Ferocity / Contempt`** are NOT on the `DistilledEmotion` 3-to-1 ladder; and **`300x Breach Splinter` combines into `Revelatory Wombgift`** (requires non-tradeable **Hiveblood** at The Genesis Tree), NOT directly into a Breachstone.
 5. **Capital Ceilings & Broke-to-Rich Compounding Ladder**:
-   - Pass `--max-investment-divine <d>` and `--max-gold <g>` to filter plays to a mapper's exact liquid bankroll and Gold cap.
-   - Pass `--ladder-start-exalted 250 --gold-budget 80000 --ladder-target-divine 50` (`starting_exalted`, `gold_budget`, `target_divine` on `poe2_scan_arbitrage`) to chain multi-rung hideout conversions from `<1 Div` to `50+ Div` while transitioning quote tabs (`Exalted -> Chaos -> Divine`) to stay within Gold tax limits.
+   - Pass `--budget 5d` and `--gold <g>` to filter plays to a mapper's exact liquid bankroll and Gold cap.
+   - Pass `--budget 250 --gold 80000 --ladder-target-divine 50` (`starting_exalted`, `gold_budget`, `target_divine` on `poe2_scan_arbitrage`) to chain multi-rung hideout conversions from `<1 Div` to `50+ Div` while transitioning quote tabs (`Exalted -> Chaos -> Divine`) to stay within Gold tax limits.

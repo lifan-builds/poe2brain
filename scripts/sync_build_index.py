@@ -9,7 +9,7 @@ Ingests builds from sustainable live sources:
      when `GGG_OAUTH_CLIENT_ID` & `GGG_OAUTH_CLIENT_SECRET` are configured
   3. Polite live refresh via `poe.ninja` `HTTP 200` `/poe2/pob/raw/overview/code`
   4. Opt-in community submissions feed (public `pobb.in` / `poe.ninja` / `poe2db` / `maxroll` URLs)
-  5. Optional one-time bootstrap seed (`--bootstrap-from-file`) when starting from an empty index
+  5. Optional one-time bootstrap seed (`--bootstrap-file`) when starting from an empty index
 
 Runs headless LuaJIT Path of Building 2 dewatering only for newly added or changed `pob_hash`
 entries, and writes release-ready artifacts:

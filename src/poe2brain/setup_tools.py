@@ -27,7 +27,6 @@ from poe2brain.config import (
 )
 
 CN_PYPI_INDEX_URL = "https://mirrors.aliyun.com/pypi/simple/"
-CN_PYPI_FALLBACK_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
 CN_PYTHON_INSTALL_MIRROR = (
     "https://mirror.nju.edu.cn/github-release/astral-sh/python-build-standalone/"
 )
@@ -343,10 +342,12 @@ def setup_mcp_clients(
     if copy_clipboard and not dry_run and "cherry" not in results:
         clipboard_ok = _copy_to_clipboard(json_snippet)
 
+    from poe2brain.mcp_server import _MCP_TOOL_REGISTRY
+
     return {
         "ok": True,
         "profile": profile,
-        "tool_count": len(CORE_MCP_TOOL_NAMES) if profile == "core" else 45,
+        "tool_count": len(CORE_MCP_TOOL_NAMES) if profile == "core" else len(_MCP_TOOL_REGISTRY),
         "dry_run": dry_run,
         "entry": entry,
         "json_snippet": json_snippet,
