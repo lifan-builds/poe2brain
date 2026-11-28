@@ -326,7 +326,7 @@ POE2_LIVE_TESTS=1 uv run pytest -v
 
 ## Upstream Attribution & GGG ToS Boundary
 
-- **Clean-Room Upstream Data Attribution**: Bundled lookup data in `data/` derives strictly from permissive MIT-licensed upstream projects (`PathOfBuildingCommunity/PathOfBuilding-PoE2`, `Kvan7/Exiled-Exchange-2` in [data/ee2/LICENSE.Exiled-Exchange-2](data/ee2/LICENSE.Exiled-Exchange-2), `ackness/pobr` in [data/ninja/LICENSE.pobr](data/ninja/LICENSE.pobr), `repoe-fork/poe2` & `thmsndk/vscode.poe2-filter` in [data/filter/LICENSE.filter-data](data/filter/LICENSE.filter-data), plus optional MIT `NeverSinkDev/NeverSink-Filter-for-PoE2` base filter healing), with original upstream MIT notices preserved.
+- **Clean-Room Upstream Data Attribution**: Bundled lookup data in `data/` derives strictly from permissive MIT-licensed upstream projects (`PathOfBuildingCommunity/PathOfBuilding-PoE2`, `Kvan7/Exiled-Exchange-2` in [data/ee2/LICENSE.Exiled-Exchange-2](data/ee2/LICENSE.Exiled-Exchange-2), `ackness/pobr` test fixture in [tests/fixtures/LICENSE.pobr](tests/fixtures/LICENSE.pobr), `repoe-fork/poe2` & `thmsndk/vscode.poe2-filter` in [data/filter/LICENSE.filter-data](data/filter/LICENSE.filter-data), plus optional MIT `NeverSinkDev/NeverSink-Filter-for-PoE2` base filter healing), with original upstream MIT notices preserved.
 - **Strictly Out-of-Game & ToS-Compliant**: `poe2brain` never reads `POESESSID` or auth cookies, never calls Cloudflare-gated `/api/protected/` routes, never inspects game memory or screen frames, never injects inputs into the Path of Exile 2 client, uses official GGG OAuth 2.1 PKCE for private character imports, and paces all public `trade2` requests through `GGGRateLimiter`.
 
 ## License
