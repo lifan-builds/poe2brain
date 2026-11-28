@@ -105,7 +105,7 @@ def test_cn_filter_install_and_reference_prices(tmp_path, monkeypatch):
     )
     assert compiled["validation"]["valid"]
     assert (tmp_path / "client" / (compiled["filter_name"] + ".filter")).is_file()
-    assert "国服" in preview.read_text()
+    assert "国服" in preview.read_text(encoding="utf-8")
     prices = server.poe2_craft_odds(
         base="Attuned Wand", lever="Greater Exalted Orb", target=["SpellDamageOnWeapon8_"],
     )
